@@ -1,0 +1,440 @@
+# AI Video Studio（智影）架构设计
+
+## 1. 设计决策
+
+| 决策项 | 结论 |
+|---|---|
+| 生成粒度 | 按**镜头**提交；参数按“任务默认 → 集覆盖 → 镜头覆盖”三级合并 |
+| 拍摄脚本 | 结构化数据（镜头、台词、实体引用），不以纯文本为准 |
+| 本地数据库 | SQLite 单文件；版本号迁移，启动时自动升级 |
+| 资产存储 | 数据库；元数据与二进制内容分表存放 |
+| 视频模型 | 多模型，通过统一适配接口切换；参数选项由模型能力描述驱动；首批接入阿里万象 |
+| 镜头连贯 | 支持“上一镜头尾帧作为下一镜头首帧”，有依赖的镜头串行提交 |
+| 界面形态 | 侧栏只做入口；工作台使用编辑器区 Webview 面板 |
+| 单个短视频 | 也建 1 个集（Episode），下游不区分单集与多集 |
+
+## 2. 分层架构
+
+```mermaid
+flowchart TB
+  subgraph UI["界面层（Webview）"]
+    SB["侧栏入口<br/>sidebar"]
+    WB["视频生成工作台<br/>workbench 面板"]
+    PM["项目管理面板"]
+    MC["模型配置面板"]
+  end
+
+  subgraph APP["应用层（扩展宿主）"]
+    CMD["命令与面板管理<br/>commands / panels"]
+    MSG["消息路由<br/>Webview ⇄ 宿主"]
+    SVC["领域服务<br/>ProjectService / ScriptService<br/>AssetService / BindingService<br/>GenerationService"]
+    QUE["生成队列<br/>JobQueue / Poller<br/>镜头依赖调度"]
+  end
+
+  subgraph DOM["领域层"]
+    ENT["实体与规则<br/>参数合并 / 提交前校验 / 状态机"]
+    PORT["端口接口<br/>Repository / VideoModelProvider"]
+  end
+
+  subgraph INFRA["基础设施层"]
+    DB[("SQLite 本地数据库<br/>元数据 + 资产二进制")]
+    REPO["Repository 实现"]
+    PRV["模型适配器<br/>阿里万象 / 后续模型"]
+    SEC["密钥存储<br/>SecretStorage"]
+    FS["导出与缓存<br/>结果视频文件"]
+  end
+
+  EXT["外部视频模型服务"]
+
+  SB --> CMD
+  PM --> MSG
+  WB --> MSG
+  MC --> MSG
+  CMD --> MSG
+  MSG --> SVC
+  SVC --> ENT
+  SVC --> QUE
+  SVC --> PORT
+  QUE --> PORT
+  PORT --> REPO
+  PORT --> PRV
+  REPO --> DB
+  PRV --> SEC
+  PRV --> EXT
+  QUE --> FS
+```
+
+依赖方向只能自上而下；领域层不依赖 VS Code API 和具体数据库、具体模型。
+
+## 3. 目录结构（目标）
+
+```
+src/
+  extension.ts                 扩展入口，仅做装配
+  app/
+    commands/                  命令注册
+    panels/                    Webview 面板生命周期管理
+    messaging/                 消息协议定义与路由
+    services/                  领域服务（项目、脚本、资产、绑定、生成）
+    queue/                     生成队列、轮询、重试、镜头依赖调度
+  domain/
+    models/                    Project / Task / Episode / Shot / Asset ...
+    rules/                     参数合并、提交校验、状态机
+    ports/                     Repository 与 VideoModelProvider 接口
+  infra/
+    database/                  连接、迁移、Repository 实现
+      migrations/              按编号排列的迁移脚本（001-init 等）
+    providers/                 各视频模型适配器与注册表
+      wanxiang/                阿里万象适配器（暂仅预留目录）
+    secrets/                   密钥读写
+  sidebar/                     侧栏视图与菜单配置（已有）
+resources/
+  sidebar/                     侧栏静态资源（已有）
+  workbench/                   工作台前端资源（含尾帧截取脚本）
+  project-manager/             项目管理前端资源
+```
+
+## 4. 领域模型
+
+```mermaid
+erDiagram
+  PROJECT ||--o{ TASK : 包含
+  PROJECT ||--o{ ASSET : 拥有
+  TASK ||--o{ EPISODE : 包含
+  TASK ||--o| GEN_PROFILE : 默认参数
+  EPISODE ||--o| GEN_PROFILE : 覆盖参数
+  EPISODE ||--|| SCRIPT : 拍摄脚本
+  SCRIPT ||--o{ SHOT : 镜头
+  SHOT ||--o| GEN_PROFILE : 覆盖参数
+  SCRIPT ||--o{ SCRIPT_ENTITY : 脚本实体
+  SHOT }o--o{ SCRIPT_ENTITY : 出场引用
+  SCRIPT_ENTITY ||--o{ ENTITY_BINDING : 绑定
+  ASSET ||--o{ ENTITY_BINDING : 被绑定
+  ASSET ||--o{ ASSET_FILE : 文件
+  SHOT ||--o{ VIDEO_JOB : 提交
+  VIDEO_JOB ||--o{ VIDEO_RESULT : 产出
+  VIDEO_JOB }o--o| VIDEO_JOB : 前序镜头
+  VIDEO_RESULT ||--o| RESULT_FRAME : 尾帧
+  PROVIDER ||--o{ MODEL : 提供
+  MODEL ||--o{ VIDEO_JOB : 执行
+  MODEL ||--|| MODEL_CAPABILITY : 能力
+
+  PROJECT {
+    int id PK
+    string name
+    string description
+  }
+  TASK {
+    int id PK
+    int project_id FK
+    string title
+    string kind "single | series"
+  }
+  EPISODE {
+    int id PK
+    int task_id FK
+    int seq
+    string title
+    string status
+  }
+  SCRIPT {
+    int id PK
+    int episode_id FK
+    int version
+  }
+  SHOT {
+    int id PK
+    int script_id FK
+    int seq
+    string description
+    string dialogue
+    string camera
+    real duration_hint
+    string first_frame_mode "none | prev_tail | asset"
+  }
+  SCRIPT_ENTITY {
+    int id PK
+    int script_id FK
+    string kind "character | scene | prop | effect"
+    string name
+  }
+  ASSET {
+    int id PK
+    int project_id FK
+    string kind "character | scene | prop | effect"
+    string name
+    string tags
+  }
+  ASSET_FILE {
+    int id PK
+    int asset_id FK
+    string role "reference | thumbnail"
+    string mime
+    blob content
+  }
+  ENTITY_BINDING {
+    int id PK
+    int entity_id FK
+    int asset_id FK
+    string usage
+  }
+  GEN_PROFILE {
+    int id PK
+    string scope "task | episode | shot"
+    int scope_id
+    int model_id FK
+    string params_json
+  }
+  PROVIDER {
+    int id PK
+    string code
+    string display_name
+  }
+  MODEL {
+    int id PK
+    int provider_id FK
+    string code
+    string display_name
+  }
+  MODEL_CAPABILITY {
+    int model_id PK
+    string capability_json
+  }
+  VIDEO_JOB {
+    int id PK
+    int shot_id FK
+    int model_id FK
+    string status
+    string request_snapshot_json
+    string remote_job_id
+    string error
+    int prev_job_id FK "依赖的前序镜头任务"
+    int first_frame_id FK "作为首帧的尾帧记录"
+  }
+  VIDEO_RESULT {
+    int id PK
+    int job_id FK
+    string uri
+    real duration
+  }
+  RESULT_FRAME {
+    int id PK
+    int result_id FK
+    string kind "tail"
+    string mime
+    blob content
+  }
+```
+
+要点：
+
+- **资产属于项目，绑定属于集。** `SCRIPT_ENTITY` 由脚本产生，`ENTITY_BINDING` 把实体连接到资产，同一资产可被多集复用。
+- **脚本引用实体用 ID，不用名称。** 改名不会断链。
+- **`ASSET_FILE` 单独存二进制。** 列表查询不读取 blob，避免拖慢界面。
+- **`VIDEO_JOB.request_snapshot_json` 保存提交时的完整请求快照**（合并后的参数、脚本文本、资产引用），用于复现、重试和对比。
+- **`GEN_PROFILE` 用 `scope` 区分三级。** 提交时按“任务 → 集 → 镜头”逐级覆盖合并。
+- **`MODEL_CAPABILITY` 用 JSON 描述能力**：支持的分辨率、横纵比、时长范围、是否支持首帧/尾帧/参考图、参考图数量上限等。
+- **尾帧单独存 `RESULT_FRAME`。** 结果视频生成后提取尾帧入库，下一镜头的任务通过 `first_frame_id` 引用它，`prev_job_id` 记录依赖关系。
+- **`first_frame_mode` 决定首帧来源**：`none` 不指定首帧，`prev_tail` 使用上一镜头尾帧，`asset` 使用指定资产图。
+
+## 5. 视频模型适配
+
+```mermaid
+classDiagram
+  class VideoModelProvider {
+    <<interface>>
+    +code: string
+    +listModels() ModelInfo[]
+    +getCapability(modelCode) ModelCapability
+    +validate(request) ValidationResult
+    +submit(request) RemoteJobRef
+    +query(ref) RemoteJobState
+    +cancel(ref) void
+  }
+  class ProviderRegistry {
+    +register(provider)
+    +get(code) VideoModelProvider
+  }
+  class WanxiangProvider
+  class OtherProvider
+  class GenerationRequest {
+    +shot
+    +prompt
+    +referenceImages
+    +firstFrame
+    +params
+  }
+
+  VideoModelProvider <|.. WanxiangProvider
+  VideoModelProvider <|.. OtherProvider
+  ProviderRegistry o-- VideoModelProvider
+  VideoModelProvider ..> GenerationRequest
+```
+
+- 领域层只产出与模型无关的 `GenerationRequest`。每个适配器负责转换为自家 API 的字段，并处理各家对参考图数量、时长、比例的差异。
+- 新增模型只需新增一个适配器并注册，不改动服务层和界面。
+- 首批适配器为阿里万象，**当前阶段只保留接口、注册表和适配器目录骨架，不实现具体调用**。后续实现时负责把 `GenerationRequest` 转为万象的异步任务请求（提交、轮询、取结果）；能力描述需标明是否支持首帧/首尾帧、参考图数量、可选时长与分辨率；结果地址有有效期，需及时下载到本地。
+- 所选模型不支持首帧输入时，`first_frame_mode = prev_tail` 的镜头在校验阶段报错，提示更换模型或改为不使用尾帧。
+- 切换模型时，工作台按新模型的 `ModelCapability` 重新渲染参数选项；已选值不在新范围内的，标记为需要处理。
+
+## 6. 工作流
+
+```mermaid
+flowchart LR
+  A["选择项目/任务/集"] --> B["脚本结构化<br/>镜头 + 实体"]
+  B --> C["资产绑定<br/>实体 ↔ 资产"]
+  C --> D["参数配置<br/>任务/集/镜头三级"]
+  D --> E["提交前校验<br/>+ 请求预览"]
+  E --> F["按镜头入队提交"]
+  F --> G["轮询状态"]
+  G --> H["结果入库<br/>可重试/对比"]
+```
+
+提交前校验规则：
+
+1. 镜头引用的实体必须都已绑定资产，未绑定的阻止提交或需明确确认。
+2. 合并后的参数必须落在所选模型的能力范围内。
+3. 参考图数量、时长等不得超过模型上限。
+4. 模型所需密钥已配置。
+5. `first_frame_mode = prev_tail` 的镜头必须有前序镜头，且所选模型支持首帧输入。
+
+### 镜头连贯：尾帧作为下一镜头首帧
+
+```mermaid
+flowchart LR
+  S1["镜头 1 生成"] --> V1["结果视频入库"]
+  V1 --> T1["提取尾帧<br/>存 RESULT_FRAME"]
+  T1 --> S2["镜头 2 以尾帧为首帧提交"]
+  S2 --> V2["结果视频入库"]
+  V2 --> T2["提取尾帧"]
+  T2 --> S3["镜头 3 ..."]
+```
+
+- 标记为 `prev_tail` 的镜头形成依赖链：链内**串行**，前一镜头成功并提取到尾帧后，后一镜头才入队；不同链之间可并行。
+- 前序镜头失败或被重新生成时，依赖它的后续镜头回到“等待前序”状态，需在前序成功后重新提交。
+- 重新生成前序镜头会产生新尾帧，后续镜头的请求快照仍指向当时使用的尾帧，便于对比与回溯。
+- 尾帧在工作台 Webview 中截取后回传宿主，由宿主写入 `RESULT_FRAME`；具体方式见“已确定的实现方式”。
+
+## 7. 生成任务状态机
+
+```mermaid
+stateDiagram-v2
+  [*] --> Draft
+  Draft --> Ready: 校验通过
+  Ready --> Waiting: 依赖前序镜头尾帧
+  Waiting --> Queued: 前序成功且尾帧就绪
+  Ready --> Queued: 提交（无依赖）
+  Queued --> Running: 模型受理
+  Running --> Succeeded: 返回结果
+  Running --> Failed: 模型错误
+  Queued --> Canceled: 取消
+  Waiting --> Canceled: 取消
+  Running --> Canceled: 取消
+  Failed --> Queued: 重试
+  Succeeded --> [*]
+  Canceled --> [*]
+```
+
+集的状态由其下所有镜头任务汇总：未配置 / 待绑定 / 可生成 / 生成中 / 部分完成 / 已完成。
+
+## 8. 提交时序
+
+```mermaid
+sequenceDiagram
+  participant W as 工作台 Webview
+  participant M as 消息路由
+  participant G as GenerationService
+  participant R as Repository
+  participant Q as JobQueue
+  participant P as VideoModelProvider
+  participant X as 外部模型服务
+
+  W->>M: submitShots(episodeId, shotIds)
+  M->>G: 提交请求
+  G->>R: 读取脚本、绑定、三级参数
+  G->>G: 合并参数并校验
+  G->>R: 写入 VIDEO_JOB（含请求快照）
+  G->>Q: 入队
+  M-->>W: 已入队
+  loop 每个镜头
+    Q->>P: submit(request)
+    P->>X: 调用模型接口
+    X-->>P: 远端任务标识
+    Q->>R: 更新状态与远端标识
+  end
+  loop 轮询
+    Q->>P: query(ref)
+    P->>X: 查询
+    X-->>P: 状态/结果地址
+    Q->>R: 写入状态与 VIDEO_RESULT
+    Q->>R: 需要时提取并保存 RESULT_FRAME
+    Q->>Q: 释放依赖该镜头的后续任务
+    Q-->>W: 推送进度
+  end
+```
+
+## 9. 界面与入口
+
+```mermaid
+flowchart LR
+  SBP["侧栏：项目 > 项目管理"] -->|"打开"| PML["项目列表面板"]
+  PML -->|"项目卡片：生成视频"| WB["视频生成工作台"]
+  SBV["侧栏：视频 > 视频生成"] -->|"打开"| WB
+  SBM["侧栏：配置 > 模型配置"] --> MC["模型配置面板"]
+  MC -.->|"提供能力与密钥"| WB
+```
+
+工作台布局：
+
+```
+┌──────────────────────────────────────────────────────────┐
+│ 项目 > 任务 > 集              步骤：绑定 → 参数 → 提交      │
+├──────────┬───────────────────────────┬───────────────────┤
+│ 集/镜头树 │ 脚本编辑区                 │ 检查器             │
+│ 状态徽标  │ 镜头卡片、实体高亮标记       │ 参数 / 资产绑定 /   │
+│          │                           │ 提交预览            │
+├──────────┴───────────────────────────┴───────────────────┤
+│ 生成队列与结果：状态、进度、重试、版本对比                    │
+└──────────────────────────────────────────────────────────┘
+```
+
+## 10. Webview 与宿主通信
+
+- 消息协议集中定义在 `app/messaging/`，请求、响应和事件均有类型，Webview 与宿主共用同一份定义。
+- Webview 只发“意图”（如 `bindEntity`、`saveProfile`、`submitShots`），不直接访问数据库或模型。
+- 宿主推送“事件”（如 `jobUpdated`、`assetChanged`），Webview 据此局部刷新。
+- 面板按“项目 ID”复用：同一项目重复打开时聚焦已有面板。
+
+## 11. 横切关注点
+
+- **密钥**：模型密钥只存 `SecretStorage`，不进数据库、不写入请求快照。
+- **迁移**：
+  - 数据库存放结构版本号（如 SQLite 的 `PRAGMA user_version`），新库视为 0。
+  - 迁移脚本放在 `infra/database/migrations/`，按编号命名（如 `001-init`、`002-add-assets`），每个脚本只负责 N 到 N+1。
+  - 扩展启动打开数据库时，按顺序执行编号大于当前版本的脚本，每个脚本在事务中执行，成功后更新版本号，失败则回滚并停在上一个可用版本。
+  - 已发布的迁移脚本不修改；结构变更一律新增下一个编号的脚本。
+  - 升级前建议先备份数据库文件，失败时可恢复。
+- **错误**：适配器把各家错误统一转换为带分类（鉴权、限流、参数、服务端）的错误，队列据此决定是否重试。
+- **并发与限流**：队列按模型配置并发数和重试退避，避免触发限流。
+- **大文件**：资产二进制入库时限制单文件大小；读取按需加载，缩略图单独存放。
+- **主题**：Webview 使用 VS Code 主题变量，适配亮暗主题。
+
+## 12. 实施顺序
+
+1. SQLite 连接、版本号迁移和 Repository（先项目、任务、集、脚本、镜头）。
+2. 消息协议与面板管理，搭出工作台空壳和项目管理面板。
+3. 资产管理与实体绑定。
+4. 模型接口、注册表、能力描述格式和参数面板（仅框架，不接入具体模型）。
+5. 提交校验、生成队列（含镜头依赖调度），使用模拟适配器验证流程。
+6. 尾帧提取与首帧衔接，结果管理、重试与版本对比。
+7. 后续再实现阿里万象适配器，并接入更多模型。
+
+## 13. 已确定的实现方式
+
+- **SQLite 访问**：使用 Node 内置的 `node:sqlite`，不引入第三方依赖。实现前需先在目标 VS Code 版本（`engines.vscode` 为 `^1.108.0`）的扩展宿主中验证该模块可用，并确认其实验性提示不影响使用。
+- **尾帧提取**：在工作台 Webview 中用 `<video>` 加 `<canvas>` 截取，不引入 ffmpeg。因此提取只能在面板打开时进行；面板关闭时，依赖尾帧的镜头保持“等待前序”状态，面板再次打开后继续。
+- **模型逻辑**：暂只保留接口与框架，具体模型（含阿里万象）的实现与能力描述留待后续。
+
+## 14. 待确认事项
+
+- **阿里万象的具体模型与能力**：实现万象适配器前，确认使用的模型（图生视频、首尾帧等）及其分辨率、时长、参考图限制，用于编写能力描述。
