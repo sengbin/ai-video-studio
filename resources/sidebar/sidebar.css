@@ -1,0 +1,158 @@
+/*
+ * ------------------------------------------------------------------------
+ * 名称：sidebar.css
+ * 说明：侧栏页面样式，包含亮暗主题令牌、分区卡片与菜单行。
+ * 作者：Lion
+ * 邮箱：chengbin@3578.cn
+ * 日期：2026-09-30
+ * 备注：颜色统一使用 rgb() 写法，主题通过 body.vscode-light / body.vscode-dark 切换。
+ * ------------------------------------------------------------------------
+ */
+
+:root {
+  color-scheme: light dark;
+  --bg: var(--vscode-sideBar-background);
+  --focus-border: var(--vscode-focusBorder, rgb(0, 120, 212));
+  --page-padding: 8px 0 10px 16px;
+  --page-padding-end: 16px;
+  --card-gap: 10px;
+  --card-padding: 8px;
+  --card-radius: 6px;
+  --card-background: color-mix(in srgb, var(--vscode-editorWidget-background, var(--bg)) 90%, rgb(255, 255, 255));
+  --card-shadow: none;
+  --divider: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+  --row-hover-background: rgb(50, 50, 50);
+  --action-hover-background: rgb(61, 61, 61);
+  --row-pressed-background: rgb(47, 47, 47);
+  --action-pressed-background: rgb(56, 56, 56);
+}
+
+body.vscode-light {
+  --card-background: color-mix(in srgb, var(--bg) 62%, rgb(226, 226, 226));
+  --card-shadow: 0 1px 2px rgba(0, 0, 0, 0.07);
+  --divider: color-mix(in srgb, rgb(0, 0, 0) 8%, transparent);
+  --row-hover-background: rgb(230, 230, 230);
+  --action-hover-background: rgb(220, 220, 220);
+  --row-pressed-background: rgb(222, 222, 222);
+  --action-pressed-background: rgb(212, 212, 212);
+}
+
+body.vscode-dark {
+  --card-background: color-mix(in srgb, var(--bg) 97%, rgb(255, 255, 255));
+  --divider: color-mix(in srgb, rgb(255, 255, 255) 8%, transparent);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  min-width: 0;
+  margin: 0;
+  padding: var(--page-padding);
+  color: var(--vscode-foreground);
+  background: var(--bg);
+  font-family: var(--vscode-font-family);
+}
+
+main {
+  display: grid;
+  gap: var(--card-gap);
+  padding-right: var(--page-padding-end);
+}
+
+/* 卡片外壳只负责布局，视觉表面由 .card-inner 承担 */
+.card {
+  width: 100%;
+  min-width: 0;
+}
+
+.card-inner {
+  min-width: 0;
+  padding: var(--card-padding);
+  background: var(--card-background);
+  border: 0;
+  border-radius: var(--card-radius);
+  box-shadow: var(--card-shadow);
+}
+
+.card-flat {
+  box-shadow: none;
+}
+
+/* 分区标题，下方用 1px 分隔线与菜单行隔开 */
+h2 {
+  margin: 0 0 8px;
+  padding: 2px 0 6px;
+  color: var(--vscode-foreground);
+  font-size: 12px;
+  font-weight: 600;
+  border-bottom: 1px solid var(--divider);
+}
+
+nav {
+  display: grid;
+  gap: 0;
+}
+
+/* 菜单行：主入口占满第一列，尾部操作按内容宽度 */
+.menu-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0;
+  padding: 0 0 0 2px;
+  border-radius: 4px;
+}
+
+.menu-row + .menu-row {
+  margin-top: 4px;
+}
+
+.menu-row:hover {
+  background: var(--row-hover-background);
+}
+
+.menu-row.is-pressed {
+  background: var(--row-pressed-background);
+}
+
+button {
+  min-width: 0;
+  min-height: 32px;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  border: 0;
+  border-radius: 3px;
+}
+
+button:focus-visible {
+  outline: 1px solid var(--focus-border);
+  outline-offset: 1px;
+}
+
+.menu-main {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  padding: 4px 6px;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: transparent;
+}
+
+.menu-action {
+  padding: 3px 5px;
+  color: var(--vscode-textLink-foreground);
+  background: transparent;
+}
+
+.menu-action:hover {
+  background: var(--action-hover-background);
+}
+
+.menu-action.is-pressed {
+  background: var(--action-pressed-background);
+}

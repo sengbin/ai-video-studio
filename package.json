@@ -23,7 +23,27 @@
   ],
   "main": "./out/extension.js",
   "activationEvents": [],
-  "contributes": {},
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "aiVideoStudio",
+          "title": "AI Video Studio",
+          "icon": "./resources/vscode.svg"
+        }
+      ]
+    },
+    "views": {
+      "aiVideoStudio": [
+        {
+          "id": "aiVideoStudio.sidebar",
+          "name": "",
+          "type": "webview",
+          "icon": "./resources/vscode.svg"
+        }
+      ]
+    }
+  },
   "scripts": {
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p .",

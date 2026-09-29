@@ -8,7 +8,17 @@
 // ------------------------------------------------------------------------
 
 import * as vscode from 'vscode';
+import { SIDEBAR_VIEW_ID, SidebarViewProvider } from './sidebar/sidebar-view-provider';
 
-export function activate(_context: vscode.ExtensionContext): void {}
+/**
+ * 激活扩展并注册侧栏视图。
+ * @param context 扩展上下文，用于登记需要随扩展释放的资源。
+ */
+export function activate(context: vscode.ExtensionContext): void {
+  context.subscriptions.push(
+    vscode.window.registerWebviewViewProvider(SIDEBAR_VIEW_ID, new SidebarViewProvider(context.extensionUri))
+  );
+}
 
+/** 停用扩展；注册的资源由 VS Code 通过 subscriptions 统一释放。 */
 export function deactivate(): void {}
