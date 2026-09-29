@@ -1,0 +1,40 @@
+{
+  "name": "ai-video-studio",
+  "displayName": "AI Video Studio",
+  "version": "0.0.1",
+  "icon": "resources/logo.png",
+  "publisher": "chengbin",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sengbin/ai-video-studio.git"
+  },
+  "engines": {
+    "vscode": "^1.108.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "AI",
+    "AI video",
+    "AI 视频",
+    "智影"
+  ],
+  "main": "./out/extension.js",
+  "activationEvents": [],
+  "contributes": {},
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p .",
+    "watch": "tsc -watch -p .",
+    "package": "vsce package",
+    "publish": "vsce publish"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.30",
+    "@types/vscode": "^1.108.0",
+    "@vscode/vsce": "^4.0.0",
+    "typescript": "^7.0.2"
+  }
+}
