@@ -4,13 +4,14 @@
 
 | 决策项 | 结论 |
 |---|---|
-| 生成粒度 | 按**镜头**提交；参数按“任务默认 → 集覆盖 → 镜头覆盖”三级合并 |
-| 拍摄脚本 | 结构化数据（镜头、台词、实体引用），不以纯文本为准 |
+| 生成粒度 | 按**镜头**提交；参数按“作品默认 → 集覆盖 → 镜头覆盖”三级合并 |
+| 分镜脚本 | 结构化数据（镜头、台词、实体引用），不以纯文本为准 |
 | 本地数据库 | SQLite 单文件；版本号迁移，启动时自动升级 |
 | 资产存储 | 数据库；元数据与二进制内容分表存放 |
 | 视频模型 | 多模型，通过统一适配接口切换；参数选项由模型能力描述驱动；首批接入阿里万象 |
 | 镜头连贯 | 支持“上一镜头尾帧作为下一镜头首帧”，有依赖的镜头串行提交 |
-| 界面形态 | 侧栏只做入口；工作台使用编辑器区 Webview 面板 |
+| 声音 | 先由模型原生生成；镜头声音结构化为对白（含说话人）、旁白、音效、配乐条目；角色有音色设定和可选的音色参考音频；独立音轨只预留数据结构，本阶段不开发 |
+| 界面形态 | 侧栏只做入口，结构见 [page-form-design.md](page-form-design.md) 的 3.1；工作台使用编辑器区 Webview 面板 |
 | 单个短视频 | 也建 1 个集（Episode），下游不区分单集与多集 |
 
 ## 2. 分层架构
@@ -20,7 +21,7 @@ flowchart TB
   subgraph UI["界面层（Webview）"]
     SB["侧栏入口<br/>sidebar"]
     WB["视频生成工作台<br/>workbench 面板"]
-    PM["项目管理面板"]
+    PM["项目列表面板"]
     MC["模型配置面板"]
   end
 
@@ -78,7 +79,7 @@ src/
     services/                  领域服务（项目、脚本、资产、绑定、生成）
     queue/                     生成队列、轮询、重试、镜头依赖调度
   domain/
-    models/                    Project / Task / Episode / Shot / Asset ...
+    models/                    Project / Work / Episode / Shot / Asset ...
     rules/                     参数合并、提交校验、状态机
     ports/                     Repository 与 VideoModelProvider 接口
   infra/
@@ -91,19 +92,21 @@ src/
 resources/
   sidebar/                     侧栏静态资源（已有）
   workbench/                   工作台前端资源（含尾帧截取脚本）
-  project-manager/             项目管理前端资源
+  project-manager/             项目列表与项目详情前端资源
 ```
 
 ## 4. 领域模型
 
+下图为领域模型概览；完整的表结构、约束和索引以 [database-design.md](database-design.md) 为准，页面与表单以 [page-form-design.md](page-form-design.md) 为准。
+
 ```mermaid
 erDiagram
-  PROJECT ||--o{ TASK : 包含
+  PROJECT ||--o{ WORK : 包含
   PROJECT ||--o{ ASSET : 拥有
-  TASK ||--o{ EPISODE : 包含
-  TASK ||--o| GEN_PROFILE : 默认参数
+  WORK ||--o{ EPISODE : 包含
+  WORK ||--o| GEN_PROFILE : 默认参数
   EPISODE ||--o| GEN_PROFILE : 覆盖参数
-  EPISODE ||--|| SCRIPT : 拍摄脚本
+  EPISODE ||--|| SCRIPT : 分镜脚本
   SCRIPT ||--o{ SHOT : 镜头
   SHOT ||--o| GEN_PROFILE : 覆盖参数
   SCRIPT ||--o{ SCRIPT_ENTITY : 脚本实体
@@ -112,6 +115,9 @@ erDiagram
   ASSET ||--o{ ENTITY_BINDING : 被绑定
   ASSET ||--o{ ASSET_FILE : 文件
   SHOT ||--o{ VIDEO_JOB : 提交
+  SHOT ||--o{ SHOT_SOUND : 声音
+  SHOT_SOUND }o--o| SCRIPT_ENTITY : 说话人
+  SHOT_SOUND }o--o| ASSET : 指定音频
   VIDEO_JOB ||--o{ VIDEO_RESULT : 产出
   VIDEO_JOB }o--o| VIDEO_JOB : 前序镜头
   VIDEO_RESULT ||--o| RESULT_FRAME : 尾帧
@@ -124,7 +130,7 @@ erDiagram
     string name
     string description
   }
-  TASK {
+  WORK {
     int id PK
     int project_id FK
     string title
@@ -132,7 +138,7 @@ erDiagram
   }
   EPISODE {
     int id PK
-    int task_id FK
+    int work_id FK
     int seq
     string title
     string status
@@ -147,7 +153,6 @@ erDiagram
     int script_id FK
     int seq
     string description
-    string dialogue
     string camera
     real duration_hint
     string first_frame_mode "none | prev_tail | asset"
@@ -158,10 +163,19 @@ erDiagram
     string kind "character | scene | prop | effect"
     string name
   }
+  SHOT_SOUND {
+    int id PK
+    int shot_id FK
+    string kind "dialogue | narration | sfx | music"
+    int speaker_entity_id FK
+    string text
+    string delivery
+    int audio_asset_id FK
+  }
   ASSET {
     int id PK
     int project_id FK
-    string kind "character | scene | prop | effect"
+    string kind "character | scene | prop | effect | audio"
     string name
     string tags
   }
@@ -180,7 +194,7 @@ erDiagram
   }
   GEN_PROFILE {
     int id PK
-    string scope "task | episode | shot"
+    string scope "work | episode | shot"
     int scope_id
     int model_id FK
     string params_json
@@ -232,10 +246,11 @@ erDiagram
 - **脚本引用实体用 ID，不用名称。** 改名不会断链。
 - **`ASSET_FILE` 单独存二进制。** 列表查询不读取 blob，避免拖慢界面。
 - **`VIDEO_JOB.request_snapshot_json` 保存提交时的完整请求快照**（合并后的参数、脚本文本、资产引用），用于复现、重试和对比。
-- **`GEN_PROFILE` 用 `scope` 区分三级。** 提交时按“任务 → 集 → 镜头”逐级覆盖合并。
+- **`GEN_PROFILE` 用 `scope` 区分三级。** 提交时按“作品 → 集 → 镜头”逐级覆盖合并。
 - **`MODEL_CAPABILITY` 用 JSON 描述能力**：支持的分辨率、横纵比、时长范围、是否支持首帧/尾帧/参考图、参考图数量上限等。
 - **尾帧单独存 `RESULT_FRAME`。** 结果视频生成后提取尾帧入库，下一镜头的任务通过 `first_frame_id` 引用它，`prev_job_id` 记录依赖关系。
 - **`first_frame_mode` 决定首帧来源**：`none` 不指定首帧，`prev_tail` 使用上一镜头尾帧，`asset` 使用指定资产图。
+- **声音按条目保存在 `SHOT_SOUND`。** 对白条目引用说话人实体，条目可指定音频资产；提交时把启用的条目编译为声音提示词，角色的音色参考音频在模型支持时一并提交。详见 [database-design.md](database-design.md)。
 
 ## 5. 视频模型适配
 
@@ -262,6 +277,7 @@ classDiagram
     +prompt
     +referenceImages
     +firstFrame
+    +audio
     +params
   }
 
@@ -281,9 +297,9 @@ classDiagram
 
 ```mermaid
 flowchart LR
-  A["选择项目/任务/集"] --> B["脚本结构化<br/>镜头 + 实体"]
+  A["选择项目/作品/集"] --> B["脚本结构化<br/>镜头 + 实体"]
   B --> C["资产绑定<br/>实体 ↔ 资产"]
-  C --> D["参数配置<br/>任务/集/镜头三级"]
+  C --> D["参数配置<br/>作品/集/镜头三级"]
   D --> E["提交前校验<br/>+ 请求预览"]
   E --> F["按镜头入队提交"]
   F --> G["轮询状态"]
@@ -297,6 +313,7 @@ flowchart LR
 3. 参考图数量、时长等不得超过模型上限。
 4. 模型所需密钥已配置。
 5. `first_frame_mode = prev_tail` 的镜头必须有前序镜头，且所选模型支持首帧输入。
+6. 声音模式为“模型原生生成”时，所选模型必须支持原生声音；参考音频的数量和时长不得超过模型上限；模型不支持的声音内容（如背景音乐）提交时忽略，并在预览中列出。
 
 ### 镜头连贯：尾帧作为下一镜头首帧
 
@@ -377,10 +394,10 @@ sequenceDiagram
 
 ```mermaid
 flowchart LR
-  SBP["侧栏：项目 > 项目管理"] -->|"打开"| PML["项目列表面板"]
+  SBP["侧栏：项目 > 全部项目"] -->|"打开"| PML["项目列表面板"]
   PML -->|"项目卡片：生成视频"| WB["视频生成工作台"]
-  SBV["侧栏：视频 > 视频生成"] -->|"打开"| WB
-  SBM["侧栏：配置 > 模型配置"] --> MC["模型配置面板"]
+  SBV["侧栏：视频 > 生成工作台"] -->|"打开"| WB
+  SBM["侧栏：设置 > 模型"] --> MC["模型配置面板"]
   MC -.->|"提供能力与密钥"| WB
 ```
 
@@ -388,7 +405,7 @@ flowchart LR
 
 ```
 ┌──────────────────────────────────────────────────────────┐
-│ 项目 > 任务 > 集              步骤：绑定 → 参数 → 提交      │
+│ 项目 > 作品 > 集              步骤：绑定 → 参数 → 提交      │
 ├──────────┬───────────────────────────┬───────────────────┤
 │ 集/镜头树 │ 脚本编辑区                 │ 检查器             │
 │ 状态徽标  │ 镜头卡片、实体高亮标记       │ 参数 / 资产绑定 /   │
@@ -421,8 +438,8 @@ flowchart LR
 
 ## 12. 实施顺序
 
-1. SQLite 连接、版本号迁移和 Repository（先项目、任务、集、脚本、镜头）。
-2. 消息协议与面板管理，搭出工作台空壳和项目管理面板。
+1. SQLite 连接、版本号迁移和 Repository（先项目、作品、集、脚本、镜头）。
+2. 消息协议与面板管理，搭出工作台空壳和项目列表面板。
 3. 资产管理与实体绑定。
 4. 模型接口、注册表、能力描述格式和参数面板（仅框架，不接入具体模型）。
 5. 提交校验、生成队列（含镜头依赖调度），使用模拟适配器验证流程。
