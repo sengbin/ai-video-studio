@@ -58,14 +58,18 @@ ${rows}
     </section>`;
 }
 
-/** 渲染一个菜单行：主入口按钮，以及可选的尾部操作按钮。 */
+/** 渲染一个菜单行：主入口按钮（可带小标签），以及可选的尾部操作按钮。 */
 function renderItem(item: SidebarMenuItem): string {
   const title = escapeHtml(item.title);
+  const hoverTitle = escapeHtml(item.badge === undefined ? item.title : `${item.title}（${item.badge}）`);
+  const badgeHtml = item.badge === undefined
+    ? ''
+    : `<span class="menu-badge">${escapeHtml(item.badge)}</span>`;
   const actionHtml = item.actionLabel === undefined
     ? ''
     : `\n            <button class="menu-action" type="button" aria-label="${escapeHtml(`${item.actionLabel}：${item.title}`)}">${escapeHtml(item.actionLabel)}</button>`;
   return `          <div class="menu-row" data-item-id="${escapeHtml(item.id)}">
-            <button class="menu-main" type="button" title="${title}">${title}</button>${actionHtml}
+            <button class="menu-main" type="button" title="${hoverTitle}">${title}${badgeHtml}</button>${actionHtml}
           </div>`;
 }
 

@@ -143,6 +143,18 @@ button:focus-visible {
   background: transparent;
 }
 
+.menu-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 4px;
+  color: color-mix(in srgb, var(--vscode-foreground) 70%, transparent);
+  font-size: 11px;
+  line-height: 16px;
+  vertical-align: 1px;
+  border: 1px solid color-mix(in srgb, var(--vscode-foreground) 24%, transparent);
+  border-radius: 3px;
+}
+
 .menu-action {
   padding: 3px 5px;
   color: var(--vscode-textLink-foreground);

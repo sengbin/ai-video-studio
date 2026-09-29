@@ -14,6 +14,8 @@ export interface SidebarMenuItem {
   readonly title: string;
   /** 尾部次要操作文案；缺省表示该行没有尾部操作。 */
   readonly actionLabel?: string;
+  /** 标题后的小标签，如“预览”；缺省表示不显示。 */
+  readonly badge?: string;
 }
 
 /** 分区的表面样式：stage 带阴影（亮主题），flat 无阴影。 */
@@ -27,22 +29,31 @@ export interface SidebarMenuSection {
   readonly items: readonly SidebarMenuItem[];
 }
 
-/** 侧栏菜单分区，按页面从上到下的顺序排列。 */
+/** 侧栏菜单分区，按制作顺序从上到下排列：项目、创作、脚本、资产、视频、设置。 */
 export const SIDEBAR_SECTIONS: readonly SidebarMenuSection[] = [
   {
     id: 'project',
     title: '项目',
     surface: 'flat',
-    items: [{ id: 'project-management', title: '项目管理', actionLabel: '创建' }]
+    items: [{ id: 'project-list', title: '全部项目', actionLabel: '创建' }]
   },
   {
-    id: 'task',
-    title: '任务',
+    id: 'creation',
+    title: '创作',
     surface: 'stage',
     items: [
-      { id: 'creative-writing', title: '创意写作', actionLabel: '添加' },
-      { id: 'image-inspired-writing', title: '图片灵感写作', actionLabel: '添加' },
-      { id: 'novel-recreation', title: '小说重创作', actionLabel: '添加' }
+      { id: 'text-inspiration', title: '文字灵感', actionLabel: '添加' },
+      { id: 'image-inspiration', title: '图片灵感', actionLabel: '添加' },
+      { id: 'novel-adaptation', title: '小说改编', actionLabel: '添加' }
+    ]
+  },
+  {
+    id: 'script',
+    title: '脚本',
+    surface: 'stage',
+    items: [
+      { id: 'screenplay', title: '剧本', actionLabel: '添加' },
+      { id: 'storyboard-script', title: '分镜脚本', actionLabel: '添加' }
     ]
   },
   {
@@ -50,28 +61,26 @@ export const SIDEBAR_SECTIONS: readonly SidebarMenuSection[] = [
     title: '资产',
     surface: 'stage',
     items: [
-      { id: 'character-generation', title: '角色生成', actionLabel: '添加' },
-      { id: 'scene-generation', title: '场景生成', actionLabel: '添加' },
-      { id: 'prop-generation', title: '道具生成', actionLabel: '添加' },
-      { id: 'effect-generation', title: '特效生成', actionLabel: '添加' }
+      { id: 'character', title: '角色', actionLabel: '添加' },
+      { id: 'scene', title: '场景', actionLabel: '添加' },
+      { id: 'prop', title: '道具', actionLabel: '添加' },
+      { id: 'effect', title: '特效', actionLabel: '添加' },
+      { id: 'audio', title: '音频', actionLabel: '添加' }
     ]
   },
   {
-    id: 'shooting',
-    title: '拍摄',
+    id: 'video',
+    title: '视频',
     surface: 'stage',
-    items: [
-      { id: 'screenplay', title: '剧本创作', actionLabel: '添加' },
-      { id: 'shooting-script', title: '拍摄脚本制作', actionLabel: '添加' }
-    ]
+    items: [{ id: 'video-workbench', title: '生成工作台' }]
   },
   {
-    id: 'configuration',
-    title: '配置',
+    id: 'settings',
+    title: '设置',
     surface: 'flat',
     items: [
-      { id: 'model-config', title: '模型配置（预览）', actionLabel: '添加' },
-      { id: 'database-backup', title: '数据库备份（预览）' }
+      { id: 'model-settings', title: '模型', actionLabel: '添加', badge: '预览' },
+      { id: 'data-backup', title: '数据备份', badge: '预览' }
     ]
   }
 ];
