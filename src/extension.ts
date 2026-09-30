@@ -9,7 +9,6 @@
 
 import { mkdirSync } from 'node:fs';
 import * as vscode from 'vscode';
-import { FormPanelOpener } from './app/forms/form-panel';
 import { MessageRouter } from './app/messaging/message-router';
 import { ProjectPages } from './app/pages/project-pages';
 import { PanelManager } from './app/panels/panel-manager';
@@ -37,7 +36,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
   const projectService = new ProjectService(new SqliteProjectRepository(database));
   const panels = new PanelManager(context.extensionUri);
-  const projectPages = new ProjectPages(projectService, panels, new FormPanelOpener(panels));
+  const projectPages = new ProjectPages(projectService, panels);
 
   const actionRegistry = new SidebarActionRegistry(SIDEBAR_SECTIONS)
     .register('project-list', 'main', () => projectPages.showProjectList())

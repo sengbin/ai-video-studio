@@ -77,7 +77,7 @@ src/
   extension.ts                 扩展入口，仅做装配（已实现）
   app/
     commands/                  命令注册
-    forms/                     表单定义、表单请求处理与表单面板（已实现：项目表单）
+    forms/                     表单定义、表单目录与表单请求处理（已实现：项目表单）；表单在页内弹出页面显示
     pages/                     各页面的请求处理与页面入口（已实现：项目列表）
     panels/                    Webview 面板生命周期管理与页面外壳（已实现）
     messaging/                 消息信封、路由与错误映射（已实现）
@@ -98,7 +98,7 @@ src/
 resources/
   shared/                      通信桥、页面基础样式（已实现）
   ui-kit/                      界面组件库在根目录 ui-kit/（不在 resources 下），页面直接从 ui-kit/src 加载
-  form/                        表单引擎（已实现）
+  form/                        表单引擎：在页内弹出页面渲染表单（已实现）
   project-list/                项目列表页（已实现）
   sidebar/                     侧栏静态资源（已实现）
   workbench/                   工作台前端资源（含尾帧截取脚本）

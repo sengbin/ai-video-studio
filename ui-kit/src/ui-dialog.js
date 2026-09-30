@@ -111,7 +111,7 @@
 
     if (event.key === 'Escape' && !event.defaultPrevented && owner.config.closable) {
       event.preventDefault();
-      owner.handle.close('escape');
+      void owner.handle.requestClose('escape');
     } else if (event.key === 'Tab' && owner.config.modal) {
       trapFocus(owner, event);
     } else if (event.key === 'Enter' && !event.defaultPrevented && owner.defaultButton) {
@@ -203,10 +203,11 @@
    *   modal 是否模态，默认 true；closable 是否可用右上角 × 与 Esc 关闭，默认 true；
    *   role 'dialog'（默认）或 'alertdialog'；width/height 初始尺寸（像素）；minWidth/minHeight 调整时的下限；
    *   resizable 弹出页面是否可调整，默认 true；draggable 是否可按住标题行拖动，默认 true；
-   *   initialFocus 'default'|'cancel'|'first'|元素；onClose 关闭时回调。
+   *   initialFocus 'default'|'cancel'|'first'|元素；onClose 关闭时回调；
+   *   beforeClose({ reason }) 用户经 ×、Esc 或取消按钮关闭前调用，返回 false（或 resolve 为 false）时保持打开，程序调用 close() 不经过它。
    *   每个按钮：{ id, text, variant, isDefault, isCancel, disabled, onClick(handle) }，onClick 返回 false（或 resolve 为 false）时保持打开。
    * @returns {object} 句柄：element、bodyElement、footerElement、closed（关闭时 resolve { reason, buttonId }）、
-   *   close(reason)、setTitle(text)、setButtonDisabled(id, disabled)、getButton(id)。
+   *   close(reason)、requestClose(reason)（先经 beforeClose 询问）、setTitle(text)、setButtonDisabled(id, disabled)、getButton(id)。
    */
   aiUi.openDialog = function (options) {
     const settings = options || {};
@@ -220,7 +221,8 @@
       draggable: settings.draggable !== false,
       buttons: settings.buttons || [],
       initialFocus: settings.initialFocus,
-      onClose: settings.onClose
+      onClose: settings.onClose,
+      beforeClose: settings.beforeClose
     };
     const width = settings.width || (isPage ? DEFAULT_PAGE_WIDTH : DEFAULT_DIALOG_WIDTH);
     const minWidth = settings.minWidth || DEFAULT_MIN_WIDTH;
@@ -237,7 +239,7 @@
           {
             class: 'ui-dialog__close',
             attrs: { type: 'button', 'aria-label': CLOSE_LABEL, title: CLOSE_LABEL },
-            on: { click: () => handle.close('close') }
+            on: { click: () => void handle.requestClose('close') }
           },
           aiUi.h('span', { class: 'ui-dialog__close-icon', attrs: { 'aria-hidden': 'true' } })
         )
@@ -293,7 +295,9 @@
         isBusy = false;
         applyButtonStates();
       }
-      if (!keepOpen) handle.close(spec.isCancel ? 'cancel' : 'button', spec.id);
+      if (keepOpen) return;
+      if (spec.isCancel) await handle.requestClose('cancel', spec.id);
+      else handle.close('button', spec.id);
     }
 
     config.buttons.forEach((spec, index) => {
@@ -312,6 +316,7 @@
       resolveClosed = resolve;
     });
     let isClosed = false;
+    let isAskingToClose = false;
 
     const record = { config, dialog, overlay: null, defaultButton, handle: null };
     const handle = {
@@ -331,6 +336,18 @@
         const result = { reason: reason || 'api', buttonId };
         if (config.onClose) config.onClose(result);
         resolveClosed(result);
+      },
+      async requestClose(reason, buttonId) {
+        if (isClosed || isAskingToClose) return;
+        if (config.beforeClose) {
+          isAskingToClose = true;
+          try {
+            if ((await config.beforeClose({ reason })) === false) return;
+          } finally {
+            isAskingToClose = false;
+          }
+        }
+        handle.close(reason, buttonId);
       },
       setTitle(text) {
         titleElement.textContent = text;

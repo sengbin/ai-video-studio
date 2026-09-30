@@ -1,21 +1,13 @@
 /*
  * ------------------------------------------------------------------------
  * 名称：form.css
- * 说明：表单页面样式：页面宽度、错误摘要和底部按钮区。
+ * 说明：表单弹出页面的内容样式：错误摘要与按钮区。
  * 作者：Lion
  * 邮箱：chengbin@3578.cn
  * 日期：2026-09-30
- * 备注：控件与字段外观在 ui-kit 组件库中；颜色统一使用 rgb() 写法。
+ * 备注：控件、字段与弹出页面的外观在 ui-kit 组件库中；颜色统一使用 rgb() 写法。
  * ------------------------------------------------------------------------
  */
-
-:root {
-  --form-max-width: 640px;
-}
-
-.form-page {
-  max-width: var(--form-max-width);
-}
 
 .form-error-summary {
   margin: 0 0 12px;
@@ -29,15 +21,11 @@
   outline-offset: 0;
 }
 
-/* 按钮区固定在可视区底边，内容超长时正文滚动 */
+/* 按钮跟在最后一个字段下面，随表单内容滚动，不固定在弹出页面底部 */
 .form-actions {
-  position: sticky;
-  bottom: 0;
   display: flex;
   gap: 6px;
   margin-top: 12px;
-  padding: 8px 0 0;
-  background: var(--bg);
 }
 
 .form-actions .ui-button {

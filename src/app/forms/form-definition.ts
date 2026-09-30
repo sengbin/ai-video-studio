@@ -1,10 +1,10 @@
 // ------------------------------------------------------------------------
 // 名称：form-definition.ts
-// 说明：表单定义：结构描述、初始值以及提交和字段检查的行为，由具体表单实现。
+// 说明：表单定义的类型：字段描述、初始值、字段检查与提交，以及按名称登记表单的目录。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-09-30
-// 备注：提交失败时抛出领域错误，由消息路由转换为界面可展示的错误。
+// 备注：不依赖 VS Code；页面通过表单名称与参数向宿主请求打开表单，宿主用目录中的工厂创建定义。
 // ------------------------------------------------------------------------
 
 import { FormSchema } from './form-schema';
@@ -28,3 +28,12 @@ export interface FormDefinition {
    */
   submit(values: FormValues): void;
 }
+
+/**
+ * 表单工厂：按页面传来的参数创建表单定义。
+ * @throws ValidationError、NotFoundError 参数无效或对象不存在。
+ */
+export type FormFactory = (params: unknown) => FormDefinition;
+
+/** 表单目录：表单名称到工厂，如 `project.create`。 */
+export type FormCatalog = ReadonlyMap<string, FormFactory>;

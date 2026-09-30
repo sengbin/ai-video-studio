@@ -1,58 +1,78 @@
 // ------------------------------------------------------------------------
 // 名称：form-handlers.ts
-// 说明：把表单定义注册为路由请求：初始化、字段检查、提交、取消。
+// 说明：把表单目录注册为路由请求：按名称打开表单（创建会话）、字段检查、提交、关闭。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-09-30
-// 备注：不依赖 VS Code；关闭面板等行为通过 hooks 注入。未保存修改的确认由页面内对话框完成，宿主只负责关闭。
+// 备注：不依赖 VS Code；表单在页面内以弹出页面显示，未保存修改的确认在页面完成，宿主只维护会话。
 // ------------------------------------------------------------------------
 
-import { FORM_LEVEL_ERROR_KEY, ValidationError } from '../../domain/errors';
+import { FORM_LEVEL_ERROR_KEY, NotFoundError, ValidationError } from '../../domain/errors';
 import { readRecord } from '../../domain/rules/field-readers';
 import { MessageRouter } from '../messaging/message-router';
-import { FormDefinition, FormValues } from './form-definition';
+import { FormCatalog, FormDefinition, FormValues } from './form-definition';
 
 /** 表单引擎使用的请求名称，需与 resources/form/form-runtime.js 一致。 */
 export const FORM_REQUESTS = {
-  init: 'form.init',
+  open: 'form.open',
   checkField: 'form.checkField',
   submit: 'form.submit',
-  cancel: 'form.cancel'
+  close: 'form.close'
 } as const;
 
-/** 表单生命周期中需要外部完成的动作。 */
-export interface FormHandlerHooks {
-  /** 提交成功后调用，通常用于关闭面板并刷新来源页。 */
-  onSubmitted(): void;
-  /** 用户取消（页面已完成放弃确认）后调用，通常用于关闭面板。 */
-  onCancelled(): void;
-}
+/** 表单会话失效（已提交或已关闭）时的提示。 */
+const SESSION_EXPIRED_MESSAGE = '表单已失效，请重新打开。';
 
 /**
- * 在路由器上注册表单的全部请求处理函数。
- * @param router 面板的请求路由器。
- * @param definition 表单定义。
- * @param hooks 生命周期动作。
+ * 在路由器上注册表单相关的全部请求处理函数。
+ * 每次打开表单创建一个会话，后续请求带上会话标识；提交成功或关闭后会话失效。
+ * @param router 页面的请求路由器。
+ * @param catalog 页面可以打开的表单目录。
  */
-export function registerFormHandlers(router: MessageRouter, definition: FormDefinition, hooks: FormHandlerHooks): void {
-  router.register(FORM_REQUESTS.init, () => ({ schema: definition.schema, values: definition.initialValues }));
+export function registerFormHandlers(router: MessageRouter, catalog: FormCatalog): void {
+  const sessions = new Map<number, FormDefinition>();
+  let nextFormId = 1;
+
+  const findSession = (payload: unknown): { formId: number; definition: FormDefinition } => {
+    const formId = readRecord(payload).formId;
+    const definition = typeof formId === 'number' ? sessions.get(formId) : undefined;
+    if (typeof formId !== 'number' || definition === undefined) {
+      throw new NotFoundError(SESSION_EXPIRED_MESSAGE);
+    }
+    return { formId, definition };
+  };
+
+  router.register(FORM_REQUESTS.open, (payload) => {
+    const source = readRecord(payload);
+    const factory = catalog.get(readString(source.form, 'form'));
+    if (factory === undefined) {
+      throw new ValidationError({ [FORM_LEVEL_ERROR_KEY]: '不支持的表单。' });
+    }
+    const definition = factory(source.params);
+    const formId = nextFormId++;
+    sessions.set(formId, definition);
+    return { formId, schema: definition.schema, values: definition.initialValues };
+  });
 
   router.register(FORM_REQUESTS.checkField, (payload) => {
     const source = readRecord(payload);
     const key = readString(source.key, 'key');
     const value = readString(source.value, 'value');
-    return { error: definition.checkField?.(key, value) };
+    return { error: findSession(payload).definition.checkField?.(key, value) };
   });
 
   router.register(FORM_REQUESTS.submit, (payload) => {
-    const values = readFormValues(readRecord(payload).values);
-    definition.submit(values);
-    hooks.onSubmitted();
+    const { formId, definition } = findSession(payload);
+    definition.submit(readFormValues(readRecord(payload).values));
+    sessions.delete(formId);
     return {};
   });
 
-  router.register(FORM_REQUESTS.cancel, () => {
-    hooks.onCancelled();
+  router.register(FORM_REQUESTS.close, (payload) => {
+    const formId = readRecord(payload).formId;
+    if (typeof formId === 'number') {
+      sessions.delete(formId);
+    }
     return {};
   });
 }

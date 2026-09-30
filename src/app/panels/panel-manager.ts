@@ -70,7 +70,7 @@ export class PanelManager {
       return existing.handle;
     }
 
-    // 表单等页面切换标签后需要保留输入，因此保留隐藏面板的上下文。
+    // 切换标签后需要保留页面内状态（如已弹出的表单里的输入），因此保留隐藏面板的上下文。
     const panel = vscode.window.createWebviewPanel(options.viewType, options.title, vscode.ViewColumn.Active, {
       enableScripts: true,
       retainContextWhenHidden: true,

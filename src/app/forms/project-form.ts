@@ -13,14 +13,21 @@ import {
   VIDEO_RESOLUTION_OPTIONS,
   VISUAL_STYLE_OPTIONS
 } from '../../domain/models/option-sets';
+import { readEntityId } from '../../domain/rules/field-readers';
 import {
   PROJECT_DESCRIPTION_MAX_LENGTH,
   PROJECT_NAME_MAX_LENGTH,
   PROJECT_VISUAL_STYLE_MAX_LENGTH
 } from '../../domain/rules/project-rules';
 import { DUPLICATE_PROJECT_NAME_MESSAGE, ProjectService } from '../services/project-service';
-import { FormDefinition, FormValues } from './form-definition';
+import { FormCatalog, FormDefinition, FormFactory, FormValues } from './form-definition';
 import { FormSchema } from './form-schema';
+
+/** 项目表单在表单目录中的名称，页面据此请求打开。 */
+export const PROJECT_FORM_NAMES = {
+  create: 'project.create',
+  edit: 'project.edit'
+} as const;
 
 const CREATE_FORM_TITLE = '新建项目';
 const EDIT_FORM_TITLE = '编辑项目';
@@ -122,4 +129,15 @@ export function createEditProjectForm(service: ProjectService, project: Project)
       service.updateProject(project.id, values);
     }
   };
+}
+
+/**
+ * 创建项目表单目录：新建不需要参数，编辑的参数为 `{ id }`。
+ * @param service 项目服务。
+ */
+export function createProjectFormCatalog(service: ProjectService): FormCatalog {
+  return new Map<string, FormFactory>([
+    [PROJECT_FORM_NAMES.create, () => createNewProjectForm(service)],
+    [PROJECT_FORM_NAMES.edit, (params) => createEditProjectForm(service, service.getProject(readEntityId(params, '项目')))]
+  ]);
 }

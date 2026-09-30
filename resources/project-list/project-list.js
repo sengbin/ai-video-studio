@@ -1,21 +1,24 @@
 // ------------------------------------------------------------------------
 // 名称：project-list.js
-// 说明：项目列表页脚本：用界面组件库渲染项目表格，处理搜索、创建、编辑与带名称确认的删除。
+// 说明：项目列表页脚本：用界面组件库渲染项目表格，处理搜索、在页内弹出页面中新建与编辑、带名称确认的删除。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-09-30
-// 备注：请求与事件名称与 src/app/pages/project-list-handlers.ts 一致。
+// 备注：请求与事件名称与 src/app/pages/project-list-handlers.ts、src/app/forms/project-form.ts 一致；依赖 form/form-runtime.js（aiForm）。
 // ------------------------------------------------------------------------
 
 'use strict';
 
 (function () {
   const REQUEST_LIST = 'projects.list';
-  const REQUEST_CREATE = 'projects.create';
-  const REQUEST_EDIT = 'projects.edit';
+  const REQUEST_TAKE_PENDING_ACTION = 'projects.takePendingAction';
   const REQUEST_PREPARE_DELETE = 'projects.prepareDelete';
   const REQUEST_DELETE = 'projects.delete';
   const EVENT_CHANGED = 'projects.changed';
+  const EVENT_ACTION = 'projects.action';
+  const ACTION_CREATE = 'create';
+  const FORM_CREATE = 'project.create';
+  const FORM_EDIT = 'project.edit';
 
   const PAGE_TITLE = '全部项目';
   const UNSET_TEXT = '未设置';
@@ -30,6 +33,7 @@
   let projects = [];
   let loadError = '';
   let isLoading = true;
+  let isFormOpen = false;
   let filterText = '';
   let contentElement = null;
   let messageElement = null;
@@ -77,6 +81,27 @@
     renderContent();
   }
 
+  /** 弹出表单；已有表单打开时忽略，避免重复点击叠出多个。 */
+  async function showForm(options) {
+    if (isFormOpen) return;
+    isFormOpen = true;
+    try {
+      await aiForm.open(options);
+    } finally {
+      isFormOpen = false;
+    }
+  }
+
+  /** 在页内弹出“新建项目”表单。 */
+  function openCreateForm() {
+    void showForm({ form: FORM_CREATE });
+  }
+
+  /** 在页内弹出“编辑项目”表单。 */
+  function openEditForm(project) {
+    void showForm({ form: FORM_EDIT, params: { id: project.id } });
+  }
+
   /** 删除项目：先取影响范围，再用页内删除对话框要求输入项目名称，最后请求删除。 */
   async function deleteProject(project) {
     const impact = await runAction(REQUEST_PREPARE_DELETE, { id: project.id });
@@ -101,7 +126,7 @@
       kind: 'edit',
       compact: true,
       ariaLabel: `修改：${project.name}`,
-      onClick: () => void runAction(REQUEST_EDIT, { id: project.id })
+      onClick: () => openEditForm(project)
     });
     const deleteButton = aiUi.button({
       kind: 'delete',
@@ -175,7 +200,7 @@
     }
     if (projects.length === 0) {
       contentElement.append(
-        renderState('还没有项目。', aiUi.button({ text: '创建项目', kind: 'add', onClick: () => void runAction(REQUEST_CREATE) }))
+        renderState('还没有项目。', aiUi.button({ text: '创建项目', kind: 'add', onClick: openCreateForm }))
       );
       return;
     }
@@ -196,7 +221,7 @@
         renderContent();
       }
     });
-    const createButton = aiUi.button({ text: '创建项目', kind: 'add', onClick: () => void runAction(REQUEST_CREATE) });
+    const createButton = aiUi.button({ text: '创建项目', kind: 'add', onClick: openCreateForm });
     const toolbar = aiUi.h('div', { class: 'list-toolbar' }, aiUi.h('div', { class: 'list-search' }, search.element), createButton.element);
 
     messageElement = aiUi.h('p', { class: 'list-message', hidden: true, attrs: { role: 'status' } });
@@ -206,5 +231,15 @@
 
   renderPage();
   window.hostBridge.onEvent(EVENT_CHANGED, () => void loadProjects());
+  window.hostBridge.onEvent(EVENT_ACTION, (payload) => {
+    if (payload && payload.action === ACTION_CREATE) openCreateForm();
+  });
+  // 页面打开前已登记的动作（如侧栏点“创建项目”），加载完成后主动取走。
+  window.hostBridge
+    .request(REQUEST_TAKE_PENDING_ACTION)
+    .then((result) => {
+      if (result && result.action === ACTION_CREATE) openCreateForm();
+    })
+    .catch(() => undefined);
   void loadProjects();
 })();

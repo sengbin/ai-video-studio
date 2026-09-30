@@ -53,8 +53,7 @@ ui-kit/                        组件库（自绘控件、对话框及其文档�
 
 | 清单 | 用途 |
 |---|---|
-| `FORM_PAGE_RESOURCES` | 表单页面 |
-| `PROJECT_LIST_PAGE_RESOURCES` | 项目列表页 |
+| `PROJECT_LIST_PAGE_RESOURCES` | 项目列表页（新建、编辑表单在页内弹出，因此一并加载表单引擎 `form/form-runtime.js`） |
 | `SIDEBAR_PAGE_RESOURCES` | 侧栏页面（不加载 `theme.css`，避免影响自己的布局） |
 
 编辑器区页面的加载顺序固定为：令牌样式、页面基础样式、控件与对话框样式、页面自己的样式；脚本为通信桥、组件库脚本、页面自己的脚本。这个顺序由 `createEditorPageResources` 保证。
@@ -329,6 +328,18 @@ const result = await page.closed;   // { reason, buttonId }
 
 弹出页面可以拖动右边、下边和右下角三处调整大小；只向右、向下生长，左上角位置不变；有最小尺寸限制，也不会超出窗口。按住标题行可以拖动移位（见 7.8）。
 
+**关闭前确认**：用 `beforeClose` 在用户点右上角 ×、按 Esc 或点“取消”时先询问，返回 `false`（或 resolve 为 `false`）则保持打开。表单用它在有未保存修改时确认是否放弃：
+
+```js
+const page = aiUi.openPage({
+  title: '编辑',
+  content: formElement,
+  beforeClose: async ({ reason }) => !isDirty() || (await aiUi.confirm({ message: '放弃未保存的修改？', variant: 'danger' }))
+});
+```
+
+普通按钮（如“保存”）和程序调用 `close()` 不经过 `beforeClose`；询问未结束时重复触发不会再次询问。
+
 ### 7.5 底层 `aiUi.openDialog` 选项
 
 | 选项 | 说明 |
@@ -346,6 +357,7 @@ const result = await page.closed;   // { reason, buttonId }
 | `draggable` | 是否可按住标题行拖动移位，默认 true |
 | `initialFocus` | `default`、`cancel`、`first` 或某个元素；不指定时，对话框聚焦默认按钮，弹出页面聚焦内容里第一个可聚焦元素 |
 | `onClose` | 关闭时的回调，参数为 `{ reason, buttonId }` |
+| `beforeClose` | 用户经 ×、Esc 或取消按钮关闭前调用，参数为 `{ reason }`；返回 `false`（或 resolve 为 `false`）时保持打开 |
 
 按钮描述：
 
@@ -364,7 +376,8 @@ const result = await page.closed;   // { reason, buttonId }
 |---|---|
 | `element`、`bodyElement`、`footerElement` | 对话框、内容区、按钮区元素 |
 | `closed` | 关闭时 resolve `{ reason, buttonId }`，`reason` 为 `button`、`cancel`、`close`、`escape` 或 `api` |
-| `close(reason)` | 关闭对话框 |
+| `close(reason)` | 关闭对话框（程序关闭，不经 `beforeClose`） |
+| `requestClose(reason)` | 先经 `beforeClose` 询问，允许后再关闭；×、Esc 和取消按钮内部用它，返回 Promise |
 | `setTitle(text)` | 修改标题 |
 | `setButtonDisabled(id, disabled)` | 禁用或启用某个按钮 |
 | `getButton(id)` | 取得按钮对象 |
@@ -400,7 +413,7 @@ const result = await page.closed;   // { reason, buttonId }
 
 ## 8. 表单引擎
 
-表单页面不需要手写界面：宿主用一个表单描述（schema）加上提交逻辑，前端引擎（`resources/form/form-runtime.js`）用本组件库渲染控件并处理校验、提交和取消。
+表单不需要手写界面：页面调用 `aiForm.open({ form, params })`，它向宿主请求一个表单描述（schema），在**当前页面内弹出一个弹出页面**用本组件库渲染控件，并处理校验、提交和取消。不再单独打开表单页面（编辑器标签页）。前端引擎在 `resources/form/form-runtime.js`。
 
 ### 8.1 字段描述
 
@@ -439,14 +452,36 @@ export function createXxxForm(service: XxxService): FormDefinition {
     submit: (values) => { service.create(values); }   // 失败时抛出 ValidationError、ConflictError
   };
 }
-// 打开：formPanelOpener.open('xxx-form:new', createXxxForm(service));
+
+// 登记到表单目录（名称 → 工厂）：工厂接收页面传来的参数，如编辑时的 { id }
+const catalog: FormCatalog = new Map([['work.create', () => createXxxForm(service)]]);
+// 在页面的路由器上注册（每个需要弹出表单的页面注册一次）
+registerFormHandlers(router, catalog);
 ```
 
-引擎负责：字段失去焦点时校验、提交前校验全部字段并聚焦第一个错误、提交中禁用按钮并显示“保存中…”、失败时保留输入并显示错误、成功后由宿主关闭面板。宿主抛出的 `ValidationError`、`ConflictError` 会按字段键显示在对应字段下方。
+页面端打开（页面需加载 `form/form.css` 与 `form/form-runtime.js`，已包含在项目列表页的清单中）：
 
-### 8.4 取消
+```js
+const saved = await aiForm.open({ form: 'work.create' });              // 新建
+await aiForm.open({ form: 'project.edit', params: { id: project.id } }); // 编辑，参数由工厂校验
+```
 
-点击“取消”时，如果表单相对初始状态有修改，先用页内确认对话框询问“放弃未保存的修改？”，确认后才请求宿主关闭面板；没有修改则直接关闭。直接关闭面板标签页时，VS Code 不允许拦截，因此不会询问。
+`aiForm.open` 在弹出页面关闭后 resolve：已保存为 `true`，否则 `false`；表单打开失败（如项目不存在）时在页内提示并返回 `false`。数据变化后页面刷新依靠服务层的变化事件，不需要表单回调。
+
+引擎负责：字段失去焦点时校验、提交前校验全部字段并聚焦第一个错误、提交中禁用按钮并显示“保存中…”、失败时保留输入并显示错误、成功后关闭弹出页面。宿主抛出的 `ValidationError`、`ConflictError` 会按字段键显示在对应字段下方。
+
+宿主与页面的请求（`src/app/forms/form-handlers.ts`）：每次打开创建一个会话，后续请求带会话标识 `formId`。
+
+| 请求 | 作用 |
+|---|---|
+| `form.open { form, params }` | 按名称与参数创建会话，返回 `{ formId, schema, values }` |
+| `form.checkField { formId, key, value }` | 字段服务端检查（如名称唯一），返回 `{ error? }` |
+| `form.submit { formId, values }` | 提交；成功后会话失效，失败时会话保留以便修改后重新提交 |
+| `form.close { formId }` | 弹出页面关闭后释放会话 |
+
+### 8.4 取消与关闭
+
+点“取消”、右上角 × 或按 Esc 时，如果表单相对初始状态有修改，先用页内确认对话框询问“放弃未保存的修改？”（通过弹出页面的 `beforeClose`，见 7.4），确认后才关闭；没有修改则直接关闭。表单不再是编辑器标签页，不存在“直接关闭标签页无法拦截”的问题。
 
 ## 9. 与宿主配合的删除确认协议
 
@@ -523,7 +558,6 @@ export function createXxxForm(service: XxxService): FormDefinition {
 | 项 | 说明 |
 |---|---|
 | 扩展激活失败 | 数据库无法打开时没有任何页面可用，只能用 VS Code 的错误提示告知用户，这是唯一保留的内置弹窗 |
-| 标签页直接关闭 | VS Code 不允许拦截，表单不会询问是否放弃修改 |
 | 弹出页面的键盘调整 | 目前只支持鼠标拖动调整大小 |
 | 拖动与多显示器 | 对话框在 Webview 窗口范围内移动，不能拖到 VS Code 编辑器区之外 |
 | 滚动条样式 | 依赖 Chromium 的 `::-webkit-scrollbar`，只适用于 VS Code Webview |

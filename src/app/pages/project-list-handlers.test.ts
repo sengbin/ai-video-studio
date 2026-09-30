@@ -4,7 +4,7 @@
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-09-30
-// 备注：使用内存数据库与假的界面动作，不依赖 VS Code 环境。
+// 备注：使用内存数据库与假的待执行动作，不依赖 VS Code 环境。
 // ------------------------------------------------------------------------
 
 import assert from 'node:assert/strict';
@@ -14,25 +14,23 @@ import { IN_MEMORY_DATABASE_PATH, openDatabase } from '../../infra/database/data
 import { SqliteProjectRepository } from '../../infra/database/sqlite-project-repository';
 import { MessageRouter } from '../messaging/message-router';
 import { ProjectService } from '../services/project-service';
-import { PROJECT_LIST_REQUESTS, ProjectListActions, registerProjectListHandlers } from './project-list-handlers';
+import { PROJECT_LIST_REQUESTS, ProjectListAction, registerProjectListHandlers } from './project-list-handlers';
 
-/** 创建路由器、服务和记录动作调用的夹具。 */
+/** 创建路由器、服务和可设置待执行动作的夹具。 */
 function createFixture() {
   const database = openDatabase(IN_MEMORY_DATABASE_PATH);
   const service = new ProjectService(new SqliteProjectRepository(database));
-  const calls = { createForm: 0, editForms: [] as Project[] };
-  const actions: ProjectListActions = {
-    openCreateForm: () => {
-      calls.createForm += 1;
-    },
-    openEditForm: (project) => {
-      calls.editForms.push(project);
-    }
-  };
+  const state: { pendingAction: ProjectListAction | undefined } = { pendingAction: undefined };
   const router = new MessageRouter();
-  registerProjectListHandlers(router, service, actions);
+  registerProjectListHandlers(router, service, {
+    takePendingAction: () => {
+      const taken = state.pendingAction;
+      state.pendingAction = undefined;
+      return taken;
+    }
+  });
   const send = (name: string, payload?: unknown) => router.handle({ type: 'request', requestId: 1, name, payload });
-  return { database, service, calls, send };
+  return { database, service, state, send };
 }
 
 test('读取列表返回项目摘要', async () => {
@@ -47,25 +45,17 @@ test('读取列表返回项目摘要', async () => {
   }
 });
 
-test('创建请求打开新建表单', async () => {
-  const { database, calls, send } = createFixture();
+test('取待执行动作：有则返回并只返回一次，没有则为 undefined', async () => {
+  const { database, state, send } = createFixture();
   try {
-    assert.ok((await send(PROJECT_LIST_REQUESTS.create))?.ok);
-    assert.equal(calls.createForm, 1);
-  } finally {
-    database.close();
-  }
-});
+    const none = await send(PROJECT_LIST_REQUESTS.takePendingAction);
+    assert.deepEqual(none?.ok && none.data, { action: undefined });
 
-test('编辑请求以项目内容打开编辑表单，项目不存在时返回错误', async () => {
-  const { database, service, calls, send } = createFixture();
-  try {
-    const project = service.createProject({ name: '甲' });
-    assert.ok((await send(PROJECT_LIST_REQUESTS.edit, { id: project.id }))?.ok);
-    assert.equal(calls.editForms[0].name, '甲');
-
-    const missing = await send(PROJECT_LIST_REQUESTS.edit, { id: 99 });
-    assert.ok(missing && !missing.ok && missing.error.kind === 'not-found');
+    state.pendingAction = 'create';
+    const first = await send(PROJECT_LIST_REQUESTS.takePendingAction);
+    assert.deepEqual(first?.ok && first.data, { action: 'create' });
+    const second = await send(PROJECT_LIST_REQUESTS.takePendingAction);
+    assert.deepEqual(second?.ok && second.data, { action: undefined });
   } finally {
     database.close();
   }
@@ -123,7 +113,7 @@ test('项目标识必须是整数', async () => {
   const { database, send } = createFixture();
   try {
     for (const payload of [{ id: '1' }, { id: 1.5 }, {}, null]) {
-      const response = await send(PROJECT_LIST_REQUESTS.edit, payload);
+      const response = await send(PROJECT_LIST_REQUESTS.prepareDelete, payload);
       assert.ok(response && !response.ok && response.error.kind === 'validation', `载荷 ${JSON.stringify(payload)} 应被拒绝`);
     }
   } finally {

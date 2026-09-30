@@ -97,6 +97,86 @@ test('右上角关闭按钮和 Esc 关闭对话框；不可关闭的对话框忽
   assert.ok(doc.body.contains(locked.element));
 });
 
+test('beforeClose：× 、Esc、取消按钮都先询问，返回 false 保持打开，返回其他值才关闭', async () => {
+  const { ui, doc } = setup();
+  const asked = [];
+  let allow = false;
+  const handle = ui.openDialog({
+    title: '询问',
+    buttons: [{ id: 'cancel', text: '取消', isCancel: true }],
+    beforeClose: ({ reason }) => {
+      asked.push(reason);
+      return allow;
+    }
+  });
+
+  handle.element.querySelector('.ui-dialog__close').click();
+  await flush();
+  pressKey(env, handle.element, 'Escape');
+  await flush();
+  findButton(handle.element, '取消').click();
+  await flush();
+  assert.deepEqual(asked, ['close', 'escape', 'cancel']);
+  assert.ok(doc.body.contains(handle.element), '返回 false 时保持打开');
+
+  allow = true;
+  pressKey(env, handle.element, 'Escape');
+  assert.equal((await handle.closed).reason, 'escape');
+});
+
+test('beforeClose：支持异步询问；询问期间重复触发不会再次询问；close() 与普通按钮不经过它', async () => {
+  const { ui } = setup();
+  let asks = 0;
+  let release = () => undefined;
+  const handle = ui.openDialog({
+    title: '异步询问',
+    buttons: [{ id: 'ok', text: '确定' }],
+    beforeClose: () => {
+      asks += 1;
+      return new Promise((resolve) => (release = resolve));
+    }
+  });
+
+  pressKey(env, handle.element, 'Escape');
+  pressKey(env, handle.element, 'Escape');
+  await flush();
+  assert.equal(asks, 1, '询问未结束时不重复询问');
+  release(false);
+  await flush();
+  assert.ok(handle.element.isConnected);
+
+  findButton(handle.element, '确定').click();
+  assert.equal((await handle.closed).reason, 'button');
+  assert.equal(asks, 1, '普通按钮直接关闭');
+
+  const other = ui.openDialog({ title: '程序关闭', beforeClose: () => false });
+  other.close('api');
+  assert.equal((await other.closed).reason, 'api');
+});
+
+test('beforeClose 中可以再打开确认对话框（放弃修改的典型用法）', async () => {
+  const { ui, doc } = setup();
+  const page = ui.openPage({
+    title: '编辑',
+    content: '内容',
+    beforeClose: () => ui.confirm({ message: '放弃修改？', confirmText: '放弃', cancelText: '继续编辑' })
+  });
+
+  pressKey(env, page.element, 'Escape');
+  await flush();
+  const confirmDialog = [...doc.querySelectorAll('.ui-dialog')].find((dialog) => dialog !== page.element);
+  assert.ok(confirmDialog, '应弹出确认对话框');
+  findButton(confirmDialog, '继续编辑').click();
+  await flush();
+  assert.ok(page.element.isConnected, '选择继续编辑后页面保持打开');
+
+  pressKey(env, page.element, 'Escape');
+  await flush();
+  const secondConfirm = [...doc.querySelectorAll('.ui-dialog')].find((dialog) => dialog !== page.element);
+  findButton(secondConfirm, '放弃').click();
+  assert.equal((await page.closed).reason, 'escape');
+});
+
 test('确认：点确定为 true，点取消或 Esc 为 false', async () => {
   const { ui, doc } = setup();
 

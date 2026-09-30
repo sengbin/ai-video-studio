@@ -11,13 +11,12 @@ import assert from 'node:assert/strict';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { test } from 'node:test';
-import { FORM_PAGE_RESOURCES, PROJECT_LIST_PAGE_RESOURCES, PageResources, SIDEBAR_PAGE_RESOURCES } from './page-resources';
+import { PROJECT_LIST_PAGE_RESOURCES, PageResources, SIDEBAR_PAGE_RESOURCES } from './page-resources';
 
 /** 编译产物位于 out/app/panels，扩展根目录在其上三级。 */
 const EXTENSION_ROOT = resolve(__dirname, '..', '..', '..');
 const UI_KIT_PREFIX = 'ui-kit/src/';
 const PAGES: ReadonlyArray<readonly [string, PageResources]> = [
-  ['表单页面', FORM_PAGE_RESOURCES],
   ['项目列表页', PROJECT_LIST_PAGE_RESOURCES],
   ['侧栏页面', SIDEBAR_PAGE_RESOURCES]
 ];

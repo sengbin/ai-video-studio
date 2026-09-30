@@ -9,11 +9,11 @@
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { ConflictError, ValidationError } from '../../domain/errors';
+import { ConflictError, NotFoundError, ValidationError } from '../../domain/errors';
 import { IN_MEMORY_DATABASE_PATH, openDatabase } from '../../infra/database/database-connection';
 import { SqliteProjectRepository } from '../../infra/database/sqlite-project-repository';
 import { ProjectService } from '../services/project-service';
-import { createEditProjectForm, createNewProjectForm } from './project-form';
+import { createEditProjectForm, createNewProjectForm, createProjectFormCatalog, PROJECT_FORM_NAMES } from './project-form';
 
 /** 创建服务及其内存数据库。 */
 function createService() {
@@ -102,6 +102,22 @@ test('编辑表单：保留自身名称可提交，与其他项目重名被拒�
     form.submit({ name: '甲', description: '新描述' });
     assert.equal(service.getProject(first.id).description, '新描述');
     assert.throws(() => form.submit({ name: '乙' }), ConflictError);
+  } finally {
+    database.close();
+  }
+});
+
+test('表单目录：按名称创建新建与编辑表单，编辑需要有效的项目标识', () => {
+  const { database, service } = createService();
+  try {
+    const project = service.createProject({ name: '甲' });
+    const catalog = createProjectFormCatalog(service);
+
+    assert.equal(catalog.get(PROJECT_FORM_NAMES.create)?.(undefined).schema.title, '新建项目');
+    const edit = catalog.get(PROJECT_FORM_NAMES.edit);
+    assert.equal(edit?.({ id: project.id }).initialValues.name, '甲');
+    assert.throws(() => edit?.({ id: '1' }), ValidationError);
+    assert.throws(() => edit?.({ id: 99 }), NotFoundError);
   } finally {
     database.close();
   }

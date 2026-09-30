@@ -55,13 +55,10 @@ function createEditorPageResources(pageStyles: readonly string[], pageScripts: r
   };
 }
 
-/** 表单页面。 */
-export const FORM_PAGE_RESOURCES: PageResources = createEditorPageResources(['form/form.css'], ['form/form-runtime.js']);
-
-/** 项目列表页。 */
+/** 项目列表页：新建与编辑表单在页内弹出，因此一并加载表单引擎。 */
 export const PROJECT_LIST_PAGE_RESOURCES: PageResources = createEditorPageResources(
-  ['project-list/project-list.css'],
-  ['project-list/project-list.js']
+  ['form/form.css', 'project-list/project-list.css'],
+  ['form/form-runtime.js', 'project-list/project-list.js']
 );
 
 /** 侧栏页面：有自己的布局，不加载编辑器区的基础样式。 */

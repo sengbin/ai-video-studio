@@ -34,6 +34,19 @@ export function readRecord(rawInput: unknown): Record<string, unknown> {
 }
 
 /**
+ * 读取请求载荷中的整数标识（键为 id）；缺失或不是整数时抛出校验错误。
+ * @param rawInput 界面发来的原始载荷。
+ * @param entityLabel 用于错误提示的对象名称，如“项目”。
+ */
+export function readEntityId(rawInput: unknown, entityLabel: string): number {
+  const id = readRecord(rawInput).id;
+  if (typeof id !== 'number' || !Number.isInteger(id)) {
+    throw new ValidationError({ [FORM_LEVEL_ERROR_KEY]: `${entityLabel}标识无效。` });
+  }
+  return id;
+}
+
+/**
  * 读取文本字段：去除首尾空白，校验必填与长度；缺省或空值按空串处理。
  * @param source 提交内容。
  * @param rule 字段规则。
