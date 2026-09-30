@@ -174,7 +174,7 @@ const search = aiUi.textInput({ type: 'search', placeholder: '搜索项目名称
 
 ### 5.3 多行文本 `aiUi.textArea`
 
-选项：`id`、`value`、`placeholder`、`rows`、`ariaLabel`、`disabled`、`onChange`。右下角有自绘的拖动把手（两条斜线，鼠标悬停变深），只能纵向调整高度，最小高度 78px；不使用浏览器原生的 `resize` 手柄（样式中设为 `resize: none`）。拖动由 `aiUi.trackPointer` 实现，与对话框拖动、调整大小共用。
+选项：`id`、`value`、`placeholder`、`rows`、`ariaLabel`、`disabled`、`onChange`。右下角有自绘的拖动把手（一条短横线，鼠标悬停变深），只能纵向调整高度，最小高度 78px；不使用浏览器原生的 `resize` 手柄（样式中设为 `resize: none`）。拖动由 `aiUi.trackPointer` 实现，与对话框拖动、调整大小共用。
 
 ### 5.4 下拉列表 `aiUi.select`
 
@@ -232,7 +232,7 @@ const audio = aiUi.switchControl({ label: '生成声音', checked: true, onChang
 
 | 控件 | 禁用时 |
 |---|---|
-| 按钮（各样式、预设、纯图标） | 灰底灰字，去掉悬停与按下反馈，光标为“禁止”图标，点击不触发 |
+| 按钮（各样式、预设、纯图标） | 灰底灰字，去掉悬停与按下反馈，鼠标光标不变，点击不触发 |
 | 单行输入、多行文本 | 灰底、淡边框、灰字，不可编辑和聚焦，多行文本的高度把手隐藏 |
 | 下拉列表 | 灰底灰字，不能展开；展开时被禁用会立即收起弹层；“其他（手动输入）”的输入框同步禁用 |
 | 单选、复选框、复选框组 | 标记灰底淡边框，文字变灰，选中标记保留但变为灰色；`aria-disabled="true"`，不可 Tab 到达，点击、空格、方向键都不改变选择 |
@@ -489,10 +489,11 @@ export function createXxxForm(service: XxxService): FormDefinition {
 - 没有上下（左右）三角箭头按钮，轨道和角落没有背景。
 - 平时滑块是透明的；鼠标移到可滚动区域上才出现滑块，鼠标移到滑块上变深，按住时更深。
 - 滑块为圆角细条（约 6px），颜色来自主题文字色，亮暗主题自动适配。
+- 鼠标悬停在滚动条上时光标保持箭头，不会变成所属元素的文字或手形光标。
 
 实现分两部分：`ui-scrollbar.css` 用 `::-webkit-scrollbar` 系列伪元素定义外观（VS Code Webview 基于 Chromium）；`ui-scrollbar.js` 把鼠标所在元素及其祖先标记为 `data-ui-hover`，样式据此显示滑块。不直接用 `:hover` 是因为实测 Chromium 不会因 `:hover` 变化刷新自定义滚动条的伪元素样式，而属性变化可以。
 
-注意：不要在页面或组件样式中设置标准属性 `scrollbar-color`、`scrollbar-width`，它们会使 Chromium 忽略 `::-webkit-scrollbar` 样式（测试会检查）。需要隐藏某个元素的滚动条时，在该元素上单独写 `::-webkit-scrollbar { display: none; }`。
+注意：VS Code 的 Webview 默认样式会在 `html` 上设置 `scrollbar-color`，它会被子元素继承，而 Chromium 只要遇到非 `auto` 的 `scrollbar-color` 或 `scrollbar-width` 就会忽略 `::-webkit-scrollbar` 样式（滚动条会变回带箭头的原生样式）。因此 `ui-scrollbar.css` 在所有元素上把 `scrollbar-color` 重置为 `auto`。页面或组件样式中不要再设置非 `auto` 的 `scrollbar-color`、`scrollbar-width`（测试会检查）。需要隐藏某个元素的滚动条时，在该元素上单独写 `::-webkit-scrollbar { display: none; }`。
 
 ## 11. 无障碍要点
 

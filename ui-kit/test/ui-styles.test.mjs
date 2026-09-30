@@ -40,8 +40,18 @@ test('滚动条：平时滑块透明，鼠标移到区域上（带悬停标记�
   assert.match(ruleBody(css, '[data-ui-hover]::-webkit-scrollbar-thumb:hover'), /--scrollbar-thumb-hover-bg/);
 });
 
-test('滚动条：不使用标准 scrollbar-color/scrollbar-width（会让 Chromium 忽略 -webkit-scrollbar 样式）', () => {
-  for (const file of ['ui-scrollbar.css', 'ui-controls.css', 'ui-dialog.css']) {
+test('滚动条：鼠标悬停在滚动条各部分上保持箭头光标', () => {
+  const css = readStyle('ui-scrollbar.css');
+  const selector = '*::-webkit-scrollbar,\n*::-webkit-scrollbar-track,\n*::-webkit-scrollbar-thumb,\n*::-webkit-scrollbar-corner';
+  assert.match(ruleBody(css, selector), /cursor:\s*default/);
+});
+
+test('滚动条：只允许把 scrollbar-color 重置为 auto（非 auto 时 Chromium 会忽略 -webkit-scrollbar 样式）', () => {
+  const scrollbarCss = readStyle('ui-scrollbar.css');
+  assert.match(ruleBody(scrollbarCss, '*'), /scrollbar-color:\s*auto/, '需要重置 VS Code 在 html 上设置的 scrollbar-color');
+  assert.doesNotMatch(scrollbarCss, /scrollbar-width\s*:/);
+  assert.doesNotMatch(scrollbarCss, /scrollbar-color:\s*(?!auto\b)\S/);
+  for (const file of ['ui-controls.css', 'ui-dialog.css']) {
     assert.doesNotMatch(readStyle(file), /scrollbar-(color|width)\s*:/, `${file} 不应设置标准滚动条属性`);
   }
 });
@@ -56,8 +66,8 @@ test('禁用态：按钮、输入、下拉、单选复选、开关都有明确�
   ]) {
     assert.match(ruleBody(css, selector), /var\(--disabled-(text|bg|border)\)/, `${selector} 应使用禁用态令牌`);
   }
-  assert.match(ruleBody(css, '.ui-button:disabled,\n.ui-button:disabled:hover,\n.ui-button:disabled:active'), /not-allowed/);
-  assert.match(ruleBody(css, '.ui-switch:disabled,\n.ui-switch:disabled:hover,\n.ui-switch:disabled:active'), /not-allowed/);
+  assert.match(ruleBody(css, '.ui-button:disabled,\n.ui-button:disabled:hover,\n.ui-button:disabled:active'), /cursor:\s*default/);
+  assert.match(ruleBody(css, '.ui-switch:disabled,\n.ui-switch:disabled:hover,\n.ui-switch:disabled:active'), /cursor:\s*default/);
 });
 
 test('多行文本：关闭浏览器原生的拖动手柄，改用自绘把手', () => {
@@ -65,6 +75,13 @@ test('多行文本：关闭浏览器原生的拖动手柄，改用自绘把手',
   assert.match(css, /\.ui-textarea__field \{[^}]*resize:\s*none/);
   assert.match(ruleBody(css, '.ui-textarea__grip'), /cursor:\s*ns-resize/);
   assert.match(ruleBody(css, '.ui-textarea.ui-is-disabled .ui-textarea__grip'), /display:\s*none/);
+});
+
+test('宽度占满的输入类控件自带 box-sizing，不依赖页面的全局样式', () => {
+  const css = readStyle('ui-controls.css');
+  for (const selector of ['.ui-input,\n.ui-textarea', '.ui-input__field,\n.ui-textarea__field', '.ui-select__trigger']) {
+    assert.match(ruleBody(css, selector), /box-sizing:\s*border-box/, `${selector} 应设置 box-sizing`);
+  }
 });
 
 test('令牌：定义了禁用态颜色', () => {

@@ -16,6 +16,11 @@
   --scrollbar-thumb-active-bg: color-mix(in srgb, var(--text) 64%, transparent);
 }
 
+/* VS Code 在 html 上设置了会被继承的 scrollbar-color，Chromium 遇到它就忽略 -webkit-scrollbar 样式，因此在所有元素上恢复为 auto */
+* {
+  scrollbar-color: auto;
+}
+
 *::-webkit-scrollbar {
   width: var(--scrollbar-size);
   height: var(--scrollbar-size);
@@ -25,6 +30,14 @@
 *::-webkit-scrollbar-track,
 *::-webkit-scrollbar-corner {
   background: transparent;
+}
+
+/* 悬停在滚动条上保持箭头，不继承所属元素的文字或手形光标 */
+*::-webkit-scrollbar,
+*::-webkit-scrollbar-track,
+*::-webkit-scrollbar-thumb,
+*::-webkit-scrollbar-corner {
+  cursor: default;
 }
 
 /* 去掉两端的上下（左右）三角按钮 */
