@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：stage-runner.test.ts
-// 说明：阶段执行器与创意工作流的自动化测试：生成、逐章保存、校验重试、失败后继续、取消、小说分段、图片素材、异常情况。
+// 说明：阶段执行器与创意工作流的自动化测试：生成、逐章保存、校验失败不重试、失败后继续、取消、小说分段、图片素材、异常情况。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-09-30
@@ -193,11 +193,10 @@ test('创意阶段：规划大纲后逐章生成并保存，结束时为待确�
   assert.ok(harness.notifications.some((notification) => notification.status === 'running' && notification.progress !== null));
 });
 
-test('校验重试：章节字数不符时把问题反馈给模型，修正后保存', async () => {
-  let firstChapterCalls = 0;
+test('字数不符：不重试也不失败，章节照常保存，字数由界面提示', async () => {
   const harness = createHarness({
     responder: (request) => {
-      if (request.user.includes('# 任务：撰写第 1 章') && firstChapterCalls++ === 0) {
+      if (request.user.includes('# 任务：撰写第 1 章')) {
         return JSON.stringify({ title: '第1章', content: '灯'.repeat(50) });
       }
       return standardResponder(request);
@@ -208,18 +207,32 @@ test('校验重试：章节字数不符时把问题反馈给模型，修正后�
   await harness.runner.whenIdle();
 
   assert.equal(harness.runs.findById(started.id)?.status, 'succeeded');
-  assert.equal(harness.text.requests.length, 5);
-  assert.match(harness.text.requests[2].user, /上一次输出存在以下问题/);
-  assert.match(harness.text.requests[2].user, /少于下限 100 字/);
-  assert.equal(harness.chapters.list(started.id).length, 3);
+  assert.equal(harness.text.requests.length, 4, '大纲一次、三章各一次，不重试');
+  assert.equal(harness.chapters.list(started.id)[0].content.length, 50);
 });
 
-test('失败后继续：重试用尽记录为失败并保留原始输出与已完成章节，继续时不重复已完成的步骤', async () => {
+test('格式不符：不自动重试，直接记录失败并保留原始输出', async () => {
+  const harness = createHarness({
+    responder: (request) => (request.user.includes('# 任务：撰写第 1 章') ? '不是 JSON' : standardResponder(request))
+  });
+
+  const started = await harness.runner.start({ target: TARGET, input: TEXT_INPUT });
+  await harness.runner.whenIdle();
+
+  const failed = harness.runs.findById(started.id)!;
+  assert.equal(failed.status, 'failed');
+  assert.match(failed.errorMessage ?? '', /模型输出不符合要求/);
+  assert.equal(failed.rawOutput, '不是 JSON');
+  assert.equal(harness.text.requests.length, 2, '大纲一次、第 1 章一次，不重试');
+  assert.equal(harness.chapters.list(started.id).length, 0);
+});
+
+test('失败后继续：输出不符合要求记录为失败并保留原始输出与已完成章节，继续时不重复已完成的步骤', async () => {
   let broken = true;
   const harness = createHarness({
     responder: (request) => {
       if (broken && request.user.includes('# 任务：撰写第 2 章')) {
-        return JSON.stringify({ title: '第2章', content: '灯'.repeat(10) });
+        return '不是 JSON';
       }
       return standardResponder(request);
     }
@@ -230,13 +243,13 @@ test('失败后继续：重试用尽记录为失败并保留原始输出与已�
 
   const failed = harness.runs.findById(started.id)!;
   assert.equal(failed.status, 'failed');
-  assert.match(failed.errorMessage ?? '', /多次不符合要求/);
-  assert.ok(failed.rawOutput?.includes('灯'));
+  assert.match(failed.errorMessage ?? '', /模型输出不符合要求/);
+  assert.equal(failed.rawOutput, '不是 JSON');
   assert.deepEqual(
     harness.chapters.list(started.id).map((chapter) => chapter.seq),
     [1]
   );
-  assert.equal(harness.text.requests.length, 5);
+  assert.equal(harness.text.requests.length, 3);
 
   broken = false;
   const resumed = await harness.runner.resume(started.id);
@@ -247,7 +260,7 @@ test('失败后继续：重试用尽记录为失败并保留原始输出与已�
   assert.equal(finished.status, 'succeeded');
   assert.equal(harness.runs.runs.length, 1, '重试不产生新版本');
   assert.equal(harness.chapters.list(started.id).length, 3);
-  assert.equal(harness.text.requests.length, 7, '只补生成第 2、3 章');
+  assert.equal(harness.text.requests.length, 5, '只补生成第 2、3 章');
   assert.equal(countRequests(harness.text.requests, '# 任务：规划章节大纲'), 1, '大纲不重复规划');
 });
 

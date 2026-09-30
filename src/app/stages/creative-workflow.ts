@@ -343,7 +343,7 @@ export class CreativeWorkflow implements StageWorkflow {
           minWords: String(params.chapterMinWords),
           maxWords: String(params.chapterMaxWords)
         },
-        (json) => parseChapter(json, item.seq, params),
+        (json) => parseChapter(json, item.seq),
         { overflowHint: '请在设置中调小“每段字数上限”后重试。', tool: SUBMIT_CHAPTER_TOOL }
       );
       this.dependencies.chapters.save(context.run.id, draft, (this.dependencies.now?.() ?? new Date()).toISOString());

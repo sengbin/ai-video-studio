@@ -273,14 +273,40 @@
       );
     } else if (run.display === 'canceled') {
       progressElement.append(aiUi.h('p', { class: 'description', text: '已取消生成，已完成的章节已保留，可点“重试”继续。' }));
+    } else {
+      const summary = renderWordSummary();
+      if (summary) progressElement.append(summary);
     }
   }
 
-  /** 章节字数提示：少于下限或超过上限时给出文字说明。 */
+  /** 生成结束后的字数汇总：设定的大约范围与实际字数；不在范围内时说明原因。 */
+  function renderWordSummary() {
+    const { params, chapters, totalWords } = view;
+    if (!params || chapters.length === 0) return null;
+    const range = `每章约 ${params.chapterMinWords} 到 ${params.chapterMaxWords} 字`;
+    const outOfRange = chapters.filter((chapter) => chapter.wordHint);
+    if (outOfRange.length === 0) {
+      return aiUi.h('p', {
+        class: 'description',
+        text: `字数：设定${range}，实际共 ${chapters.length} 章 ${totalWords} 字，各章均在范围内。`
+      });
+    }
+    const listed = outOfRange.slice(0, 5).map((chapter) => `第 ${chapter.seq} 章 ${chapter.wordCount} 字`).join('、');
+    const more = outOfRange.length > 5 ? `（共 ${outOfRange.length} 章）` : '';
+    return aiUi.h('p', {
+      class: 'status-warning',
+      text:
+        `字数提示：设定${range}，实际有 ${outOfRange.length} 章不在该范围：${listed}${more}。` +
+        '原因：Copilot 会根据内容的实际情况决定篇幅，不一定严格遵守设定字数。生成结果已全部保留，可直接编辑调整。'
+    });
+  }
+
+  /** 章节字数提示：与设定的大约范围比较，给出文字说明。 */
   function wordHintText(chapter) {
     if (!view.params) return '';
-    if (chapter.wordHint === 'short') return `少于设定下限 ${view.params.chapterMinWords} 字`;
-    if (chapter.wordHint === 'long') return `超过设定上限 ${view.params.chapterMaxWords} 字`;
+    const { chapterMinWords, chapterMaxWords } = view.params;
+    if (chapter.wordHint === 'short') return `比设定的约 ${chapterMinWords} 字少 ${chapterMinWords - chapter.wordCount} 字`;
+    if (chapter.wordHint === 'long') return `比设定的约 ${chapterMaxWords} 字多 ${chapter.wordCount - chapterMaxWords} 字`;
     return '';
   }
 

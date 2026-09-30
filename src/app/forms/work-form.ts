@@ -155,15 +155,15 @@ function createParamFields(sourceType: WorkSourceType): FormFieldSchema[] {
     },
     {
       key: 'chapterMinWords',
-      label: '每章最少字数',
-      description: '最低允许 100 字；常规叙事推荐设为 1000 字',
+      label: '每章大约最少字数',
+      description: '大致的下限，最低 100 字；常规叙事推荐约 1000 字',
       control: 'text',
       required: true
     },
     {
       key: 'chapterMaxWords',
-      label: '每章最多字数',
-      description: '不能小于每章最少字数；超出范围的章节会被要求重写',
+      label: '每章大约最多字数',
+      description: '大致的上限，至少比最少字数多 50 字；Copilot 会根据内容实际情况生成，实际字数可能有出入，生成后会提示实际字数',
       control: 'text',
       required: true
     },

@@ -12,7 +12,7 @@ import { StageRun, StageTarget } from '../../domain/models/stage-run';
 import { StageRunRepository } from '../../domain/ports/stage-run-repository';
 import { TextGenerationPort, TextModelInfo } from '../../domain/ports/text-generation-port';
 import { UPSTREAM_STAGE, assertCanStart, canRetry } from '../../domain/rules/stage-review-rules';
-import { OutputRetryExhaustedError } from './structured-generation';
+import { InvalidOutputError } from './structured-generation';
 import { StageWorkflow } from './stage-workflow';
 
 /** 扩展重启后遗留的运行中记录被置为失败时写入的原因。 */
@@ -184,7 +184,7 @@ export class StageRunner {
         return;
       }
       const message = error instanceof Error ? error.message : String(error);
-      const rawOutput = error instanceof OutputRetryExhaustedError ? error.rawOutput : null;
+      const rawOutput = error instanceof InvalidOutputError ? error.rawOutput : null;
       this.publish(runs.markFailed(run.id, message, rawOutput, this.timestamp()));
     }
   }

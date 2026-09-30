@@ -20,6 +20,8 @@ import {
 
 /** 每章最少字数的下限。 */
 export const CHAPTER_MIN_WORDS_FLOOR = 100;
+/** 每章最多字数至少比最少字数多出的字数，避免范围太窄而无法满足。 */
+export const CHAPTER_WORDS_MIN_GAP = 50;
 /** 每章最多字数的上限。 */
 export const CHAPTER_MAX_WORDS_CEILING = 100000;
 /** 章节数上限的最大值。 */
@@ -73,8 +75,12 @@ export function normalizeCreativeParams(rawInput: unknown): CreativeParams {
   const adjust = optional('adjust', '允许调整的内容', CREATIVE_PRESERVE_MAX_LENGTH);
   const extra = optional('extra', '补充要求', CREATIVE_EXTRA_MAX_LENGTH);
 
-  if (errors.chapterMinWords === undefined && errors.chapterMaxWords === undefined && chapterMaxWords < chapterMinWords) {
-    errors.chapterMaxWords = `每章最多字数不能小于最少字数（${chapterMinWords}）。`;
+  if (
+    errors.chapterMinWords === undefined &&
+    errors.chapterMaxWords === undefined &&
+    chapterMaxWords < chapterMinWords + CHAPTER_WORDS_MIN_GAP
+  ) {
+    errors.chapterMaxWords = `每章最多字数至少比最少字数多 ${CHAPTER_WORDS_MIN_GAP} 字（不小于 ${chapterMinWords + CHAPTER_WORDS_MIN_GAP}）。`;
   }
   assertNoFieldErrors(errors);
   return { idea, genre, tone, chapterMinWords, chapterMaxWords, maxChapters, preserve, adjust, extra };
@@ -151,13 +157,12 @@ export function parseOutline(raw: unknown, params: CreativeParams, segmentCount 
 }
 
 /**
- * 校验并整理模型返回的一章正文。
+ * 校验并整理模型返回的一章正文：只检查格式，字数不在设定范围内也接受，由界面在生成后提示。
  * @param raw 解析后的 JSON，形如 { "title": "…", "content": "…" }。
  * @param seq 本章序号，由调用方按大纲指定。
- * @param params 创意生成参数，用于校验字数范围。
- * @throws GeneratedOutputError 格式不对或字数不在范围内。
+ * @throws GeneratedOutputError 格式不对。
  */
-export function parseChapter(raw: unknown, seq: number, params: CreativeParams): ChapterDraft {
+export function parseChapter(raw: unknown, seq: number): ChapterDraft {
   if (!isRecord(raw)) {
     throw new GeneratedOutputError(['章节必须是包含 title 和 content 的 JSON 对象。']);
   }
@@ -170,13 +175,6 @@ export function parseChapter(raw: unknown, seq: number, params: CreativeParams):
   }
   if (content.length === 0) {
     issues.push('章节正文不能为空。');
-  } else {
-    const wordCount = countWords(content);
-    if (wordCount < params.chapterMinWords) {
-      issues.push(`正文统计为 ${wordCount} 字，少于下限 ${params.chapterMinWords} 字，请补充内容。`);
-    } else if (wordCount > params.chapterMaxWords) {
-      issues.push(`正文统计为 ${wordCount} 字，超过上限 ${params.chapterMaxWords} 字，请精简内容。`);
-    }
   }
 
   if (issues.length > 0) {

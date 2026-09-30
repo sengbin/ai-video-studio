@@ -82,11 +82,18 @@ test('生成参数：必填数字缺失或越界时逐项报错', () => {
   assert.match(errors.maxChapters, /1 到 100/);
 });
 
-test('生成参数：最多字数不能小于最少字数', () => {
+test('生成参数：最多字数至少比最少字数多 50 字', () => {
   const errors = captureFieldErrors(() =>
     normalizeCreativeParams({ chapterMinWords: 1000, chapterMaxWords: 500, maxChapters: 5 })
   );
-  assert.match(errors.chapterMaxWords, /不能小于最少字数（1000）/);
+  assert.match(errors.chapterMaxWords, /多 50 字（不小于 1050）/);
+  for (const chapterMaxWords of [100, 149]) {
+    assert.match(
+      captureFieldErrors(() => normalizeCreativeParams({ chapterMinWords: 100, chapterMaxWords, maxChapters: 1 })).chapterMaxWords,
+      /不小于 150/
+    );
+  }
+  assert.equal(normalizeCreativeParams({ chapterMinWords: 100, chapterMaxWords: 150, maxChapters: 1 }).chapterMaxWords, 150);
 });
 
 test('生成参数：文本超长和非法数字都会报错', () => {
@@ -122,23 +129,23 @@ test('大纲：章数超过上限、为空或字段缺失时给出逐条问题',
   assert.match(captureIssues(() => parseOutline('不是大纲', PARAMS)).join('；'), /chapters 数组/);
 });
 
-test('章节：字数在范围内则通过并去除首尾空白', () => {
+test('章节：通过并去除首尾空白', () => {
   const content = '灯'.repeat(150);
-  assert.deepEqual(parseChapter({ title: ' 开端 ', content: `\n${content}\n` }, 2, PARAMS), {
+  assert.deepEqual(parseChapter({ title: ' 开端 ', content: `\n${content}\n` }, 2), {
     seq: 2,
     title: '开端',
     content
   });
 });
 
-test('章节：字数过少或过多时给出可反馈给模型的说明', () => {
-  assert.match(captureIssues(() => parseChapter({ title: '甲', content: '灯'.repeat(50) }, 1, PARAMS)).join('；'), /50 字，少于下限 100 字/);
-  assert.match(captureIssues(() => parseChapter({ title: '甲', content: '灯'.repeat(300) }, 1, PARAMS)).join('；'), /300 字，超过上限 200 字/);
+test('章节：字数过少或过多也接受，不做字数校验', () => {
+  assert.equal(parseChapter({ title: '甲', content: '灯'.repeat(5) }, 1).content.length, 5);
+  assert.equal(parseChapter({ title: '甲', content: '灯'.repeat(3000) }, 1).content.length, 3000);
 });
 
 test('章节：标题或正文缺失、不是对象时报错', () => {
-  assert.equal(captureIssues(() => parseChapter({ content: '' }, 1, PARAMS)).length, 2);
-  assert.match(captureIssues(() => parseChapter('正文', 1, PARAMS)).join('；'), /title 和 content/);
+  assert.equal(captureIssues(() => parseChapter({ content: '' }, 1)).length, 2);
+  assert.match(captureIssues(() => parseChapter('正文', 1)).join('；'), /title 和 content/);
 });
 
 test('模型 JSON：整段、代码块、夹带说明文字的输出都能提取', () => {
