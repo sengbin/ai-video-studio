@@ -712,7 +712,7 @@ erDiagram
 | 3 | `003-storyboard` | `storyboard_scripts`、`shots`、`shot_entities`、`shot_sounds` | 已实现 |
 | 4 | `004-models` | `providers`、`models`、`model_capabilities`、`generation_profiles` | 已实现 |
 | 5 | `005-generation` | `video_jobs`、`video_results`、`result_frames` | 已实现 |
-| 6 | `006-text-generation` | `stage_runs` 增加“已取消”状态、确认状态、修订号、上游记录、模型、进度、原始输出（重建该表，允许丢弃现有数据）；`screenplays` 增加 `structure_json`；`models` 增加 `kind` | 待实现（文本生成基础） |
+| 6 | `006-text-generation` | `stage_runs` 增加“已取消”状态、确认状态、修订号、上游记录、模型、进度、原始输出（重建该表，允许丢弃现有数据）；`screenplays` 增加 `structure_json`；`models` 增加 `kind` | 已实现 |
 | 7 | `007-asset-generation` | `asset_jobs`、`asset_candidates`（预留） | 接入图像、音频模型时 |
 | 8 | `008-audio-tracks` | `episode_audio_tracks`（预留，开发独立音轨时再新增） | 后续 |
 

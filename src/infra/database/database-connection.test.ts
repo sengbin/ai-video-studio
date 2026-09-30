@@ -108,7 +108,7 @@ test('同一作品同一阶段只能有一个当前版本', () => {
   try {
     seedWorkWithEpisode(database);
     const insertRun = database.prepare(
-      "INSERT INTO stage_runs (work_id, stage, version, input_json, is_current, created_at) VALUES (1, 'creative', ?, '{}', 1, ?)"
+      "INSERT INTO stage_runs (work_id, stage, version, input_json, status, review_status, is_current, created_at) VALUES (1, 'creative', ?, '{}', 'succeeded', 'approved', 1, ?)"
     );
     insertRun.run(1, NOW);
     assert.throws(() => insertRun.run(2, NOW));
@@ -332,6 +332,164 @@ test('升级已有数据的库之前先备份，新库不备份', () => {
     database.close();
 
     assert.equal(existsSync(`${filePath}.backup-v1`), true);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('阶段记录：待确认、已确认与当前版本的约束', () => {
+  const database = openDatabase(IN_MEMORY_DATABASE_PATH);
+  try {
+    seedWorkWithEpisode(database);
+    const insert = (status: string, review: string, current: number, version: number) =>
+      database
+        .prepare(
+          "INSERT INTO stage_runs (work_id, stage, version, input_json, status, review_status, is_current, created_at) VALUES (1, 'creative', ?, '{}', ?, ?, ?, ?)"
+        )
+        .run(version, status, review, current, NOW);
+
+    assert.throws(() => insert('running', 'approved', 0, 1), '未成功的记录不能是已确认');
+    assert.throws(() => insert('succeeded', 'pending', 1, 1), '当前版本必须已确认');
+    assert.throws(() => insert('canceled', 'approved', 0, 1));
+    insert('canceled', 'pending', 0, 1);
+    insert('succeeded', 'approved', 1, 2);
+    assert.throws(() => insert('succeeded', 'approved', 1, 3), '同一目标只能有一个当前版本');
+  } finally {
+    database.close();
+  }
+});
+
+test('阶段记录：同一目标同时只能有一个运行中的记录，分镜脚本按集区分', () => {
+  const database = openDatabase(IN_MEMORY_DATABASE_PATH);
+  try {
+    seedWorkWithEpisode(database);
+    database
+      .prepare('INSERT INTO episodes (work_id, seq, title, created_at, updated_at) VALUES (1, 2, ?, ?, ?)')
+      .run('第二集', NOW, NOW);
+    const insertCreative = database.prepare(
+      "INSERT INTO stage_runs (work_id, stage, version, input_json, created_at) VALUES (1, 'creative', ?, '{}', ?)"
+    );
+    const insertStoryboard = database.prepare(
+      "INSERT INTO stage_runs (work_id, episode_id, stage, version, input_json, created_at) VALUES (1, ?, 'storyboard_script', 1, '{}', ?)"
+    );
+
+    insertCreative.run(1, NOW);
+    assert.throws(() => insertCreative.run(2, NOW));
+    insertStoryboard.run(1, NOW);
+    insertStoryboard.run(2, NOW);
+    assert.throws(() => insertStoryboard.run(1, NOW));
+
+    database.prepare("UPDATE stage_runs SET status = 'failed' WHERE stage = 'creative'").run();
+    insertCreative.run(2, NOW);
+  } finally {
+    database.close();
+  }
+});
+
+test('阶段记录：进度必须是合法 JSON，上游记录被删除时置空', () => {
+  const database = openDatabase(IN_MEMORY_DATABASE_PATH);
+  try {
+    seedWorkWithEpisode(database);
+    database
+      .prepare(
+        "INSERT INTO stage_runs (work_id, stage, version, input_json, status, review_status, is_current, created_at) VALUES (1, 'creative', 1, '{}', 'succeeded', 'approved', 1, ?)"
+      )
+      .run(NOW);
+    database
+      .prepare(
+        "INSERT INTO stage_runs (work_id, stage, version, input_json, source_run_id, source_revision, created_at) VALUES (1, 'screenplay', 1, '{}', 1, 1, ?)"
+      )
+      .run(NOW);
+    assert.throws(() => database.prepare("UPDATE stage_runs SET progress_json = 'not json' WHERE id = 2").run());
+    database.prepare("UPDATE stage_runs SET progress_json = '{\"done\":1,\"total\":3}' WHERE id = 2").run();
+
+    database.prepare('DELETE FROM stage_runs WHERE id = 1').run();
+
+    const row = database.prepare('SELECT source_run_id AS sourceRunId FROM stage_runs WHERE id = 2').get() as {
+      sourceRunId: number | null;
+    };
+    assert.equal(row.sourceRunId, null);
+  } finally {
+    database.close();
+  }
+});
+
+test('剧本包结构快照默认为空对象且必须是合法 JSON；模型类型默认视频且只允许三种', () => {
+  const database = openDatabase(IN_MEMORY_DATABASE_PATH);
+  try {
+    seedWorkWithEpisode(database);
+    database
+      .prepare("INSERT INTO stage_runs (work_id, stage, version, input_json, created_at) VALUES (1, 'screenplay', 1, '{}', ?)")
+      .run(NOW);
+    database
+      .prepare("INSERT INTO screenplays (run_id, title, overview, full_text, updated_at) VALUES (1, '标题', '梗概', '正文', ?)")
+      .run(NOW);
+    const screenplay = database.prepare('SELECT structure_json AS structure FROM screenplays WHERE id = 1').get() as {
+      structure: string;
+    };
+    assert.equal(screenplay.structure, '{}');
+    assert.throws(() => database.prepare("UPDATE screenplays SET structure_json = 'not json' WHERE id = 1").run());
+
+    database
+      .prepare("INSERT INTO providers (code, display_name, created_at, updated_at) VALUES ('demo', '示例', ?, ?)")
+      .run(NOW, NOW);
+    database.prepare("INSERT INTO models (provider_id, code, display_name, created_at) VALUES (1, 'v1', '视频', ?)").run(NOW);
+    database
+      .prepare("INSERT INTO models (provider_id, code, display_name, kind, created_at) VALUES (1, 'i1', '图像', 'image', ?)")
+      .run(NOW);
+    assert.throws(() =>
+      database
+        .prepare("INSERT INTO models (provider_id, code, display_name, kind, created_at) VALUES (1, 'x1', '未知', 'text', ?)")
+        .run(NOW)
+    );
+    const kinds = database.prepare('SELECT kind FROM models ORDER BY id').all() as { kind: string }[];
+    assert.deepEqual(
+      kinds.map((row) => row.kind),
+      ['video', 'image']
+    );
+  } finally {
+    database.close();
+  }
+});
+
+test('从版本 5 升级到 6：保留项目、作品和集，丢弃阶段记录及其下游数据', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'ai-video-studio-test-'));
+  const filePath = join(directory, 'upgrade-v5.sqlite');
+  try {
+    const legacy = openDatabase(filePath, MIGRATIONS.slice(0, 5));
+    seedWorkWithEpisode(legacy);
+    legacy
+      .prepare("INSERT INTO stage_runs (work_id, stage, version, input_json, created_at) VALUES (1, 'creative', 1, '{}', ?)")
+      .run(NOW);
+    legacy
+      .prepare("INSERT INTO stage_runs (work_id, episode_id, stage, version, input_json, created_at) VALUES (1, 1, 'storyboard_script', 1, '{}', ?)")
+      .run(NOW);
+    legacy.prepare("INSERT INTO chapters (run_id, seq, title, content, created_at) VALUES (1, 1, '章', '正文', ?)").run(NOW);
+    legacy.prepare('INSERT INTO storyboard_scripts (episode_id, run_id, created_at) VALUES (1, 2, ?)').run(NOW);
+    legacy
+      .prepare("INSERT INTO shots (storyboard_script_id, seq, action, duration_seconds, created_at, updated_at) VALUES (1, 1, '远景', 5, ?, ?)")
+      .run(NOW, NOW);
+    legacy.close();
+
+    const database = openDatabase(filePath);
+    try {
+      assert.equal(readSchemaVersion(database), MIGRATIONS.length);
+      assert.equal(countRows(database, 'projects'), 1);
+      assert.equal(countRows(database, 'works'), 1);
+      assert.equal(countRows(database, 'episodes'), 1);
+      for (const table of ['stage_runs', 'chapters', 'storyboard_scripts', 'shots']) {
+        assert.equal(countRows(database, table), 0, `${table} 应被清空`);
+      }
+      assert.deepEqual(database.prepare('PRAGMA foreign_key_check').all(), []);
+      database
+        .prepare("INSERT INTO stage_runs (work_id, stage, version, input_json, created_at) VALUES (1, 'creative', 1, '{}', ?)")
+        .run(NOW);
+      database.prepare("INSERT INTO chapters (run_id, seq, title, content, created_at) VALUES (1, 1, '章', '正文', ?)").run(NOW);
+      database.prepare('DELETE FROM stage_runs WHERE id = 1').run();
+      assert.equal(countRows(database, 'chapters'), 0, '重建后章节仍随阶段记录级联删除');
+    } finally {
+      database.close();
+    }
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

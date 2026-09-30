@@ -106,6 +106,49 @@ export function readOptionalChoice(
   return value;
 }
 
+/** 整数字段的读取要求。 */
+export interface IntegerRule {
+  /** 字段键。 */
+  readonly key: string;
+  /** 用于错误提示的字段名称。 */
+  readonly label: string;
+  readonly required: boolean;
+  readonly min: number;
+  readonly max: number;
+}
+
+/**
+ * 读取整数字段：接受数字或十进制整数文本（表单以文本传输）。
+ * @param source 提交内容。
+ * @param rule 字段规则。
+ * @param errors 累积错误的记录。
+ * @returns 整数；缺省或校验失败时返回 min，错误写入 errors（非必填缺省不算错误）。
+ */
+export function readInteger(source: Record<string, unknown>, rule: IntegerRule, errors: FieldErrors): number {
+  const value = source[rule.key];
+  const text = typeof value === 'number' ? String(value) : typeof value === 'string' ? value.trim() : '';
+  if (value !== undefined && value !== null && typeof value !== 'number' && typeof value !== 'string') {
+    errors[rule.key] = `${rule.label}必须是整数。`;
+    return rule.min;
+  }
+  if (text === '') {
+    if (rule.required) {
+      errors[rule.key] = `${rule.label}不能为空。`;
+    }
+    return rule.min;
+  }
+  const parsed = /^-?\d+$/.test(text) ? Number(text) : Number.NaN;
+  if (!Number.isSafeInteger(parsed)) {
+    errors[rule.key] = `${rule.label}必须是整数。`;
+    return rule.min;
+  }
+  if (parsed < rule.min || parsed > rule.max) {
+    errors[rule.key] = `${rule.label}必须在 ${rule.min} 到 ${rule.max} 之间。`;
+    return rule.min;
+  }
+  return parsed;
+}
+
 /**
  * 存在字段错误时抛出校验错误。
  * @param errors 累积错误的记录。

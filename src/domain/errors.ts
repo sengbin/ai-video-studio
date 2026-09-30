@@ -33,3 +33,29 @@ export class ConflictError extends Error {
     this.name = 'ConflictError';
   }
 }
+
+/** 文本生成失败的分类：不可用、未授权、限流、输入不受支持、被拒绝、已取消、其他。 */
+export type TextGenerationFailure =
+  | 'unavailable'
+  | 'not_authorized'
+  | 'rate_limited'
+  | 'unsupported_input'
+  | 'refused'
+  | 'canceled'
+  | 'failed';
+
+/** 调用文本生成服务（Copilot）失败；category 决定界面提示与是否值得重试。 */
+export class TextGenerationError extends Error {
+  constructor(readonly category: TextGenerationFailure, message: string, options?: { readonly cause?: unknown }) {
+    super(message, options);
+    this.name = 'TextGenerationError';
+  }
+}
+
+/** 模型返回的内容不符合约定的格式或规则；issues 逐条说明问题，可原样反馈给模型让它修正。 */
+export class GeneratedOutputError extends Error {
+  constructor(readonly issues: readonly string[]) {
+    super(issues.join('；'));
+    this.name = 'GeneratedOutputError';
+  }
+}
