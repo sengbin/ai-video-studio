@@ -1,6 +1,7 @@
 {
   "name": "ai-video-studio",
   "displayName": "AI Video Studio",
+  "description": "在 VS Code 中管理和生成 AI 视频作品。",
   "version": "0.0.1",
   "icon": "resources/logo.png",
   "publisher": "chengbin",
