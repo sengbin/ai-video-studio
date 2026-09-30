@@ -16,6 +16,9 @@ export interface PageResources {
 /** 界面组件库源码目录（相对扩展根目录）。 */
 const UI_KIT_DIR = 'ui-kit/src';
 
+/** Webview 允许加载资源的目录（相对扩展根目录）；下面清单中的文件都必须位于其中，测试会检查。 */
+export const WEBVIEW_ROOT_PATHS = ['resources', UI_KIT_DIR] as const;
+
 /** 界面组件库的令牌样式，其他样式依赖它，必须最先加载。 */
 const UI_TOKENS_STYLE = `${UI_KIT_DIR}/ui-tokens.css`;
 /** 编辑器区页面的基础样式（页面外观、标题、状态文字）。 */

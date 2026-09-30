@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：database-connection.ts
-// 说明：打开本地 SQLite 数据库，启用外键并在启动时自动升级结构；同时提供事务辅助函数。
+// 说明：打开本地 SQLite 数据库，启用外键并在启动时自动升级结构。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-09-30
@@ -32,24 +32,6 @@ export function openDatabase(filePath: string, migrations: readonly Migration[] 
     return database;
   } catch (error) {
     database.close();
-    throw error;
-  }
-}
-
-/**
- * 在一个事务中执行操作：成功则提交，抛出异常则回滚并重新抛出。
- * 不支持嵌套，调用方不得在 operation 内再次调用。
- * @param database 数据库连接。
- * @param operation 需要原子执行的操作。
- */
-export function runInTransaction<T>(database: DatabaseSync, operation: () => T): T {
-  database.exec('BEGIN IMMEDIATE');
-  try {
-    const result = operation();
-    database.exec('COMMIT');
-    return result;
-  } catch (error) {
-    database.exec('ROLLBACK');
     throw error;
   }
 }

@@ -13,10 +13,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import type { DatabaseSync } from 'node:sqlite';
-import { IN_MEMORY_DATABASE_PATH, openDatabase, runInTransaction } from './database-connection';
+import { IN_MEMORY_DATABASE_PATH, openDatabase } from './database-connection';
 import { Migration, MigrationError } from './migration';
 import { readSchemaVersion } from './migration-runner';
 import { MIGRATIONS } from './migrations';
+import { runInTransaction } from './transaction';
 
 const NOW = '2026-01-01T00:00:00.000Z';
 const EXPECTED_TABLE_COUNT = 22;

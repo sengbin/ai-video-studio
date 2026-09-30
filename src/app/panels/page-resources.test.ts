@@ -11,7 +11,7 @@ import assert from 'node:assert/strict';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { test } from 'node:test';
-import { PROJECT_LIST_PAGE_RESOURCES, PageResources, SIDEBAR_PAGE_RESOURCES } from './page-resources';
+import { PROJECT_LIST_PAGE_RESOURCES, PageResources, SIDEBAR_PAGE_RESOURCES, WEBVIEW_ROOT_PATHS } from './page-resources';
 
 /** 编译产物位于 out/app/panels，扩展根目录在其上三级。 */
 const EXTENSION_ROOT = resolve(__dirname, '..', '..', '..');
@@ -30,6 +30,17 @@ test('每个页面清单中的样式与脚本文件都存在', () => {
   for (const [name, page] of PAGES) {
     for (const file of [...page.styles, ...page.scripts]) {
       assert.ok(existsSync(join(EXTENSION_ROOT, ...file.split('/'))), `${name}引用的 ${file} 不存在`);
+    }
+  }
+});
+
+test('清单中的文件都位于 Webview 允许加载的目录内（否则真实 Webview 会拒绝加载）', () => {
+  for (const [name, page] of PAGES) {
+    for (const file of [...page.styles, ...page.scripts]) {
+      assert.ok(
+        WEBVIEW_ROOT_PATHS.some((root) => file.startsWith(`${root}/`)),
+        `${name}引用的 ${file} 不在允许目录 ${WEBVIEW_ROOT_PATHS.join('、')} 内`
+      );
     }
   }
 });

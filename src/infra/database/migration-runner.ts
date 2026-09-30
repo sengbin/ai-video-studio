@@ -9,6 +9,7 @@
 
 import type { DatabaseSync } from 'node:sqlite';
 import { Migration, MigrationError } from './migration';
+import { runInTransaction } from './transaction';
 
 /**
  * 读取数据库当前的结构版本号；新库为 0。
@@ -64,14 +65,13 @@ function assertMigrationsConsecutive(migrations: readonly Migration[]): void {
 
 /** 在一个事务中执行单个迁移并更新版本号。 */
 function applyMigration(database: DatabaseSync, migration: Migration): void {
-  database.exec('BEGIN IMMEDIATE');
   try {
-    database.exec(migration.sql);
-    // PRAGMA 不支持参数绑定，版本号来自受控的整数，直接拼接。
-    database.exec(`PRAGMA user_version = ${migration.version}`);
-    database.exec('COMMIT');
+    runInTransaction(database, () => {
+      database.exec(migration.sql);
+      // PRAGMA 不支持参数绑定，版本号来自受控的整数，直接拼接。
+      database.exec(`PRAGMA user_version = ${migration.version}`);
+    });
   } catch (error) {
-    database.exec('ROLLBACK');
     throw new MigrationError(`执行迁移 ${migration.version}-${migration.name} 失败。`, { cause: error });
   }
 }

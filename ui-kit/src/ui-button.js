@@ -4,7 +4,7 @@
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-09-30
-// 备注：依赖 ui-core.js；图标为内联 SVG，颜色跟随文字；用法见 doc/ui-components.md。
+// 备注：依赖 ui-core.js；图标为内联 SVG，颜色跟随文字；用法见 ui-kit/docs/ui-components.md。
 // ------------------------------------------------------------------------
 
 'use strict';

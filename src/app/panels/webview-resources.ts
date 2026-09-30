@@ -8,9 +8,7 @@
 // ------------------------------------------------------------------------
 
 import * as vscode from 'vscode';
-
-/** 页面允许加载的目录（相对扩展根目录）：页面自己的资源、界面组件库源码。 */
-const WEBVIEW_ROOT_PATHS = ['resources', 'ui-kit/src'] as const;
+import { WEBVIEW_ROOT_PATHS } from './page-resources';
 
 /**
  * 页面允许加载的目录，写入 Webview 的 `localResourceRoots`。
