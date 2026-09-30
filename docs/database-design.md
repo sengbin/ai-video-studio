@@ -26,7 +26,7 @@
 | 项目与作品 | `projects` | 项目及项目级默认值 |
 | | `works` | 作品，一个作品是单个短视频或一部多集短片 |
 | | `work_sources` | 创意阶段的素材附件（图片、小说原文） |
-| | `stage_runs` | 各阶段的每次生成记录，保存输入快照和版本 |
+| | `stage_runs` | 各阶段的每次生成记录，保存输入快照、版本、进度和人工确认状态 |
 | | `chapters` | 创意阶段产出的章节正文 |
 | 剧本 | `screenplays` | 剧本包 |
 | | `episodes` | 集 |
@@ -46,8 +46,10 @@
 | | `video_results` | 生成结果视频 |
 | | `result_frames` | 结果视频的尾帧图片 |
 | | `episode_audio_tracks` | 集的独立音轨（预留，本阶段不开发） |
+| | `asset_jobs` | 图片、音频资产的生成任务（预留，接入图像、音频模型时新增） |
+| | `asset_candidates` | 资产生成结果候选，检查后才采用为资产文件（预留） |
 
-共 23 张表，其中 `episode_audio_tracks` 为预留，实际创建 22 张。
+共 25 张表，其中 `episode_audio_tracks`、`asset_jobs`、`asset_candidates` 为预留，实际创建 22 张。
 
 ## 3. 关系图
 
@@ -62,6 +64,9 @@ erDiagram
   stage_runs ||--o{ chapters : 产出
   stage_runs ||--o| screenplays : 产出
   stage_runs ||--o| storyboard_scripts : 产出
+  stage_runs }o--o| stage_runs : 上游记录
+  assets ||--o{ asset_jobs : 生成任务（预留）
+  asset_jobs ||--o{ asset_candidates : 候选（预留）
   episodes ||--o{ storyboard_scripts : 分镜脚本
   storyboard_scripts ||--o{ shots : 镜头
   shots ||--o{ shot_entities : 出场
@@ -137,7 +142,7 @@ erDiagram
 
 #### `stage_runs` 阶段生成记录
 
-每次生成创意、剧本或分镜脚本，都产生一条记录，保存当时的输入，便于重新生成与追溯。
+每次生成创意、剧本或分镜脚本，都产生一条记录，保存当时的输入、进度和人工确认状态，便于重新生成与追溯。产出写在各阶段自己的表（`chapters`、`screenplays`、`storyboard_scripts`）中，确认流程见 [ARCHITECTURE.md](ARCHITECTURE.md) 6.3。
 
 | 字段 | 类型 | 必填 | 默认 | 说明 |
 |---|---|---|---|---|
@@ -147,13 +152,28 @@ erDiagram
 | `stage` | 文本 | 是 | | `creative`、`screenplay`、`storyboard_script` |
 | `version` | 整数 | 是 | | 同一作品、阶段、集下的序号，从 1 递增 |
 | `input_json` | 文本（JSON） | 是 | | 表单输入快照，见“提示输入”字段 |
-| `status` | 文本 | 是 | `running` | `running`、`succeeded`、`failed` |
-| `error_message` | 文本 | 否 | | 失败原因 |
-| `is_current` | 整数 | 是 | 0 | 是否为当前采用的版本 |
+| `status` | 文本 | 是 | `running` | 生成状态：`running`、`succeeded`、`failed`、`canceled` |
+| `review_status` | 文本 | 是 | `pending` | 确认状态：`pending` 待确认、`approved` 已确认；只有 `status = succeeded` 时才可为 `approved` |
+| `is_current` | 整数 | 是 | 0 | 是否为当前采用的版本；为 1 时必须已确认 |
+| `revision` | 整数 | 是 | 1 | 修订号，产出内容每被编辑保存一次加 1，用于判断下游是否过期 |
+| `source_run_id` | 整数 | 否 | | 依赖的上游阶段记录，外键 `stage_runs.id`，删除时置空；创意阶段为空 |
+| `source_revision` | 整数 | 否 | | 生成时上游记录的修订号 |
+| `model_info` | 文本 | 否 | | 使用的 Copilot 模型标识（家族与版本） |
+| `progress_json` | 文本（JSON） | 否 | | 进度：当前步骤、总步数、已完成数、创意大纲等，供页面显示与中断后继续 |
+| `raw_output` | 文本 | 否 | | 最近一次模型原始输出，仅在失败时保留，便于排查 |
+| `error_message` | 文本 | 否 | | 失败或取消原因 |
 | `created_at` | 文本 | 是 | | |
-| `finished_at` | 文本 | 否 | | |
+| `finished_at` | 文本 | 否 | | 生成结束时间 |
+| `approved_at` | 文本 | 否 | | 最近一次确认时间 |
+| `applied_at` | 文本 | 否 | | 仅剧本阶段使用：结构已合并到 `episodes`、`script_entities` 的时间，空表示尚未合并 |
 
-约束：同一 `(work_id, stage, episode_id)` 下最多一条 `is_current = 1`（用部分唯一索引实现，`episode_id` 为空时按 0 处理）。
+约束：
+
+- 同一 `(work_id, stage, episode_id)` 下最多一条 `is_current = 1`（部分唯一索引，`episode_id` 为空时按 0 处理）。
+- 同一 `(work_id, stage, episode_id)` 下最多一条 `status = running`（部分唯一索引），避免同时生成。
+- CHECK：`is_current = 0` 或（`status = succeeded` 且 `review_status = approved`）；`review_status = approved` 时 `status = succeeded`。
+- `stage = storyboard_script` 时 `episode_id` 必须有值，其他阶段必须为空（CHECK）。
+- `source_run_id` 与 `source_revision` 是否成对出现由业务层保证。
 
 #### `chapters` 章节正文
 
@@ -179,6 +199,7 @@ erDiagram
 | `title` | 文本 | 是 | 作品标题 |
 | `overview` | 文本 | 是 | 作品信息与改编梗概 |
 | `full_text` | 文本 | 是 | 完整剧本包正文，用户可编辑，原地更新 |
+| `structure_json` | 文本（JSON） | 是 | 从正文抽取的集和实体，见下方说明；确认采用前只存在这里，确认时合并到 `episodes`、`script_entities` |
 | `updated_at` | 文本 | 是 | |
 
 #### `episodes` 集
@@ -403,9 +424,10 @@ erDiagram
 | `code` | 文本 | 是 | | 服务商侧的模型标识 |
 | `display_name` | 文本 | 是 | | |
 | `is_enabled` | 整数 | 是 | 1 | 是否可选 |
+| `kind` | 文本 | 是 | `video` | 模型类型：`image` 图像、`audio` 音频、`video` 视频；同一服务商可以有多种类型的模型 |
 | `created_at` | 文本 | 是 | | |
 
-约束：`(provider_id, code)` 唯一。被生成任务或参数引用的模型只能停用，不能删除（外键限制删除）。
+约束：`(provider_id, code)` 唯一（同一服务商内模型代码不重复，不区分类型）。被生成任务或参数引用的模型只能停用，不能删除（外键限制删除）。
 
 #### `model_capabilities` 模型能力
 
@@ -415,7 +437,9 @@ erDiagram
 | `capability_json` | 文本（JSON） | 是 | 能力描述，键见下表 |
 | `updated_at` | 文本 | 是 | |
 
-`capability_json` 的键：
+`capability_json` 的键按模型类型区分，未列出的键对该类型不适用。
+
+**视频模型（`kind = video`）**
 
 | 键 | 含义 |
 |---|---|
@@ -433,6 +457,31 @@ erDiagram
 | `seed` | 是否支持随机种子 |
 | `prompt_languages` | 提示词语言：`zh`、`en` |
 | `prompt_max_length` | 提示词长度上限 |
+
+**图像模型（`kind = image`）**
+
+| 键 | 含义 |
+|---|---|
+| `aspect_ratios` | 支持的画幅列表 |
+| `resolutions` | 支持的尺寸或分辨率列表 |
+| `images_per_request_max` | 单次请求最多生成的图片数 |
+| `reference_images_max` | 参考图数量上限 |
+| `seed` | 是否支持随机种子 |
+| `prompt_languages` | 提示词语言：`zh`、`en` |
+| `prompt_max_length` | 提示词长度上限 |
+
+**音频模型（`kind = audio`）**
+
+| 键 | 含义 |
+|---|---|
+| `audio_kinds` | 支持生成的类型：`voice` 音色参考、`music` 配乐、`sfx` 音效 |
+| `duration` | 时长范围：`min`、`max` |
+| `languages` | 支持的语言（仅音色） |
+| `voices` | 可选的预置音色列表 |
+| `reference_audio` | 是否支持参考音频输入 |
+| `prompt_languages`、`prompt_max_length` | 同上 |
+
+本阶段不接入具体模型，以上只是能力描述的格式约定。
 
 #### `generation_profiles` 生成参数
 
@@ -537,7 +586,7 @@ erDiagram
 
 ### 4.8 独立音轨（预留）
 
-用于“声音与视频分开生成、再合成”的方式。**本阶段只设计结构，不开发功能，也不建表**；开发时新增迁移 `006-audio-tracks`。
+用于“声音与视频分开生成、再合成”的方式。**本阶段只设计结构，不开发功能，也不建表**；开发时新增迁移 `008-audio-tracks`。
 
 #### `episode_audio_tracks` 集的独立音轨
 
@@ -555,6 +604,38 @@ erDiagram
 | `sort_order` | 整数 | 是 | 0 | 同一时间点上的排列 |
 | `created_at` | 文本 | 是 | | |
 
+### 4.9 资产生成任务与候选（预留）
+
+用于“提示词发送给图像或音频模型生成资产文件”。**本阶段只设计结构，不建表**；接入图像、音频模型时新增迁移 `007-asset-generation`。
+
+#### `asset_jobs` 资产生成任务
+
+结构与 `video_jobs` 类似，每次提交一个资产产生一条，重试产生新记录。
+
+| 字段 | 说明 |
+|---|---|
+| `id` | 主键 |
+| `asset_id` | 外键 `assets.id`，级联删除 |
+| `model_id` | 外键 `models.id`，限制删除，模型类型必须为 `image` 或 `audio`（业务校验） |
+| `status` | `queued`、`running`、`succeeded`、`failed`、`canceled` |
+| `request_snapshot_json` | 提交时的请求快照：模型、提示词与语言、参数、参考图文件 ID；不得出现密钥 |
+| `remote_job_id` | 模型服务侧任务标识 |
+| `error_category`、`error_message` | 失败分类与原因 |
+| `attempt` | 同一资产的第几次提交 |
+| `created_at`、`submitted_at`、`finished_at` | 时间 |
+
+#### `asset_candidates` 生成结果候选
+
+生成的图片或音频先作为候选保存，经用户检查后才采用；采用时复制为 `asset_files`（`role = reference`），并把候选标记为已采用。未采用的候选不影响资产。
+
+| 字段 | 说明 |
+|---|---|
+| `id` | 主键 |
+| `job_id` | 外键 `asset_jobs.id`，级联删除 |
+| `mime`、`width`、`height`、`duration_seconds`、`size_bytes`、`content` | 同 `asset_files` |
+| `is_adopted` | 是否已采用为资产文件 |
+| `created_at` | 创建时间 |
+
 ## 5. 索引
 
 | 表 | 索引 | 用途 |
@@ -563,6 +644,8 @@ erDiagram
 | `work_sources` | `(work_id, sort_order)` | 读取素材 |
 | `stage_runs` | `(work_id, stage, episode_id, version DESC)` | 查最新版本 |
 | `stage_runs` | 部分唯一 `(work_id, stage, ifnull(episode_id, 0)) WHERE is_current = 1` | 保证一个当前版本 |
+| `stage_runs` | 部分唯一 `(work_id, stage, ifnull(episode_id, 0)) WHERE status = 'running'` | 同一目标同时只能有一个运行中的生成 |
+| `stage_runs` | `(source_run_id)` | 查找依赖某个上游记录的下游，判断过期 |
 | `episodes` | `(work_id, seq)` 唯一 | 集顺序 |
 | `script_entities` | `(work_id, kind, name)` 唯一 | 实体去重与匹配 |
 | `shots` | `(storyboard_script_id, seq)` 唯一 | 镜头顺序 |
@@ -597,12 +680,13 @@ erDiagram
 
 1. **单个短视频也有 1 集。** 创建 `kind = single` 的作品时，同时创建第 1 集。
 2. **重新生成剧本时保护下游数据。**
+   - 生成时只写 `screenplays`（正文与 `structure_json`），**不修改** `episodes`、`script_entities`；用户确认采用时才按下面的规则合并，并记录 `applied_at`。已合并过的记录再次确认时不重复合并。
    - 集按序号更新，不新建、不删除已有集。
    - 实体按 `(kind, name)` 合并，保留已有绑定；不再出现的实体置 `is_active = 0`。
    - 若已有集存在分镜脚本或生成结果，须先向用户确认。
 3. **镜头依赖。** `first_frame_mode = prev_tail` 的镜头提交时，`prev_job_id` 指向同集上一镜头最新的成功任务；尚无成功任务则状态为 `waiting`。
 4. **采用版本。** 每个镜头的成功结果中，只有一条 `is_selected = 1`；首次成功时自动选中，之后由用户切换。
-5. **启动恢复。** 扩展启动时，把遗留的 `running` 任务按 `remote_job_id` 重新查询状态；无远端标识的置为 `failed`。
+5. **启动恢复。** 扩展启动时，把遗留的 `running` 任务按 `remote_job_id` 重新查询状态；无远端标识的置为 `failed`。遗留的 `running` 阶段记录（`stage_runs`）一律置为 `failed`，原因为“扩展重启，已中断”。
 6. **提交前校验（应用层）。** 实体是否都已绑定、参数是否落在模型能力范围内、参考图数量、密钥是否已配置、`prev_tail` 是否有前序，详见架构文档。
 7. **声音。**
    - 声音先按“模型原生生成”实现（`audio_mode = native`）；“独立音轨”只预留结构。
@@ -610,6 +694,12 @@ erDiagram
    - 角色在本集绑定了音色参考音频（`purpose = voice`）且模型支持 `voice_reference` 时，把它作为参考音频一并提交；模型不支持时只使用文字描述，并给出警告。
    - 模型不支持的声音内容（例如不支持背景音乐）不会被提交，提交预览中需要列出。
 8. **大小限制（建议值）。** 单张资产图片不超过 10 MB；单个资产音频不超过 20 MB、时长不超过 60 秒；小说原文文件不超过 5 MB；具体数值在实现时集中配置。
+9. **阶段记录的确认与版本。**
+   - 生成成功（`status = succeeded`）后 `review_status = pending`；用户确认采用时，在一个事务内把同一目标原来的当前版本的 `is_current` 置 0，再把本条置为 `approved`、`is_current = 1`。
+   - 产出内容（章节、剧本包正文、集、实体、镜头、声音条目）每次编辑保存，对应阶段记录的 `revision` 加 1；已确认的记录同时回到 `pending` 且 `is_current = 0`。这些编辑统一经服务层保存。
+   - 下游过期：下游记录的 `source_revision` 与上游记录现在的 `revision` 不同，或上游记录不再是已确认，则该下游记录显示“上游已变更”；不自动修改或删除下游数据。
+   - 下游阶段只能选择已确认（`is_current = 1`）的上游记录作为输入。
+10. **资产提示词不建阶段记录。** Copilot 生成的中英文提示词直接填入资产表单的提示词字段，用户检查并保存即视为确认。
 
 ## 8. 迁移计划
 
@@ -622,11 +712,13 @@ erDiagram
 | 3 | `003-storyboard` | `storyboard_scripts`、`shots`、`shot_entities`、`shot_sounds` | 已实现 |
 | 4 | `004-models` | `providers`、`models`、`model_capabilities`、`generation_profiles` | 已实现 |
 | 5 | `005-generation` | `video_jobs`、`video_results`、`result_frames` | 已实现 |
-| 6 | `006-audio-tracks` | `episode_audio_tracks`（预留，开发独立音轨时再新增） | 后续 |
+| 6 | `006-text-generation` | `stage_runs` 增加“已取消”状态、确认状态、修订号、上游记录、模型、进度、原始输出（重建该表，允许丢弃现有数据）；`screenplays` 增加 `structure_json`；`models` 增加 `kind` | 待实现（文本生成基础） |
+| 7 | `007-asset-generation` | `asset_jobs`、`asset_candidates`（预留） | 接入图像、音频模型时 |
+| 8 | `008-audio-tracks` | `episode_audio_tracks`（预留，开发独立音轨时再新增） | 后续 |
 
 拆分说明：镜头引用资产文件，因此资产在分镜之前建立；全部 22 张表已在前五个迁移中创建，各功能的仓库随功能实现逐步补全。
 
-已发布的脚本不再修改；结构变更一律新增下一个编号的脚本。升级前先复制数据库文件作为备份。
+已发布的脚本不再修改；结构变更一律新增下一个编号的脚本。测试阶段不考虑已有数据，需要重建表（例如修改 CHECK 约束）时，新增的迁移可以直接丢弃该表及其下游表的数据，不做数据搬迁，正式发布后不再允许。升级前先复制数据库文件作为备份。
 
 ## 9. 与架构文档的差异说明
 
@@ -640,3 +732,4 @@ erDiagram
 - 新增创意阶段相关表 `work_sources`、`chapters`，以及项目级默认值。
 - 生成任务只入库提交后的状态；草稿、就绪是校验阶段的界面状态。
 - 声音从单个模式字段拓展为结构化内容：新增 `shot_sounds`（对白、旁白、音效、配乐），镜头表不再保存对白和声音说明文本；资产新增音频类型；绑定新增用途（形象、音色）；独立音轨只预留。
+- 阶段记录增加人工确认状态、修订号和上游依赖；剧本包增加结构快照，确认后才合并到集和实体；模型增加类型（图像、音频、视频），能力描述按类型区分；预留资产生成任务与候选表。
