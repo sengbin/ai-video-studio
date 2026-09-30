@@ -28,6 +28,8 @@ export interface ChapterOutlineItem {
   readonly seq: number;
   readonly title: string;
   readonly summary: string;
+  /** 小说改编时本章依据的原文分段序号（从 1 开始）；其他素材为空数组。 */
+  readonly sources: readonly number[];
 }
 
 /** 生成的一章正文。 */

@@ -11,7 +11,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { GeneratedOutputError, ValidationError } from '../errors';
 import { CreativeParams } from '../models/creative';
-import { countWords, normalizeCreativeParams, parseChapter, parseOutline } from './creative-rules';
+import { countWords, normalizeCreativeParams, parseChapter, parseOutline, parseSummary } from './creative-rules';
 import { parseModelJson } from './json-output';
 
 const PARAMS: CreativeParams = {
@@ -105,8 +105,8 @@ test('大纲：接受 chapters 对象或直接的数组，序号按顺序从 1 �
   ];
   const fromObject = parseOutline({ chapters }, PARAMS);
   assert.deepEqual(fromObject, [
-    { seq: 1, title: '开端', summary: '守夜人上岗' },
-    { seq: 2, title: '转折', summary: '收到信号' }
+    { seq: 1, title: '开端', summary: '守夜人上岗', sources: [] },
+    { seq: 2, title: '转折', summary: '收到信号', sources: [] }
   ]);
   assert.deepEqual(parseOutline(chapters, PARAMS), fromObject);
 });
@@ -156,4 +156,44 @@ test('模型 JSON：合法的 JSON 字面量（如 null、0）不被当作解析
 test('模型 JSON：无法解析时抛出可反馈给模型的输出错误', () => {
   assert.match(captureIssues(() => parseModelJson('没有任何 JSON')).join('；'), /不是合法的 JSON/);
   assert.match(captureIssues(() => parseModelJson('{"a": 1')).join('；'), /不是合法的 JSON/);
+});
+
+test('大纲（小说）：每章必须给出合法的原文段序号，去重并排序', () => {
+  const outline = parseOutline(
+    {
+      chapters: [
+        { title: '甲', summary: '梗概', sources: [3, 1, 3] },
+        { title: '乙', summary: '梗概', sources: [2] }
+      ]
+    },
+    PARAMS,
+    3
+  );
+  assert.deepEqual(
+    outline.map((item) => item.sources),
+    [[1, 3], [2]]
+  );
+
+  const issues = captureIssues(() =>
+    parseOutline(
+      {
+        chapters: [
+          { title: '甲', summary: '梗概' },
+          { title: '乙', summary: '梗概', sources: [4] },
+          { title: '丙', summary: '梗概', sources: [] }
+        ]
+      },
+      PARAMS,
+      3
+    )
+  );
+  assert.equal(issues.length, 3);
+  assert.match(issues[0], /第 1 章的 sources/);
+});
+
+test('要点文字：必须有非空的 summary，且不能过长', () => {
+  assert.equal(parseSummary({ summary: ' 要点 ' }), '要点');
+  assert.match(captureIssues(() => parseSummary({ summary: '  ' })).join('；'), /summary 不能为空/);
+  assert.match(captureIssues(() => parseSummary('要点')).join('；'), /summary/);
+  assert.match(captureIssues(() => parseSummary({ summary: '长'.repeat(2001) })).join('；'), /超过上限 2000 字/);
 });

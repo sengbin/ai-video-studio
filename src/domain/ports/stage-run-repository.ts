@@ -22,6 +22,8 @@ export interface StageRunRepository {
 
   /** 创建一条“运行中”的记录，版本号为目标现有最大版本加 1。 */
   create(input: NewStageRun, timestamp: string): StageRun;
+  /** 为失败或已取消的记录重新开始生成：状态回到运行中，清除错误与结束时间，保留已完成的产出与进度。 */
+  markRunning(id: number): StageRun | undefined;
   /** 更新进度；记录不存在时返回 undefined。 */
   updateProgress(id: number, progress: StageProgress): StageRun | undefined;
   /** 标记生成成功，状态为待确认。 */

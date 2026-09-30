@@ -34,6 +34,7 @@ export const CREATIVE_PRESERVE_MAX_LENGTH = 1000;
 export const CREATIVE_EXTRA_MAX_LENGTH = 2000;
 export const CHAPTER_TITLE_MAX_LENGTH = 100;
 export const OUTLINE_SUMMARY_MAX_LENGTH = 500;
+export const SUMMARY_MAX_LENGTH = 2000;
 
 const CJK_CHARACTER = /[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/g;
 const LATIN_WORD = /[A-Za-z0-9]+(?:['’-][A-Za-z0-9]+)*/g;
@@ -91,13 +92,31 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+/** 读取一章依据的原文分段序号；非小说素材（segmentCount 为 0）一律返回空数组。 */
+function readSources(item: unknown, seq: number, segmentCount: number, issues: string[]): number[] {
+  if (segmentCount === 0) {
+    return [];
+  }
+  const value = isRecord(item) ? item.sources : undefined;
+  const valid =
+    Array.isArray(value) &&
+    value.length > 0 &&
+    value.every((entry) => Number.isInteger(entry) && (entry as number) >= 1 && (entry as number) <= segmentCount);
+  if (!valid) {
+    issues.push(`第 ${seq} 章的 sources 必须是 1 到 ${segmentCount} 之间、至少包含一个序号的数组。`);
+    return [];
+  }
+  return [...new Set(value as number[])].sort((left, right) => left - right);
+}
+
 /**
  * 校验并整理模型返回的章节大纲，章节序号按顺序从 1 分配。
  * @param raw 解析后的 JSON，形如 { "chapters": [{ "title": "…", "summary": "…" }] }，也接受直接的数组。
  * @param params 创意生成参数。
+ * @param segmentCount 小说原文的分段数；大于 0 时每章必须给出依据的原文分段序号 sources。
  * @throws GeneratedOutputError 格式不对或章节数超过上限。
  */
-export function parseOutline(raw: unknown, params: CreativeParams): ChapterOutlineItem[] {
+export function parseOutline(raw: unknown, params: CreativeParams, segmentCount = 0): ChapterOutlineItem[] {
   const items: unknown = Array.isArray(raw) ? raw : isRecord(raw) ? raw.chapters : undefined;
   if (!Array.isArray(items)) {
     throw new GeneratedOutputError(['大纲必须是包含 chapters 数组的 JSON，例如 {"chapters":[{"title":"…","summary":"…"}]}。']);
@@ -121,7 +140,7 @@ export function parseOutline(raw: unknown, params: CreativeParams): ChapterOutli
     if (summary.length === 0 || summary.length > OUTLINE_SUMMARY_MAX_LENGTH) {
       issues.push(`第 ${seq} 章梗概必须是 1 到 ${OUTLINE_SUMMARY_MAX_LENGTH} 字的文本。`);
     }
-    outline.push({ seq, title, summary });
+    outline.push({ seq, title, summary, sources: readSources(item, seq, segmentCount, issues) });
   });
 
   if (issues.length > 0) {
@@ -163,4 +182,20 @@ export function parseChapter(raw: unknown, seq: number, params: CreativeParams):
     throw new GeneratedOutputError(issues);
   }
   return { seq, title, content };
+}
+
+/**
+ * 校验并取出模型返回的要点文字（原文分段要点或图片描述）。
+ * @param raw 解析后的 JSON，形如 { "summary": "…" }。
+ * @throws GeneratedOutputError 缺少 summary、为空或过长。
+ */
+export function parseSummary(raw: unknown): string {
+  const summary = isRecord(raw) && typeof raw.summary === 'string' ? raw.summary.trim() : '';
+  if (summary.length === 0) {
+    throw new GeneratedOutputError(['必须输出 {"summary": "…"}，且 summary 不能为空。']);
+  }
+  if (summary.length > SUMMARY_MAX_LENGTH) {
+    throw new GeneratedOutputError([`summary 有 ${summary.length} 字，超过上限 ${SUMMARY_MAX_LENGTH} 字，请精简。`]);
+  }
+  return summary;
 }
