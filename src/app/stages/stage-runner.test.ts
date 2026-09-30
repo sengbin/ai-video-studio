@@ -8,27 +8,18 @@
 // ------------------------------------------------------------------------
 
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { TextGenerationError, ValidationError } from '../../domain/errors';
 import { ChapterDraft } from '../../domain/models/creative';
 import { NewStageRun, ReviewPatch, StageProgress, StageRun, StageTarget } from '../../domain/models/stage-run';
 import { ChapterRepository } from '../../domain/ports/chapter-repository';
 import { StageRunRepository } from '../../domain/ports/stage-run-repository';
-import {
-  ImageInput,
-  TextGenerationOptions,
-  TextGenerationPort,
-  TextGenerationRequest,
-  TextModelInfo
-} from '../../domain/ports/text-generation-port';
+import { ImageInput, TextGenerationRequest, TextModelInfo } from '../../domain/ports/text-generation-port';
 import { NovelSplitSettings } from '../../domain/rules/novel-splitter';
 import { CreativeWorkflow } from './creative-workflow';
-import { PromptTemplates } from './prompt-templates';
 import { INTERRUPTED_MESSAGE, StageRunner } from './stage-runner';
+import { DEFAULT_MODEL, FILE_PROMPTS, Responder, ScriptedText, readPrompt, standardResponder } from './testing/scripted-text';
 
-const PROMPTS_DIRECTORY = join(resolve(__dirname, '..', '..', '..'), 'resources', 'prompts');
 const TARGET: StageTarget = { workId: 1, stage: 'creative', episodeId: null };
 const TEXT_INPUT = {
   sourceType: 'text',
@@ -37,10 +28,7 @@ const TEXT_INPUT = {
 const NOVEL_INPUT = { ...TEXT_INPUT, sourceType: 'novel' };
 const IMAGE_INPUT = { ...TEXT_INPUT, sourceType: 'image' };
 const NOVEL_TEXT = ['第一章 起', '甲'.repeat(600), '第二章 承', '乙'.repeat(600), '第三章 合', '丙'.repeat(600)].join('\n');
-const DEFAULT_MODEL: TextModelInfo = { id: 'copilot/test', maxInputTokens: 100000, supportsImageInput: true };
 const SPLIT_SETTINGS: NovelSplitSettings = { mode: 'chapter', maxSegmentChars: 1000 };
-
-type Responder = (request: TextGenerationRequest, callIndex: number) => string | Promise<string>;
 
 /** 内存版阶段记录仓库，语义与 SQLite 实现一致。 */
 class MemoryStageRuns implements StageRunRepository {
@@ -134,78 +122,6 @@ class MemoryChapters implements ChapterRepository {
     chapters.set(chapter.seq, chapter);
     this.store.set(runId, chapters);
   }
-}
-
-/** 脚本化的假文本生成端口：记录全部请求，按响应函数返回，支持取消。 */
-class ScriptedText implements TextGenerationPort {
-  readonly requests: TextGenerationRequest[] = [];
-  unavailable = false;
-
-  constructor(
-    private readonly responder: Responder,
-    private readonly model: TextModelInfo
-  ) {}
-
-  async resolveModel(): Promise<TextModelInfo> {
-    if (this.unavailable) {
-      throw new TextGenerationError('unavailable', '未安装或未登录 Copilot。');
-    }
-    return this.model;
-  }
-
-  async countTokens(text: string): Promise<number> {
-    return Math.ceil(text.length / 2);
-  }
-
-  async generate(request: TextGenerationRequest, options?: TextGenerationOptions): Promise<string> {
-    this.requests.push(request);
-    const signal = options?.signal;
-    if (signal?.aborted) {
-      throw new TextGenerationError('canceled', '已取消。');
-    }
-    const pending = Promise.resolve(this.responder(request, this.requests.length - 1));
-    if (signal === undefined) {
-      return pending;
-    }
-    return Promise.race([
-      pending,
-      new Promise<never>((_resolve, reject) => {
-        signal.addEventListener('abort', () => reject(new TextGenerationError('canceled', '已取消。')), { once: true });
-      })
-    ]);
-  }
-}
-
-/** 读取真实的提示词模板文件。 */
-function readPrompt(name: string): string {
-  return readFileSync(join(PROMPTS_DIRECTORY, `${name}.md`), 'utf8');
-}
-
-const FILE_PROMPTS: PromptTemplates = { get: readPrompt };
-
-/** 默认响应：按请求中的任务标题返回符合要求的 JSON。 */
-function standardResponder(request: TextGenerationRequest): string {
-  const user = request.user;
-  if (user.includes('# 任务：提取原文要点')) {
-    return JSON.stringify({ summary: `要点${/第 (\d+) 段/.exec(user)?.[1] ?? ''}` });
-  }
-  if (user.includes('# 任务：分析灵感图片')) {
-    return JSON.stringify({ summary: '画面：灯塔与海' });
-  }
-  if (user.includes('# 任务：规划章节大纲')) {
-    return JSON.stringify({
-      chapters: [
-        { title: '开端', summary: '守夜人上岗', sources: [1] },
-        { title: '转折', summary: '收到信号', sources: [2] },
-        { title: '结局', summary: '真相', sources: [3] }
-      ]
-    });
-  }
-  const chapter = /# 任务：撰写第 (\d+) 章/.exec(user);
-  if (chapter !== null) {
-    return JSON.stringify({ title: `第${chapter[1]}章`, content: '灯'.repeat(120) });
-  }
-  throw new Error(`未预期的请求：${user.slice(0, 40)}`);
 }
 
 interface HarnessOptions {

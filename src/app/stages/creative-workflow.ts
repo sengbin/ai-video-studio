@@ -11,11 +11,13 @@ import { FORM_LEVEL_ERROR_KEY, TextGenerationError, ValidationError } from '../.
 import { ChapterOutlineItem, CreativeParams } from '../../domain/models/creative';
 import { StageProgress } from '../../domain/models/stage-run';
 import { ChapterRepository } from '../../domain/ports/chapter-repository';
+import { CreativeSourceReader } from '../../domain/ports/creative-source-reader';
 import { ImageInput } from '../../domain/ports/text-generation-port';
 import { normalizeCreativeParams, parseChapter, parseOutline, parseSummary } from '../../domain/rules/creative-rules';
 import { FieldErrors, assertNoFieldErrors, readOptionalChoice, readRecord } from '../../domain/rules/field-readers';
 import { NovelSegment, NovelSplitSettings, splitNovel } from '../../domain/rules/novel-splitter';
-import { PromptTemplates, renderTemplate, wrapMaterial } from './prompt-templates';
+import { PromptTemplates } from '../../domain/ports/prompt-templates';
+import { renderTemplate, wrapMaterial } from './prompt-templates';
 import { StageContext, StageWorkflow } from './stage-workflow';
 import { generateStructured } from './structured-generation';
 
@@ -26,14 +28,6 @@ export type CreativeSourceType = 'text' | 'image' | 'novel';
 export interface CreativeRunInput {
   readonly sourceType: CreativeSourceType;
   readonly params: CreativeParams;
-}
-
-/** 读取作品已保存的素材；扩展中由 work_sources 表实现。 */
-export interface CreativeSourceReader {
-  /** 读取作品的小说原文；没有时返回 undefined。 */
-  readNovelText(workId: number): string | undefined;
-  /** 按上传顺序读取作品的灵感图片。 */
-  readImages(workId: number): ImageInput[];
 }
 
 /** 创意工作流的依赖。 */

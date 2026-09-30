@@ -35,9 +35,9 @@ export interface StageRunRepository {
 
   /**
    * 确认采用：在同一事务内把同一目标原来的当前版本置为历史，再写入确认状态。
-   * @param patch 由确认规则计算出的状态。
+   * @param patch 由确认规则计算出的状态（含确认时间）。
    */
-  approve(id: number, patch: ReviewPatch, timestamp: string): StageRun | undefined;
+  approve(id: number, patch: ReviewPatch): StageRun | undefined;
   /** 写入编辑后的确认状态（回到待确认、修订号加 1）。 */
   applyEdit(id: number, patch: ReviewPatch): StageRun | undefined;
 

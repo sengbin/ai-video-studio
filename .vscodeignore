@@ -9,4 +9,5 @@ tsconfig.json
 build.ps1
 **/*.map
 out/**/*.test.js
+out/**/testing/**
 node_modules/**
