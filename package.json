@@ -48,12 +48,11 @@
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p .",
     "watch": "tsc -watch -p .",
-    "test": "npm run compile && node --test \"out/**/*.test.js\"",
+    "test": "npm run compile && node --test \"out/**/*.test.js\" \"ui-kit/test/**/*.test.mjs\"",
     "package": "vsce package",
     "publish": "vsce publish"
   },
   "devDependencies": {
-    "@types/jsdom": "^30.0.0",
     "@types/node": "^22.15.30",
     "@types/vscode": "^1.108.0",
     "@vscode/vsce": "^4.0.0",

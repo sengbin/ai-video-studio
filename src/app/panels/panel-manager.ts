@@ -4,16 +4,14 @@
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-09-30
-// 备注：同一键的面板只保留一个，重复打开时聚焦已有面板；面板资源位于扩展 resources 目录。
+// 备注：同一键的面板只保留一个，重复打开时聚焦已有面板；资源目录见 webview-resources.ts。
 // ------------------------------------------------------------------------
 
 import * as vscode from 'vscode';
 import { EventEnvelope } from '../messaging/envelope';
 import { MessageRouter } from '../messaging/message-router';
 import { createPageHtml } from './page-html';
-
-/** 页面静态资源根目录（相对扩展根目录）。 */
-const RESOURCE_ROOT_PATH = 'resources';
+import { getWebviewResourceRoots, toWebviewResourceUri } from './webview-resources';
 
 /** 打开面板所需的选项。 */
 export interface PanelOptions {
@@ -21,9 +19,9 @@ export interface PanelOptions {
   readonly key: string;
   readonly viewType: string;
   readonly title: string;
-  /** 样式文件，路径相对 resources 目录，使用 `/` 分隔。 */
+  /** 样式文件，路径相对扩展根目录，使用 `/` 分隔。 */
   readonly styles: readonly string[];
-  /** 脚本文件，路径相对 resources 目录，使用 `/` 分隔。 */
+  /** 脚本文件，路径相对扩展根目录，使用 `/` 分隔。 */
   readonly scripts: readonly string[];
   readonly router: MessageRouter;
 }
@@ -72,21 +70,19 @@ export class PanelManager {
       return existing.handle;
     }
 
-    const resourceRoot = vscode.Uri.joinPath(this.extensionUri, RESOURCE_ROOT_PATH);
     // 表单等页面切换标签后需要保留输入，因此保留隐藏面板的上下文。
     const panel = vscode.window.createWebviewPanel(options.viewType, options.title, vscode.ViewColumn.Active, {
       enableScripts: true,
       retainContextWhenHidden: true,
-      localResourceRoots: [resourceRoot]
+      localResourceRoots: getWebviewResourceRoots(this.extensionUri)
     });
     const webview = panel.webview;
-    const toWebviewUri = (relativePath: string): string =>
-      webview.asWebviewUri(vscode.Uri.joinPath(resourceRoot, ...relativePath.split('/'))).toString();
+    const toUri = (relativePath: string): string => toWebviewResourceUri(webview, this.extensionUri, relativePath);
     webview.html = createPageHtml({
       title: options.title,
       cspSource: webview.cspSource,
-      styleUris: options.styles.map(toWebviewUri),
-      scriptUris: options.scripts.map(toWebviewUri)
+      styleUris: options.styles.map(toUri),
+      scriptUris: options.scripts.map(toUri)
     });
 
     webview.onDidReceiveMessage(async (message: unknown) => {

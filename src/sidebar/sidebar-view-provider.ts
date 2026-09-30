@@ -10,14 +10,12 @@
 import * as vscode from 'vscode';
 import { MessageRouter } from '../app/messaging/message-router';
 import { SIDEBAR_PAGE_RESOURCES } from '../app/panels/page-resources';
+import { getWebviewResourceRoots, toWebviewResourceUri } from '../app/panels/webview-resources';
 import { createSidebarHtml } from './sidebar-html';
 import { SIDEBAR_SECTIONS } from './sidebar-menu-config';
 
 /** 侧栏视图标识，需与 package.json 中 views 的 id 一致。 */
 export const SIDEBAR_VIEW_ID = 'aiVideoStudio.sidebar';
-
-/** 页面静态资源根目录（相对扩展根目录）。 */
-const RESOURCE_ROOT_PATH = 'resources';
 
 /** 提供侧栏 Webview 视图。 */
 export class SidebarViewProvider implements vscode.WebviewViewProvider {
@@ -35,15 +33,13 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
    * @param view VS Code 创建的 Webview 视图。
    */
   resolveWebviewView(view: vscode.WebviewView): void {
-    const resourceRoot = vscode.Uri.joinPath(this.extensionUri, RESOURCE_ROOT_PATH);
     const webview = view.webview;
-    const toWebviewUri = (relativePath: string): string =>
-      webview.asWebviewUri(vscode.Uri.joinPath(resourceRoot, ...relativePath.split('/'))).toString();
-    webview.options = { enableScripts: true, localResourceRoots: [resourceRoot] };
+    const toUri = (relativePath: string): string => toWebviewResourceUri(webview, this.extensionUri, relativePath);
+    webview.options = { enableScripts: true, localResourceRoots: getWebviewResourceRoots(this.extensionUri) };
     webview.html = createSidebarHtml({
       cspSource: webview.cspSource,
-      styleUris: SIDEBAR_PAGE_RESOURCES.styles.map(toWebviewUri),
-      scriptUris: SIDEBAR_PAGE_RESOURCES.scripts.map(toWebviewUri),
+      styleUris: SIDEBAR_PAGE_RESOURCES.styles.map(toUri),
+      scriptUris: SIDEBAR_PAGE_RESOURCES.scripts.map(toUri),
       sections: SIDEBAR_SECTIONS
     });
     webview.onDidReceiveMessage(async (message: unknown) => {

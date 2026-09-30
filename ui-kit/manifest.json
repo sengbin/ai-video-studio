@@ -1,0 +1,13 @@
+{
+  "styles": ["ui-tokens.css", "ui-controls.css", "ui-dialog.css", "ui-scrollbar.css"],
+  "scripts": [
+    "ui-core.js",
+    "ui-scrollbar.js",
+    "ui-button.js",
+    "ui-input-controls.js",
+    "ui-select.js",
+    "ui-choice-controls.js",
+    "ui-field.js",
+    "ui-dialog.js"
+  ]
+}

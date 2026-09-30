@@ -1,10 +1,10 @@
 // ------------------------------------------------------------------------
 // 名称：page-resources.ts
-// 说明：各 Webview 页面使用的样式与脚本清单：界面组件库文件按依赖顺序集中在此维护。
+// 说明：各 Webview 页面使用的样式与脚本清单：界面组件库（ui-kit/src）的文件按依赖顺序集中在此引用。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-09-30
-// 备注：路径相对 resources 目录，使用 / 分隔；不依赖 VS Code，测试会校验文件均存在。
+// 备注：路径相对扩展根目录，使用 / 分隔；组件库顺序须与 ui-kit/manifest.json 一致（测试校验）；不依赖 VS Code。
 // ------------------------------------------------------------------------
 
 /** 一个页面需要加载的样式与脚本，按加载顺序排列。 */
@@ -13,35 +13,45 @@ export interface PageResources {
   readonly scripts: readonly string[];
 }
 
-/** 界面组件库的令牌样式，其他样式依赖它，必须最先加载。 */
-const UI_TOKENS_STYLE = 'shared/ui/ui-tokens.css';
-/** 编辑器区页面的基础样式（页面外观、标题、状态文字）。 */
-const EDITOR_PAGE_THEME_STYLE = 'shared/theme.css';
-/** 界面组件库的控件、对话框与滚动条样式。 */
-const UI_COMPONENT_STYLES = ['shared/ui/ui-controls.css', 'shared/ui/ui-dialog.css', 'shared/ui/ui-scrollbar.css'] as const;
+/** 界面组件库源码目录（相对扩展根目录）。 */
+const UI_KIT_DIR = 'ui-kit/src';
 
-/** 通信桥与界面组件库的脚本，按依赖顺序排列：核心先于其他组件。 */
+/** 界面组件库的令牌样式，其他样式依赖它，必须最先加载。 */
+const UI_TOKENS_STYLE = `${UI_KIT_DIR}/ui-tokens.css`;
+/** 编辑器区页面的基础样式（页面外观、标题、状态文字）。 */
+const EDITOR_PAGE_THEME_STYLE = 'resources/shared/theme.css';
+/** 界面组件库的控件、对话框与滚动条样式。 */
+const UI_COMPONENT_STYLES = ['ui-controls.css', 'ui-dialog.css', 'ui-scrollbar.css'].map((name) => `${UI_KIT_DIR}/${name}`);
+
+/** 通信桥与界面组件库的脚本，按依赖顺序排列。 */
 const UI_LIBRARY_SCRIPTS = [
-  'shared/host-bridge.js',
-  'shared/ui/ui-core.js',
-  'shared/ui/ui-scrollbar.js',
-  'shared/ui/ui-button.js',
-  'shared/ui/ui-input-controls.js',
-  'shared/ui/ui-select.js',
-  'shared/ui/ui-choice-controls.js',
-  'shared/ui/ui-field.js',
-  'shared/ui/ui-dialog.js'
-] as const;
+  'resources/shared/host-bridge.js',
+  ...[
+    'ui-core.js',
+    'ui-scrollbar.js',
+    'ui-button.js',
+    'ui-input-controls.js',
+    'ui-select.js',
+    'ui-choice-controls.js',
+    'ui-field.js',
+    'ui-dialog.js'
+  ].map((name) => `${UI_KIT_DIR}/${name}`)
+];
+
+/** 把相对 resources 目录的路径转换为相对扩展根目录的路径。 */
+function toResourcePath(path: string): string {
+  return `resources/${path}`;
+}
 
 /**
  * 组装编辑器区页面的资源：组件库在前，页面自己的样式和脚本在后。
- * @param pageStyles 页面自己的样式。
- * @param pageScripts 页面自己的脚本。
+ * @param pageStyles 页面自己的样式，相对 resources 目录。
+ * @param pageScripts 页面自己的脚本，相对 resources 目录。
  */
 function createEditorPageResources(pageStyles: readonly string[], pageScripts: readonly string[]): PageResources {
   return {
-    styles: [UI_TOKENS_STYLE, EDITOR_PAGE_THEME_STYLE, ...UI_COMPONENT_STYLES, ...pageStyles],
-    scripts: [...UI_LIBRARY_SCRIPTS, ...pageScripts]
+    styles: [UI_TOKENS_STYLE, EDITOR_PAGE_THEME_STYLE, ...UI_COMPONENT_STYLES, ...pageStyles.map(toResourcePath)],
+    scripts: [...UI_LIBRARY_SCRIPTS, ...pageScripts.map(toResourcePath)]
   };
 }
 
@@ -56,6 +66,6 @@ export const PROJECT_LIST_PAGE_RESOURCES: PageResources = createEditorPageResour
 
 /** 侧栏页面：有自己的布局，不加载编辑器区的基础样式。 */
 export const SIDEBAR_PAGE_RESOURCES: PageResources = {
-  styles: [UI_TOKENS_STYLE, ...UI_COMPONENT_STYLES, 'sidebar/sidebar.css'],
-  scripts: [...UI_LIBRARY_SCRIPTS, 'sidebar/sidebar.js']
+  styles: [UI_TOKENS_STYLE, ...UI_COMPONENT_STYLES, toResourcePath('sidebar/sidebar.css')],
+  scripts: [...UI_LIBRARY_SCRIPTS, toResourcePath('sidebar/sidebar.js')]
 };

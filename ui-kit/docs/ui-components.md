@@ -1,6 +1,6 @@
 # 界面组件库说明书
 
-本文说明 AI Video Studio（智影）页面内界面组件库的结构、用法和扩展方法。所有 Webview 页面（编辑器区页面和侧栏）都必须使用这套组件，**不使用 VS Code 内置的确认框、输入框和消息弹窗，也不使用浏览器原生的表单控件外观**。页面与表单如何使用这些组件，见 [page-form-design.md](page-form-design.md)。
+本文说明 AI Video Studio（智影）页面内界面组件库的结构、用法和扩展方法。所有 Webview 页面（编辑器区页面和侧栏）都必须使用这套组件，**不使用 VS Code 内置的确认框、输入框和消息弹窗，也不使用浏览器原生的表单控件外观**。页面与表单如何使用这些组件，见 [page-form-design.md](../../doc/page-form-design.md)。
 
 ## 1. 设计目标与原则
 
@@ -16,36 +16,34 @@
 ## 2. 文件结构
 
 ```
-resources/
-  shared/
-    host-bridge.js             与扩展宿主的通信桥（请求/响应、事件订阅）
-    theme.css                  编辑器区页面的基础样式（页面外观、标题、说明与状态文字）
-    ui/
-      ui-tokens.css            设计令牌：颜色、状态色、控件与对话框变量（亮暗主题）
-      ui-controls.css          按钮、输入、下拉、单选、复选、开关、字段包装的样式（含各控件的禁用外观）
-      ui-dialog.css            对话框、遮罩、标题栏、调整大小把手、删除确认提示的样式
-      ui-scrollbar.css         自绘滚动条：无箭头、无背景、悬停才显示滑块
-      ui-core.js               命名空间 aiUi、元素创建 h、唯一 id、事件发射器、层容器、指针跟踪、控件基类
-      ui-scrollbar.js          悬停标记（data-ui-hover），配合 ui-scrollbar.css 显示滚动条
-      ui-button.js             按钮（含添加、修改、删除预设）
-      ui-input-controls.js     单行输入框、多行文本框
-      ui-select.js             下拉列表
-      ui-choice-controls.js    单选组、复选框、复选框组、开关
-      ui-field.js              字段包装：标签、说明、错误提示
-      ui-dialog.js             对话框：确认、提示、删除确认、弹出页面
-  form/                        表单引擎（用组件库渲染宿主下发的表单描述）
-  project-list/                项目列表页
-  sidebar/                     侧栏页面
-src/app/panels/
-  page-resources.ts            各页面的样式与脚本清单（按依赖顺序）
-src/webview-tests/
-  ui-environment.ts            DOM 测试环境（jsdom）：加载组件库脚本、模拟排版与事件
-  ui-controls.test.ts          控件测试（含可用与禁用两种状态）
-  ui-dialog.test.ts            对话框测试（确认、删除确认、拖动、调整大小）
-  ui-styles.test.ts            样式静态检查（滚动条、禁用态令牌）
+ui-kit/                        组件库（自绘控件、对话框及其文档、测试都集中在这里，唯一源码）
+  manifest.json                文件清单：样式与脚本的加载顺序（供测试使用，与 page-resources.ts 一致）
+  docs/ui-components.md        本说明书
+  src/
+    ui-tokens.css              设计令牌：颜色、状态色、控件与对话框变量（亮暗主题）
+    ui-controls.css            按钮、输入、下拉、单选、复选、开关、字段包装的样式（含各控件的禁用外观）
+    ui-dialog.css              对话框、遮罩、标题栏、调整大小把手、删除确认提示的样式
+    ui-scrollbar.css           自绘滚动条：无箭头、无背景、悬停才显示滑块
+    ui-core.js                 命名空间 aiUi、元素创建 h、唯一 id、事件发射器、层容器、指针跟踪、控件基类
+    ui-scrollbar.js            悬停标记（data-ui-hover），配合 ui-scrollbar.css 显示滚动条
+    ui-button.js               按钮（含添加、修改、删除预设）
+    ui-input-controls.js       单行输入框、多行文本框
+    ui-select.js               下拉列表
+    ui-choice-controls.js      单选组、复选框、复选框组、开关
+    ui-field.js                字段包装：标签、说明、错误提示
+    ui-dialog.js               对话框：确认、提示、删除确认、弹出页面
+  test/
+    load-manifest.mjs          读取 manifest.json，给出 src 目录路径
+    ui-environment.mjs         DOM 测试环境（jsdom）：加载组件库脚本、模拟排版与事件
+    manifest.test.mjs          清单与 src 一一对应、加载顺序、文件头
+    ui-controls.test.mjs       控件测试（含可用与禁用两种状态）
+    ui-dialog.test.mjs         对话框测试（确认、删除确认、拖动、调整大小）
+    ui-styles.test.mjs         样式静态检查（滚动条、禁用态令牌）
 ```
 
-各文件职责单一：控件按类别分文件，对话框独立成文件，令牌与样式分开，便于按需修改。
+各文件职责单一：控件按类别分文件，对话框独立成文件，令牌与样式分开，便于按需修改。所有控件与对话框的代码、样式、文档和测试都在 `ui-kit/` 下，页面与扩展宿主的代码不在其中。
+
+扩展直接从 `ui-kit/src` 加载组件库，没有复制或构建步骤：页面清单中的路径相对扩展根目录（如 `ui-kit/src/ui-core.js`、`resources/form/form.css`），`src/app/panels/webview-resources.ts` 把 `resources` 与 `ui-kit/src` 设为 Webview 可加载的目录并转换资源地址。打包扩展时 `ui-kit/src` 会被包含，`ui-kit/test`、`ui-kit/docs`、`ui-kit/manifest.json` 不会。
 
 ## 3. 接入页面
 
@@ -68,13 +66,13 @@ src/webview-tests/
 3. 打开面板时把清单传给面板管理器：`styles: XXX_PAGE_RESOURCES.styles`、`scripts: XXX_PAGE_RESOURCES.scripts`。
 4. 页面脚本直接使用 `aiUi`，页面根节点为 `#app`。
 
-`npm test` 中的资源清单测试会检查：清单里的文件都存在、没有重复、加载顺序正确、`shared/ui` 下的每个文件都被页面使用。
+`npm test` 中的资源清单测试会检查：清单里的文件都存在、没有重复、加载顺序正确、`ui-kit` 下的每个文件都被页面使用。
 
 ### 3.3 新增一个组件库文件的步骤
 
-1. 在 `resources/shared/ui/` 下新建文件。
-2. 把它加入 `page-resources.ts` 中的 `UI_LIBRARY_SCRIPTS` 或 `UI_COMPONENT_STYLES`，位置要在它依赖的文件之后。
-3. 运行 `npm test`，确认清单测试通过。
+1. 在 `ui-kit/src/` 下新建文件。
+2. 把它加入 `ui-kit/manifest.json` 的 `styles` 或 `scripts`，以及 `page-resources.ts` 中的 `UI_LIBRARY_SCRIPTS` 或 `UI_COMPONENT_STYLES`，位置要在它依赖的文件之后（两处顺序不一致时测试会报错）。
+3. 运行 `npm test`，确认清单测试和组件库测试都通过。
 
 ## 4. 通用约定
 
@@ -511,7 +509,7 @@ export function createXxxForm(service: XxxService): FormDefinition {
 
 新增一种控件的清单：
 
-1. 在 `resources/shared/ui/` 的合适文件中（或新文件）用 `aiUi.makeControl` 组装，返回统一的控件对象；根元素、聚焦目标、`aria` 目标、`labelable` 要设置正确。
+1. 在 `ui-kit/src/` 的合适文件中（或新文件）用 `aiUi.makeControl` 组装，返回统一的控件对象；根元素、聚焦目标、`aria` 目标、`labelable` 要设置正确。
 2. 样式加到 `ui-controls.css`，类名以 `ui-` 开头，颜色只用令牌。
 3. 支持键盘操作和 ARIA 语义。
 4. 如果表单需要用到，在 `form-schema.ts` 的 `FormControl` 中增加类型，并在 `form-runtime.js` 的 `createControl` 中增加分支，同时约定值的文本编码。
@@ -534,14 +532,15 @@ export function createXxxForm(service: XxxService): FormDefinition {
 
 ### 14.1 自动化测试
 
-`npm test` 会先编译再运行 `out` 下的全部 `*.test.js`，其中组件库的测试在 `src/webview-tests/`，使用开发依赖 `jsdom`：
+`npm test`（根目录）先编译，再一次运行 `out` 下的扩展测试和 `ui-kit/test/` 下的组件库测试。组件库测试使用开发依赖 `jsdom`：
 
 | 文件 | 覆盖 |
 |---|---|
-| `ui-environment.ts` | 测试环境：建立 jsdom 页面，按页面清单的顺序加载 `shared/ui` 下的脚本；提供 `fire`、`pressKey`、`typeText`、`drag` 等模拟操作 |
-| `ui-controls.test.ts` | 各控件的读写值、变化通知、键盘操作，按钮预设，字段包装，滚动条悬停标记；“所有控件可用与禁用切换”的统一用例，新增控件时把它加入 `controlFactories` |
-| `ui-dialog.test.ts` | 对话框结构与 ARIA、模态与非模态、确认、提示、删除确认的名称校验、标题行拖动及边界、弹出页面调整大小、焦点恢复 |
-| `ui-styles.test.ts` | 样式文本的静态检查：滚动条无箭头无背景、悬停才显示、不使用标准滚动条属性；各控件的禁用样式使用禁用令牌 |
+| `ui-environment.mjs` | 测试环境：建立 jsdom 页面，按 `manifest.json` 的顺序加载 `src` 下的脚本；提供 `fire`、`pressKey`、`typeText`、`drag` 等模拟操作 |
+| `manifest.test.mjs` | 清单与 `src` 目录一一对应、没有重复、脚本只依赖排在它前面的脚本、源文件都有文件头 |
+| `ui-controls.test.mjs` | 各控件的读写值、变化通知、键盘操作，按钮预设，字段包装，滚动条悬停标记；“所有控件可用与禁用切换”的统一用例，新增控件时把它加入 `controlFactories` |
+| `ui-dialog.test.mjs` | 对话框结构与 ARIA、模态与非模态、确认、提示、删除确认的名称校验、标题行拖动及边界、弹出页面调整大小、焦点恢复 |
+| `ui-styles.test.mjs` | 样式文本的静态检查：滚动条无箭头无背景、悬停才显示、不使用标准滚动条属性；各控件的禁用样式使用禁用令牌 |
 
 新增或修改组件时同步补充这些测试。编写用例时注意：jsdom 没有排版，不要断言真实像素位置；位置与尺寸由测试环境按元素内联样式换算，未设置高度时按 100 像素计算，视口为 1024 × 768。
 

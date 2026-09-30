@@ -2,6 +2,9 @@
 .vscode-test/**
 .gitignore
 src/**
+ui-kit/test/**
+ui-kit/docs/**
+ui-kit/manifest.json
 tsconfig.json
 build.ps1
 **/*.map
