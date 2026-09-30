@@ -21,13 +21,13 @@ export interface OutputTool {
   readonly inputSchema: Readonly<Record<string, unknown>>;
 }
 
-/** 一次文本生成请求：系统段、用户段（含素材）、可选图片和可选的输出工具。 */
+/** 一次文本生成请求：系统段、用户段（含素材）、可选图片和输出工具。 */
 export interface TextGenerationRequest {
   readonly system: string;
   readonly user: string;
   readonly images?: readonly ImageInput[];
-  /** 指定时实现应强制模型通过该工具返回，并把工具参数序列化为 JSON 文本作为输出；模型不支持工具调用时忽略，按普通文本输出。 */
-  readonly tool?: OutputTool;
+  /** 实现必须强制模型通过该工具返回，并把工具参数序列化为 JSON 文本作为输出；模型没有通过工具返回时抛出错误。 */
+  readonly tool: OutputTool;
 }
 
 /** 生成过程中的附加选项。 */

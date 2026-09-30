@@ -18,4 +18,4 @@
 
 每章给出简洁明确的标题和梗概（说明本章发生什么、推进什么）。{{sourcesRule}}
 
-输出 JSON：{"chapters": [{"title": "章节标题", "summary": "本章梗概"{{sourcesExample}}}]}
+通过工具提交，参数：{"chapters": [{"title": "章节标题", "summary": "本章梗概"{{sourcesExample}}}]}
