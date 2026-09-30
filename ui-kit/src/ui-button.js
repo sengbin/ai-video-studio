@@ -69,7 +69,7 @@
     if (settings.compact) classNames.push('ui-button--compact');
     if (iconOnly) classNames.push('ui-button--icon-only');
 
-    const textElement = aiUi.h('span', { class: 'ui-button__text', text });
+    const textElement = aiUi.h('span', { text });
     const element = aiUi.h(
       'button',
       {

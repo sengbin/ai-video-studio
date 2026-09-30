@@ -242,7 +242,7 @@
       schema.fields.map((fieldSchema) => renderField(fieldSchema, values[fieldSchema.key] || '')),
       aiUi.h('div', { class: 'form-actions' }, cancelButton.element, submitButton.element)
     );
-    const element = aiUi.h('div', { class: 'form-content' }, summaryElement, form);
+    const element = aiUi.h('div', {}, summaryElement, form);
     initialSnapshot = JSON.stringify(collectValues());
 
     return {
