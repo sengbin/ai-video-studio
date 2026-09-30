@@ -135,19 +135,35 @@
       onClick: () => void deleteProject(project)
     });
 
+    /** 数量列：为 0 时淑化。 */
+    const countCell = (count) => aiUi.h('td', { class: count === 0 ? 'column-number is-zero' : 'column-number', text: String(count) });
+
     return aiUi.h(
       'tr',
       {},
       aiUi.h(
         'td',
-        {},
+        { class: 'column-name' },
         aiUi.h('span', { class: 'project-name', text: project.name }),
-        project.description ? aiUi.h('div', { class: 'description', text: project.description }) : null
+        project.description
+          ? aiUi.h('div', {
+              class: 'description project-description',
+              text: project.description,
+              attrs: { title: project.description }
+            })
+          : null
       ),
-      aiUi.h('td', { text: project.visualStyle || UNSET_TEXT }),
-      aiUi.h('td', { class: 'column-number', text: String(project.workCount) }),
-      aiUi.h('td', { class: 'column-number', text: String(project.assetCount) }),
+      aiUi.h(
+        'td',
+        { class: 'column-style' },
+        project.visualStyle
+          ? aiUi.h('span', { class: 'style-chip', text: project.visualStyle })
+          : aiUi.h('span', { class: 'cell-muted', text: UNSET_TEXT })
+      ),
+      countCell(project.workCount),
+      countCell(project.assetCount),
       aiUi.h('td', {
+        class: 'column-time',
         text: formatRelativeTime(project.updatedAt),
         attrs: { title: new Date(project.updatedAt).toLocaleString('zh-CN') }
       }),
@@ -158,11 +174,11 @@
   /** 项目表格。 */
   function renderTable(visibleProjects) {
     const headings = [
-      ['项目名称', ''],
-      ['视觉风格', ''],
+      ['项目名称', 'column-name'],
+      ['视觉风格', 'column-style'],
       ['作品数', 'column-number'],
       ['资产数', 'column-number'],
-      ['更新时间', ''],
+      ['更新时间', 'column-time'],
       ['操作', 'column-actions']
     ];
     const headRow = aiUi.h(

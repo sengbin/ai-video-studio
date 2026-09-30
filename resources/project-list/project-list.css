@@ -1,21 +1,22 @@
 /*
  * ------------------------------------------------------------------------
  * 名称：project-list.css
- * 说明：项目列表页样式：顶部搜索框、项目表格和空状态。
+ * 说明：项目列表页样式：顶部搜索框、项目数据表格（卡片底色、表头色带、行分隔与悬停）和空状态。
  * 作者：Lion
  * 邮箱：chengbin@3578.cn
  * 日期：2026-09-30
- * 备注：表格尺寸遵循页面样式基线；颜色统一使用 rgb() 写法。
+ * 备注：颜色都由主题文字色与背景色混合得出，亮暗主题自动适配；颜色统一使用 rgb() 写法。
  * ------------------------------------------------------------------------
  */
 
 :root {
-  --table-border: color-mix(in srgb, rgb(255, 255, 255) 7%, var(--bg));
+  --table-surface: color-mix(in srgb, var(--text) 3%, var(--bg));
+  --table-header-bg: color-mix(in srgb, var(--text) 6%, var(--bg));
+  --table-border: color-mix(in srgb, var(--text) 12%, transparent);
+  --table-row-divider: color-mix(in srgb, var(--text) 8%, transparent);
   --table-row-hover: color-mix(in srgb, var(--text) 6%, transparent);
-}
-
-body.vscode-light {
-  --table-border: color-mix(in srgb, rgb(0, 0, 0) 22%, rgb(255, 255, 255));
+  --chip-bg: color-mix(in srgb, var(--vscode-button-background) 22%, transparent);
+  --chip-border: color-mix(in srgb, var(--vscode-button-background) 45%, transparent);
 }
 
 /* 顶部一行只放搜索框，靠右 */
@@ -31,41 +32,79 @@ body.vscode-light {
   min-width: 140px;
 }
 
+/* 表格放在圆角卡片里：整体比页面底色略亮，边框很淡 */
 .table-container {
   overflow-x: auto;
+  background: var(--table-surface);
   border: 1px solid var(--table-border);
-  border-radius: 6px;
+  border-radius: 8px;
 }
 
 .project-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.4;
   text-align: left;
 }
 
 .project-table th,
 .project-table td {
-  padding: 5px 6px;
+  padding: 10px 14px;
   vertical-align: middle;
 }
 
+/* 表头：色带加小号淡色文字，与内容行区分 */
 .project-table thead th {
+  padding-top: 8px;
+  padding-bottom: 8px;
+  color: var(--text-muted);
+  font-size: 11px;
   font-weight: 600;
-  border-bottom: 1px solid var(--divider);
+  white-space: nowrap;
+  background: var(--table-header-bg);
+  border-bottom: 1px solid var(--table-border);
+}
+
+.project-table tbody tr {
+  height: 56px;
+  transition: background-color 0.12s ease;
+}
+
+.project-table tbody tr + tr td {
+  border-top: 1px solid var(--table-row-divider);
 }
 
 .project-table tbody tr:hover {
   background: var(--table-row-hover);
 }
 
+.project-table .column-name {
+  width: 34%;
+  min-width: 180px;
+}
+
+.project-table .column-style {
+  width: 16%;
+  min-width: 110px;
+}
+
 .project-table .column-number {
+  width: 84px;
   text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.project-table .column-time {
+  width: 110px;
+  color: var(--text-muted);
   white-space: nowrap;
 }
 
 .project-table .column-actions {
+  width: 1%;
+  text-align: right;
   white-space: nowrap;
 }
 
@@ -73,8 +112,42 @@ body.vscode-light {
   margin-left: 6px;
 }
 
+/* 数量为 0 时淡化，突出有内容的项目 */
+.project-table .is-zero {
+  color: var(--text-muted);
+}
+
 .project-name {
+  font-size: 13px;
   font-weight: 600;
+}
+
+/* 项目描述在名称下方，单行截断 */
+.project-table .project-description {
+  max-width: 360px;
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 视觉风格显示为小标签，未设置时用淡色文字 */
+.style-chip {
+  display: inline-block;
+  max-width: 100%;
+  padding: 1px 8px;
+  overflow: hidden;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+  white-space: nowrap;
+  background: var(--chip-bg);
+  border: 1px solid var(--chip-border);
+  border-radius: 999px;
+}
+
+.cell-muted {
+  color: var(--text-muted);
 }
 
 .list-message {
