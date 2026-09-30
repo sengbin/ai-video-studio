@@ -23,7 +23,7 @@ function createFixture() {
   const other = fixture.projects.createProject({ name: '项目乙' });
   const foreign = fixture.works.createWork(other.id, normalizeWorkCreation({ workName: '外来作品', kind: '单个短视频' }, 'text'));
   const router = new MessageRouter();
-  registerStageHandlers(router, work.id, fixture.stages);
+  registerStageHandlers(router, fixture.stages, () => work.id);
   const sendStage = (name: string, payload?: unknown) => router.handle({ type: 'request', requestId: 1, name, payload });
   return { ...fixture, work, foreign, sendStage };
 }

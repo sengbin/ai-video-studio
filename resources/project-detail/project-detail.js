@@ -1,10 +1,10 @@
 // ------------------------------------------------------------------------
 // 名称：project-detail.js
-// 说明：项目详情页脚本：显示项目摘要与作品表格，按素材来源新建作品、查看创意阶段产出、带名称确认的删除作品。
+// 说明：项目详情页脚本：显示项目摘要与作品表格，按素材来源新建作品、在弹出层中查看创意阶段产出、带名称确认的删除作品。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-09-30
-// 备注：请求与事件名称与 src/app/pages/project-detail-handlers.ts、src/app/forms/work-form.ts 一致；依赖 form/form-runtime.js（aiForm）与 shared/page-format.js（pageFormat）。
+// 备注：请求与事件名称与 src/app/pages/project-detail-handlers.ts、src/app/forms/work-form.ts 一致；依赖 form/form-runtime.js（aiForm）、stage/stage.js（aiStage）与 shared/page-format.js（pageFormat）。
 // ------------------------------------------------------------------------
 
 'use strict';
@@ -12,7 +12,6 @@
 (function () {
   const REQUEST_LOAD = 'detail.load';
   const REQUEST_TAKE_PENDING = 'detail.takePending';
-  const REQUEST_OPEN_STAGE = 'detail.openStage';
   const REQUEST_PREPARE_DELETE_WORK = 'detail.prepareDeleteWork';
   const REQUEST_DELETE_WORK = 'detail.deleteWork';
   const EVENT_CHANGED = 'detail.changed';
@@ -40,6 +39,8 @@
   let loadError = '';
   let isLoading = true;
   let isFormOpen = false;
+  /** 新建表单还开着时收到的「弹出产出层」请求，表单关闭后再打开。 */
+  let pendingStageWorkId = null;
   let filterSource = FILTER_ALL;
   let refreshTimer = 0;
   let summaryElement = null;
@@ -76,6 +77,8 @@
       const data = await window.hostBridge.request(REQUEST_LOAD);
       project = data.project;
       works = data.works;
+      // 作品被删除（或随所属项目一起删除）后，它的产出层没有意义，自动关闭。
+      aiStage.closeMissing(works.map((work) => work.id));
     } catch (error) {
       loadError = (error && error.message) || '项目加载失败。';
     }
@@ -97,7 +100,18 @@
       await aiForm.open(options);
     } finally {
       isFormOpen = false;
+      if (pendingStageWorkId !== null) {
+        const workId = pendingStageWorkId;
+        pendingStageWorkId = null;
+        aiStage.open(workId);
+      }
     }
+  }
+
+  /** 弹出作品的创意产出层；表单还开着时等它关闭后再弹出，避免两个弹出页同时出现。 */
+  function openStage(workId) {
+    if (isFormOpen) pendingStageWorkId = workId;
+    else aiStage.open(workId);
   }
 
   /** 弹出“新建作品”表单，素材来源由入口决定；同时取消筛选，保证新建的作品在列表中可见。 */
@@ -165,7 +179,7 @@
           compact: true,
           disabled: work.creative.runId === null,
           ariaLabel: `查看创意：${work.name}`,
-          onClick: () => void runAction(REQUEST_OPEN_STAGE, { id: work.id })
+          onClick: () => openStage(work.id)
         }).element,
         aiUi.button({
           kind: 'delete',
@@ -239,9 +253,10 @@
     renderWorks();
   }
 
-  /** 处理宿主带来的请求：按素材来源筛选，或直接弹出该来源的新建作品表单。 */
+  /** 处理宿主带来的请求：按素材来源筛选、直接弹出该来源的新建作品表单，或弹出作品的创意产出层。 */
   async function handleRequest(request) {
     if (!request) return;
+    if (request.openStage) openStage(request.openStage);
     if (request.filterSource) {
       filterSource = request.filterSource;
       filterSelect.setValue(filterSource);

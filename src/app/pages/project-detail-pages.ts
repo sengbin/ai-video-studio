@@ -4,7 +4,7 @@
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-09-30
-// 备注：请求处理在 project-detail-handlers.ts；页面内弹出编辑项目、新建作品表单，因此同时注册项目与创意两组表单。
+// 备注：请求处理在 project-detail-handlers.ts；页面内弹出编辑项目、新建作品表单和作品的创意产出层，因此同时注册项目与创意两组表单，并把阶段变化推送给页面。
 // ------------------------------------------------------------------------
 
 import { FormCatalog } from '../forms/form-definition';
@@ -23,6 +23,7 @@ import {
   ProjectDetailRequest,
   registerProjectDetailHandlers
 } from './project-detail-handlers';
+import { STAGE_EVENTS } from './stage-handlers';
 
 const PROJECT_DETAIL_VIEW_TYPE = 'aiVideoStudio.projectDetail';
 
@@ -42,13 +43,11 @@ export class ProjectDetailPages {
    * @param services 项目、作品与阶段服务。
    * @param panels 面板管理器。
    * @param recent 最近使用的项目。
-   * @param openStage 打开作品的创意阶段产出页。
    */
   constructor(
     private readonly services: { readonly projects: ProjectService; readonly works: WorkService; readonly stages: StageService },
     private readonly panels: PanelManager,
-    private readonly recent: RecentProjectStore,
-    private readonly openStage: (workId: number) => void
+    private readonly recent: RecentProjectStore
   ) {}
 
   /**
@@ -75,10 +74,9 @@ export class ProjectDetailPages {
         const taken = entry.pending;
         entry.pending = undefined;
         return taken;
-      },
-      openStage: this.openStage
+      }
     });
-    registerFormHandlers(router, this.createFormCatalog());
+    registerFormHandlers(router, this.createFormCatalog(projectId));
 
     const panel = this.panels.open({
       key,
@@ -102,7 +100,10 @@ export class ProjectDetailPages {
         }
       }),
       this.services.works.onDidChangeWorks((changedProjectId) => changedProjectId === projectId && notifyChanged()),
-      this.services.stages.onDidChange(notifyChanged)
+      this.services.stages.onDidChange((change) => {
+        notifyChanged();
+        panel.postEvent(STAGE_EVENTS.changed, { workId: change.workId, runId: change.runId });
+      })
     ];
     panel.onDidClose(() => {
       unsubscribes.forEach((unsubscribe) => unsubscribe());
@@ -110,13 +111,12 @@ export class ProjectDetailPages {
     });
   }
 
-  /** 页面内可弹出的表单：编辑项目、新建作品与重新生成。 */
-  private createFormCatalog(): FormCatalog {
+  /** 页面内可弹出的表单：编辑项目、新建作品与重新生成；生成开始后通知页面弹出该作品的创意产出层。 */
+  private createFormCatalog(projectId: number): FormCatalog {
     const { projects, works, stages } = this.services;
-    return new Map([
-      ...createProjectFormCatalog(projects),
-      ...createWorkFormCatalog({ projects, works, stages, onStarted: this.openStage })
-    ]);
+    const onStarted = (workId: number): void =>
+      this.opened.get(projectId)?.panel?.postEvent(PROJECT_DETAIL_EVENTS.request, { openStage: workId });
+    return new Map([...createProjectFormCatalog(projects), ...createWorkFormCatalog({ projects, works, stages, onStarted })]);
   }
 }
 

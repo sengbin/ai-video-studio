@@ -13,7 +13,6 @@ import { MessageRouter } from './app/messaging/message-router';
 import { ProjectDetailPages } from './app/pages/project-detail-pages';
 import { ProjectPages } from './app/pages/project-pages';
 import { SettingsPages } from './app/pages/settings-pages';
-import { StagePages } from './app/pages/stage-pages';
 import { PanelManager } from './app/panels/panel-manager';
 import { ChangeNotifier } from './app/services/change-notifier';
 import { ProjectService } from './app/services/project-service';
@@ -93,8 +92,7 @@ export function activate(context: vscode.ExtensionContext): void {
   // 页面。
   const panels = new PanelManager(context.extensionUri);
   const services = { projects: projectService, works: workService, stages: stageService };
-  const stagePages = new StagePages(services, panels);
-  const detailPages = new ProjectDetailPages(services, panels, recentProjects, (workId) => stagePages.showCreative(workId));
+  const detailPages = new ProjectDetailPages(services, panels, recentProjects);
   const projectPages = new ProjectPages(projectService, panels, (projectId) => detailPages.show(projectId));
   const settingsPages = new SettingsPages(textSettingsService, panels);
 

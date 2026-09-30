@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：project-detail-handlers.test.ts
-// 说明：项目详情页请求处理的自动化测试：读取、待处理请求、打开产出页、名称确认删除。
+// 说明：项目详情页请求处理的自动化测试：读取、待处理请求、创意产出请求的作品归属校验、名称确认删除。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-09-30
@@ -14,6 +14,7 @@ import { MessageRouter } from '../messaging/message-router';
 import { createServiceFixture } from '../services/testing/service-fixture';
 import { WorkListItem } from '../services/work-service';
 import { PROJECT_DETAIL_REQUESTS, ProjectDetailRequest, registerProjectDetailHandlers } from './project-detail-handlers';
+import { STAGE_REQUESTS } from './stage-handlers';
 
 const PARAMS = { chapterMinWords: 100, chapterMaxWords: 200, maxChapters: 3 };
 
@@ -25,15 +26,14 @@ function createFixture() {
   const other = projects.createProject({ name: '项目乙' });
   const foreign = works.createWork(other.id, normalizeWorkCreation({ workName: '外来作品', kind: '单个短视频' }, 'text'));
 
-  const state: { pending: ProjectDetailRequest | undefined; openedStages: number[] } = { pending: undefined, openedStages: [] };
+  const state: { pending: ProjectDetailRequest | undefined } = { pending: undefined };
   const detailRouter = new MessageRouter();
   registerProjectDetailHandlers(detailRouter, fixture.project.id, fixture, {
     takePending: () => {
       const taken = state.pending;
       state.pending = undefined;
       return taken;
-    },
-    openStage: (workId) => state.openedStages.push(workId)
+    }
   });
   const sendDetail = (name: string, payload?: unknown) => detailRouter.handle({ type: 'request', requestId: 1, name, payload });
   return { ...fixture, work, foreign, state, sendDetail };
@@ -67,18 +67,27 @@ test('详情页待处理请求：取走后不再返回', async () => {
   }
 });
 
-test('打开产出页：只能打开本项目的作品', async () => {
-  const { database, sendDetail, state, work, foreign } = createFixture();
+test('创意产出请求：只能访问本项目的作品', async () => {
+  const { database, sendDetail, work, foreign, stages, runner } = createFixture();
   try {
-    const ok = await sendDetail(PROJECT_DETAIL_REQUESTS.openStage, { id: work.id });
-    assert.ok(ok?.ok);
-    assert.deepEqual(state.openedStages, [work.id]);
+    await stages.startCreative(work.id, PARAMS);
+    await runner.whenIdle();
 
-    const denied = await sendDetail(PROJECT_DETAIL_REQUESTS.openStage, { id: foreign.id });
+    const ok = await sendDetail(STAGE_REQUESTS.load, { workId: work.id });
+    assert.ok(ok?.ok);
+    assert.equal((ok.data as { work: { id: number } }).work.id, work.id);
+
+    const denied = await sendDetail(STAGE_REQUESTS.load, { workId: foreign.id });
     assert.ok(denied && !denied.ok && denied.error.kind === 'validation');
-    const missing = await sendDetail(PROJECT_DETAIL_REQUESTS.openStage, { id: 999 });
+    const missing = await sendDetail(STAGE_REQUESTS.load, { workId: 999 });
     assert.ok(missing && !missing.ok && missing.error.kind === 'not-found');
-    assert.equal(state.openedStages.length, 1);
+    const absent = await sendDetail(STAGE_REQUESTS.load, {});
+    assert.ok(absent && !absent.ok && absent.error.kind === 'validation');
+
+    const run = stages.getCreativeView(work.id).run;
+    const forged = await sendDetail(STAGE_REQUESTS.approve, { workId: foreign.id, id: run.id });
+    assert.ok(forged && !forged.ok, '用外来作品的标识也不能操作本项目的版本');
+    assert.equal(stages.getCreativeView(work.id).run.display, 'pending');
   } finally {
     database.close();
   }

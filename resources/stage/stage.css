@@ -1,7 +1,7 @@
 /*
  * ------------------------------------------------------------------------
  * 名称：stage.css
- * 说明：创意阶段产出页样式：顶部状态栏、进度条、章节列表与章节编辑区。
+ * 说明：创意阶段产出层样式：顶部状态栏、进度条、章节列表与章节编辑区（显示在弹出页面内）。
  * 作者：Lion
  * 邮箱：chengbin@3578.cn
  * 日期：2026-09-30
@@ -9,7 +9,7 @@
  * ------------------------------------------------------------------------
  */
 
-.stage-header h1 {
+.stage-header .description {
   margin: 0 0 4px;
 }
 
@@ -63,7 +63,7 @@
   flex-direction: column;
   gap: 4px;
   min-width: 200px;
-  max-height: 70vh;
+  max-height: 420px;
   overflow-y: auto;
 }
 
@@ -120,7 +120,7 @@
 }
 
 .stage-editor .ui-textarea__field {
-  min-height: 360px;
+  min-height: 300px;
   font-size: 12px;
 }
 
