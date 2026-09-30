@@ -1,0 +1,69 @@
+/*
+ * ------------------------------------------------------------------------
+ * 名称：form.css
+ * 说明：表单页面样式：字段布局、校验反馈和底部按钮区。
+ * 作者：Lion
+ * 邮箱：chengbin@3578.cn
+ * 日期：2026-09-30
+ * 备注：输入控件本身的样式在 shared/controls.css；颜色统一使用 rgb() 写法。
+ * ------------------------------------------------------------------------
+ */
+
+:root {
+  --form-max-width: 640px;
+}
+
+.form-page {
+  max-width: var(--form-max-width);
+}
+
+.form-error-summary {
+  margin: 0 0 12px;
+  padding: 6px 8px;
+  border: 1px solid var(--status-error);
+  border-radius: 4px;
+}
+
+.form-error-summary:focus-visible {
+  outline: 1px solid var(--focus-border);
+  outline-offset: 0;
+}
+
+.form-field {
+  margin: 0 0 12px;
+}
+
+.field-label {
+  display: block;
+  margin: 0 0 2px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.field-description {
+  margin: 0 0 6px;
+}
+
+.field-custom-input {
+  margin-top: 6px;
+}
+
+.field-error {
+  margin: 4px 0 0;
+  font-size: 12px;
+}
+
+/* 按钮区固定在可视区底边，内容超长时正文滚动 */
+.form-actions {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  gap: 6px;
+  margin-top: 12px;
+  padding: 8px 0 0;
+  background: var(--bg);
+}
+
+.form-actions .button {
+  flex: 1 1 0;
+}

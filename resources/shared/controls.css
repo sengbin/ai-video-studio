@@ -1,0 +1,65 @@
+/*
+ * ------------------------------------------------------------------------
+ * 名称：controls.css
+ * 说明：输入控件的公共样式：单行输入、多行文本和下拉框，供表单与列表页共用。
+ * 作者：Lion
+ * 邮箱：chengbin@3578.cn
+ * 日期：2026-09-30
+ * 备注：尺寸与颜色遵循表单样式基线；颜色统一使用 rgb() 写法。
+ * ------------------------------------------------------------------------
+ */
+
+:root {
+  --input-bg: color-mix(in srgb, var(--bg) 92%, rgb(0, 0, 0));
+  --input-border: color-mix(in srgb, var(--vscode-input-border, rgb(60, 60, 60)) 86%, rgb(0, 0, 0));
+}
+
+body.vscode-light {
+  --input-bg: color-mix(in srgb, var(--vscode-input-background) 93%, rgb(217, 217, 217));
+  --input-border: color-mix(in srgb, var(--vscode-input-border, rgb(200, 200, 200)) 55%, rgb(255, 255, 255));
+}
+
+.field-input,
+.field-textarea,
+.field-select {
+  width: 100%;
+  color: var(--vscode-input-foreground);
+  font: inherit;
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
+  border-radius: 4px;
+}
+
+.field-input {
+  height: 24px;
+  padding: 0 8px;
+}
+
+.field-textarea {
+  min-height: 80px;
+  padding: 6px 8px;
+  font-size: 11px;
+  line-height: 1.45;
+  resize: vertical;
+}
+
+.field-select {
+  height: 24px;
+  min-width: 88px;
+  padding: 0 6px;
+  font-size: 11px;
+}
+
+.field-input:focus,
+.field-textarea:focus,
+.field-select:focus {
+  outline: 1px solid var(--focus-border);
+  outline-offset: 0;
+  border-color: var(--focus-border);
+}
+
+.field-input[aria-invalid="true"],
+.field-textarea[aria-invalid="true"],
+.field-select[aria-invalid="true"] {
+  border-color: var(--status-error);
+}

@@ -1,0 +1,173 @@
+/*
+ * ------------------------------------------------------------------------
+ * 名称：theme.css
+ * 说明：编辑器区页面的公共主题：令牌、页面基础、按钮和状态文字，供表单与列表页共用。
+ * 作者：Lion
+ * 邮箱：chengbin@3578.cn
+ * 日期：2026-09-30
+ * 备注：颜色统一使用 rgb() 写法；主题通过 body.vscode-light / body.vscode-dark 切换。
+ * ------------------------------------------------------------------------
+ */
+
+:root {
+  color-scheme: light dark;
+  --bg: var(--vscode-sideBar-background);
+  --text: var(--vscode-foreground);
+  --text-muted: var(--vscode-descriptionForeground);
+  --focus-border: var(--vscode-focusBorder, rgb(0, 120, 212));
+  --page-padding: 16px;
+  --divider: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+
+  --status-success: rgb(79, 220, 138);
+  --status-warning: rgb(242, 177, 74);
+  --status-error: rgb(255, 123, 114);
+
+  --button-secondary-bg: rgba(255, 255, 255, 0.08);
+  --button-secondary-hover-bg: rgba(255, 255, 255, 0.12);
+  --button-secondary-active-bg: rgba(255, 255, 255, 0.16);
+  --button-secondary-text: rgba(237, 237, 237, 0.92);
+  --button-danger-bg: rgb(161, 51, 45);
+  --button-danger-hover-bg: rgb(180, 58, 51);
+  --button-danger-active-bg: rgb(141, 40, 35);
+  --button-primary-disabled-bg: color-mix(in srgb, rgba(255, 255, 255, 0.08) 52%, var(--bg));
+  --button-primary-disabled-text: rgba(255, 255, 255, 0.68);
+}
+
+body.vscode-light {
+  --status-success: rgb(31, 122, 63);
+  --status-warning: rgb(169, 106, 16);
+  --status-error: rgb(180, 35, 24);
+
+  --button-secondary-bg: rgba(90, 90, 90, 0.14);
+  --button-secondary-hover-bg: rgba(90, 90, 90, 0.2);
+  --button-secondary-active-bg: rgba(90, 90, 90, 0.26);
+  --button-secondary-text: rgb(47, 47, 47);
+  --button-danger-bg: rgb(169, 48, 41);
+  --button-danger-hover-bg: rgb(151, 43, 37);
+  --button-danger-active-bg: rgb(132, 37, 31);
+  --button-primary-disabled-bg: rgb(196, 196, 196);
+  --button-primary-disabled-text: rgba(255, 255, 255, 0.78);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* hidden 属性不被其他 display 规则覆盖 */
+[hidden] {
+  display: none !important;
+}
+
+body {
+  min-width: 0;
+  margin: 0;
+  padding: var(--page-padding);
+  color: var(--text);
+  background: var(--bg);
+  font-family: var(--vscode-font-family);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+h1 {
+  margin: 0 0 12px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+/* 说明文字 */
+.description {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+/* 状态文字：颜色之外必须带文字内容 */
+.status-error {
+  color: var(--status-error);
+}
+
+.status-success {
+  color: var(--status-success);
+}
+
+.status-warning {
+  color: var(--status-warning);
+}
+
+/* 按钮：高 22px、无边框，主按钮用宿主按钮令牌 */
+.button {
+  min-width: 0;
+  height: 22px;
+  padding: 0 8px;
+  color: var(--button-secondary-text);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 400;
+  white-space: nowrap;
+  background: var(--button-secondary-bg);
+  border: 0;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.button:hover {
+  background: var(--button-secondary-hover-bg);
+}
+
+.button:active {
+  background: var(--button-secondary-active-bg);
+}
+
+.button:focus-visible {
+  outline: 1px solid var(--focus-border);
+  outline-offset: 1px;
+}
+
+.button-primary {
+  color: var(--vscode-button-foreground);
+  background: var(--vscode-button-background);
+}
+
+.button-primary:hover,
+.button-primary:active {
+  background: var(--vscode-button-hoverBackground);
+}
+
+.button-danger {
+  color: rgb(255, 255, 255);
+  background: var(--button-danger-bg);
+}
+
+.button-danger:hover {
+  background: var(--button-danger-hover-bg);
+}
+
+.button-danger:active {
+  background: var(--button-danger-active-bg);
+}
+
+/* 禁用态保持不透明度，只移除点击光标 */
+.button:disabled {
+  cursor: default;
+}
+
+.button-primary:disabled {
+  color: var(--button-primary-disabled-text);
+  background: var(--button-primary-disabled-bg);
+}
+
+.button-secondary:disabled,
+.button-danger:disabled {
+  opacity: 1;
+}
+
+/* 紧凑次要按钮，用于表格行内操作 */
+.button-compact {
+  height: 20px;
+  min-width: 60px;
+  padding: 0 8px;
+  font-size: 11px;
+  border-radius: 4px;
+}

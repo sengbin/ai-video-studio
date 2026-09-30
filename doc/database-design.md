@@ -47,7 +47,7 @@
 | | `result_frames` | 结果视频的尾帧图片 |
 | | `episode_audio_tracks` | 集的独立音轨（预留，本阶段不开发） |
 
-共 23 张表。
+共 23 张表，其中 `episode_audio_tracks` 为预留，实际创建 22 张。
 
 ## 3. 关系图
 
@@ -255,7 +255,7 @@ erDiagram
 
 - `(storyboard_script_id, seq)` 唯一。
 - 对白、旁白、音效、配乐不在镜头表中，由 `shot_sounds` 保存。
-- `first_frame_mode = 'asset'` 时 `first_frame_asset_file_id` 必须有值。
+- `first_frame_mode = 'asset'` 时 `first_frame_asset_file_id` 必须有值，由业务层校验；不做数据库 CHECK，因为删除资产文件时该列会被置空。
 - `first_frame_mode = 'prev_tail'` 时该镜头不能是集内的第 1 个镜头（由业务校验，不做 CHECK）。
 
 #### `shot_entities` 镜头出场实体
@@ -537,7 +537,7 @@ erDiagram
 
 ### 4.8 独立音轨（预留）
 
-用于“声音与视频分开生成、再合成”的方式。**本阶段只设计结构，不开发功能，也不建表**；开发时新增迁移 `005-audio-tracks`。
+用于“声音与视频分开生成、再合成”的方式。**本阶段只设计结构，不开发功能，也不建表**；开发时新增迁移 `006-audio-tracks`。
 
 #### `episode_audio_tracks` 集的独立音轨
 
@@ -617,11 +617,14 @@ erDiagram
 
 | 版本 | 脚本 | 内容 | 对应实施步骤 |
 |---|---|---|---|
-| 1 | `001-core` | `projects`、`works`、`work_sources`、`stage_runs`、`chapters`、`screenplays`、`episodes`、`script_entities`、`storyboard_scripts`、`shots`、`shot_entities`、`shot_sounds` | 第 1 步 |
-| 2 | `002-assets` | `assets`（含音频类型）、`asset_files`、`entity_bindings` | 第 3 步 |
-| 3 | `003-models` | `providers`、`models`、`model_capabilities`、`generation_profiles` | 第 4 步 |
-| 4 | `004-generation` | `video_jobs`、`video_results`、`result_frames` | 第 5、6 步 |
-| 5 | `005-audio-tracks` | `episode_audio_tracks`（预留，开发独立音轨时再新增） | 后续 |
+| 1 | `001-core` | `projects`、`works`、`work_sources`、`episodes`、`stage_runs`、`chapters`、`screenplays`、`script_entities` | 已实现 |
+| 2 | `002-assets` | `assets`（含音频类型）、`asset_files`、`entity_bindings` | 已实现 |
+| 3 | `003-storyboard` | `storyboard_scripts`、`shots`、`shot_entities`、`shot_sounds` | 已实现 |
+| 4 | `004-models` | `providers`、`models`、`model_capabilities`、`generation_profiles` | 已实现 |
+| 5 | `005-generation` | `video_jobs`、`video_results`、`result_frames` | 已实现 |
+| 6 | `006-audio-tracks` | `episode_audio_tracks`（预留，开发独立音轨时再新增） | 后续 |
+
+拆分说明：镜头引用资产文件，因此资产在分镜之前建立；全部 22 张表已在前五个迁移中创建，各功能的仓库随功能实现逐步补全。
 
 已发布的脚本不再修改；结构变更一律新增下一个编号的脚本。升级前先复制数据库文件作为备份。
 

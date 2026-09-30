@@ -4,10 +4,11 @@
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-09-30
-// 备注：当前只提供页面展示，不处理任何 Webview 消息。
+// 备注：页面点击经请求路由器分发，具体动作由外部注册。
 // ------------------------------------------------------------------------
 
 import * as vscode from 'vscode';
+import { MessageRouter } from '../app/messaging/message-router';
 import { createSidebarHtml } from './sidebar-html';
 import { SIDEBAR_SECTIONS } from './sidebar-menu-config';
 
@@ -23,8 +24,12 @@ const SIDEBAR_SCRIPT_FILE = 'sidebar.js';
 export class SidebarViewProvider implements vscode.WebviewViewProvider {
   /**
    * @param extensionUri 扩展安装目录 URI，用于定位静态资源。
+   * @param router 处理侧栏点击请求的路由器。
    */
-  constructor(private readonly extensionUri: vscode.Uri) {}
+  constructor(
+    private readonly extensionUri: vscode.Uri,
+    private readonly router: MessageRouter
+  ) {}
 
   /**
    * 解析侧栏视图并写入页面内容。
@@ -40,5 +45,6 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
       scriptUri: webview.asWebviewUri(vscode.Uri.joinPath(resourceRoot, SIDEBAR_SCRIPT_FILE)).toString(),
       sections: SIDEBAR_SECTIONS
     });
+    webview.onDidReceiveMessage((message: unknown) => this.router.handle(message));
   }
 }

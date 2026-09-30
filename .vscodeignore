@@ -5,4 +5,5 @@ src/**
 tsconfig.json
 build.ps1
 **/*.map
+out/**/*.test.js
 node_modules/**

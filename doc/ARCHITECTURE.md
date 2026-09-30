@@ -67,32 +67,39 @@ flowchart TB
 
 依赖方向只能自上而下；领域层不依赖 VS Code API 和具体数据库、具体模型。
 
-## 3. 目录结构（目标）
+## 3. 目录结构
+
+标注“已实现”的目录已有代码，其余为后续目标。
 
 ```
 src/
-  extension.ts                 扩展入口，仅做装配
+  extension.ts                 扩展入口，仅做装配（已实现）
   app/
     commands/                  命令注册
-    panels/                    Webview 面板生命周期管理
-    messaging/                 消息协议定义与路由
-    services/                  领域服务（项目、脚本、资产、绑定、生成）
+    forms/                     表单定义、表单请求处理与表单面板（已实现：项目表单）
+    pages/                     各页面的请求处理与页面入口（已实现：项目列表）
+    panels/                    Webview 面板生命周期管理与页面外壳（已实现）
+    messaging/                 消息信封、路由与错误映射（已实现）
+    services/                  应用服务（已实现：项目；待实现：作品、脚本、资产、绑定、生成）
     queue/                     生成队列、轮询、重试、镜头依赖调度
   domain/
-    models/                    Project / Work / Episode / Shot / Asset ...
-    rules/                     参数合并、提交校验、状态机
-    ports/                     Repository 与 VideoModelProvider 接口
+    errors.ts                  领域错误（已实现）
+    models/                    领域模型（已实现：项目、选项集）
+    rules/                     字段读取与校验、参数合并、提交校验、状态机（已实现：项目规则）
+    ports/                     Repository 与 VideoModelProvider 接口（已实现：项目仓库）
   infra/
-    database/                  连接、迁移、Repository 实现
-      migrations/              按编号排列的迁移脚本（001-init 等）
+    database/                  连接、迁移执行器、Repository 实现（已实现：项目仓库）
+      migrations/              按编号排列的迁移脚本（已实现：001 至 005）
     providers/                 各视频模型适配器与注册表
       wanxiang/                阿里万象适配器（暂仅预留目录）
     secrets/                   密钥读写
-  sidebar/                     侧栏视图与菜单配置（已有）
+  sidebar/                     侧栏视图、菜单配置、点击动作注册与请求处理（已实现）
 resources/
-  sidebar/                     侧栏静态资源（已有）
+  shared/                      公共主题、控件样式与通信桥（已实现）
+  form/                        表单引擎（已实现）
+  project-list/                项目列表页（已实现）
+  sidebar/                     侧栏静态资源（已实现）
   workbench/                   工作台前端资源（含尾帧截取脚本）
-  project-manager/             项目列表与项目详情前端资源
 ```
 
 ## 4. 领域模型
@@ -438,8 +445,8 @@ flowchart LR
 
 ## 12. 实施顺序
 
-1. SQLite 连接、版本号迁移和 Repository（先项目、作品、集、脚本、镜头）。
-2. 消息协议与面板管理，搭出工作台空壳和项目列表面板。
+1. SQLite 连接、版本号迁移和 Repository（先项目、作品、集、脚本、镜头）。**进度**：连接、迁移执行器、五个迁移（22 张表）和项目仓库已完成；其余实体的仓库随各功能实现。
+2. 消息协议与面板管理，搭出工作台空壳和项目列表面板。**进度**：消息协议、面板管理、表单引擎、项目列表页、项目表单和侧栏点击路由已完成；项目详情页和工作台空壳待做。
 3. 资产管理与实体绑定。
 4. 模型接口、注册表、能力描述格式和参数面板（仅框架，不接入具体模型）。
 5. 提交校验、生成队列（含镜头依赖调度），使用模拟适配器验证流程。
@@ -448,7 +455,8 @@ flowchart LR
 
 ## 13. 已确定的实现方式
 
-- **SQLite 访问**：使用 Node 内置的 `node:sqlite`，不引入第三方依赖。实现前需先在目标 VS Code 版本（`engines.vscode` 为 `^1.108.0`）的扩展宿主中验证该模块可用，并确认其实验性提示不影响使用。
+- **SQLite 访问**：使用 Node 内置的 `node:sqlite`，不引入第三方依赖。已在 Node 22.19 命令行中验证可用（测试均在该环境运行）；仍需在目标 VS Code 版本（`engines.vscode` 为 `^1.108.0`）的扩展宿主中按 F5 实际验证，并确认其实验性提示不影响使用。
+- **自动化测试**：使用 Node 内置测试运行器，执行 `npm test`（先编译再运行 `out` 下的 `*.test.js`）。测试不依赖 VS Code，因此不依赖 VS Code 的代码（领域、服务、数据库、消息路由、请求处理）应与依赖 VS Code 的装配代码分开。
 - **尾帧提取**：在工作台 Webview 中用 `<video>` 加 `<canvas>` 截取，不引入 ffmpeg。因此提取只能在面板打开时进行；面板关闭时，依赖尾帧的镜头保持“等待前序”状态，面板再次打开后继续。
 - **模型逻辑**：暂只保留接口与框架，具体模型（含阿里万象）的实现与能力描述留待后续。
 

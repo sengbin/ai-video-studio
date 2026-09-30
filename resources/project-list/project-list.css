@@ -1,0 +1,104 @@
+/*
+ * ------------------------------------------------------------------------
+ * 名称：project-list.css
+ * 说明：项目列表页样式：工具栏、项目表格和空状态。
+ * 作者：Lion
+ * 邮箱：chengbin@3578.cn
+ * 日期：2026-09-30
+ * 备注：表格尺寸遵循页面样式基线；颜色统一使用 rgb() 写法。
+ * ------------------------------------------------------------------------
+ */
+
+:root {
+  --table-border: color-mix(in srgb, rgb(255, 255, 255) 7%, var(--bg));
+  --table-row-hover: color-mix(in srgb, var(--text) 6%, transparent);
+}
+
+body.vscode-light {
+  --table-border: color-mix(in srgb, rgb(0, 0, 0) 22%, rgb(255, 255, 255));
+}
+
+.list-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 8px;
+}
+
+.list-toolbar .field-input {
+  flex: 1 1 200px;
+  width: auto;
+  max-width: 320px;
+}
+
+.table-container {
+  overflow-x: auto;
+  border: 1px solid var(--table-border);
+  border-radius: 6px;
+}
+
+.project-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+  line-height: 1.4;
+  text-align: left;
+}
+
+.project-table th,
+.project-table td {
+  padding: 5px 6px;
+  vertical-align: middle;
+}
+
+.project-table thead th {
+  font-weight: 600;
+  border-bottom: 1px solid var(--divider);
+}
+
+.project-table tbody tr:hover {
+  background: var(--table-row-hover);
+}
+
+.project-table .column-number {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.project-table .column-actions {
+  white-space: nowrap;
+}
+
+.project-table .column-actions .button + .button {
+  margin-left: 6px;
+}
+
+.project-name {
+  font-weight: 600;
+}
+
+.list-message {
+  margin: 8px 0;
+}
+
+.list-state {
+  padding: 16px 0;
+}
+
+.list-state .button {
+  margin-top: 8px;
+}
+
+/* 仅供读屏使用的隐藏文字 */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}

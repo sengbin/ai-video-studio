@@ -7,7 +7,7 @@
 // 备注：样式与脚本位于 resources/sidebar，由外部文件引用。
 // ------------------------------------------------------------------------
 
-import { randomBytes } from 'crypto';
+import { createNonce, escapeHtml } from '../app/panels/html-utils';
 import { SidebarMenuItem, SidebarMenuSection } from './sidebar-menu-config';
 
 /** 生成侧栏 HTML 所需的输入。 */
@@ -25,7 +25,7 @@ export interface SidebarHtmlOptions {
  * @returns 可直接赋给 Webview 的 HTML 字符串。
  */
 export function createSidebarHtml(options: SidebarHtmlOptions): string {
-  const nonce = randomBytes(16).toString('hex');
+  const nonce = createNonce();
   const sectionsHtml = options.sections.map(renderSection).join('\n');
   return `<!doctype html>
 <html lang="zh-CN">
@@ -71,14 +71,4 @@ function renderItem(item: SidebarMenuItem): string {
   return `          <div class="menu-row" data-item-id="${escapeHtml(item.id)}">
             <button class="menu-main" type="button" title="${hoverTitle}">${title}${badgeHtml}</button>${actionHtml}
           </div>`;
-}
-
-/** 转义写入 HTML 文本和属性值的字符。 */
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
 }
