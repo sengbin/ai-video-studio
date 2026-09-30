@@ -121,6 +121,12 @@
       popup.style.top = `${placeBelow ? rect.bottom + POPUP_GAP : rect.top - POPUP_GAP - height}px`;
     }
 
+    /** 弹层之外的页面滚动才关闭；弹层自己的滚动（滚轮、拖滚动条）不关闭。 */
+    function closeOnOutsideScroll(event) {
+      if (popup !== null && popup.contains(event.target)) return;
+      close();
+    }
+
     function close() {
       if (!isOpen) return;
       isOpen = false;
@@ -130,12 +136,14 @@
       trigger.setAttribute('aria-expanded', 'false');
       trigger.removeAttribute('aria-activedescendant');
       window.removeEventListener('resize', close);
-      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('scroll', closeOnOutsideScroll, true);
     }
 
     function open() {
       if (isOpen || trigger.disabled || entries.length === 0) return;
       popup = aiUi.h('div', { class: 'ui-select__popup', attrs: { role: 'listbox', id: listboxId } });
+      // 按下滚动条或空白处时不让触发器失焦，否则弹层会被 blur 关闭。
+      popup.addEventListener('mousedown', (event) => event.preventDefault());
       entries.forEach((entry, index) => {
         popup.append(
           aiUi.h('div', {
@@ -158,7 +166,7 @@
       const selectedIndex = entries.findIndex((entry) => entry.value === selectedValue);
       setActive(selectedIndex >= 0 ? selectedIndex : 0);
       window.addEventListener('resize', close);
-      window.addEventListener('scroll', close, true);
+      window.addEventListener('scroll', closeOnOutsideScroll, true);
     }
 
     function choose(index) {

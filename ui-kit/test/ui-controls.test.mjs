@@ -212,6 +212,28 @@ test('下拉列表：键盘上下选择、回车确认、Esc 只关闭弹层', (
   assert.equal(control.getValue(), '乙', 'Esc 不改变已选值');
 });
 
+test('下拉列表：在弹层内滚动或按住滚动条不会关闭，弹层之外的页面滚动与缩放才关闭', () => {
+  const { ui, doc } = setup();
+  const control = ui.select({ options: Array.from({ length: 30 }, (_, index) => `选项${index}`) });
+  doc.body.append(control.element);
+  control.focusTarget.click();
+  const popup = doc.querySelector('.ui-select__popup');
+
+  popup.dispatchEvent(new env.window.Event('scroll'));
+  assert.ok(doc.querySelector('.ui-select__popup'), '弹层自己滚动（滚轮）不关闭');
+
+  const press = new env.window.MouseEvent('mousedown', { bubbles: true, cancelable: true });
+  popup.dispatchEvent(press);
+  assert.equal(press.defaultPrevented, true, '按下滚动条不抢走触发器的焦点');
+
+  doc.dispatchEvent(new env.window.Event('scroll'));
+  assert.equal(doc.querySelector('.ui-select__popup'), null, '页面滚动时关闭');
+
+  control.focusTarget.click();
+  env.window.dispatchEvent(new env.window.Event('resize'));
+  assert.equal(doc.querySelector('.ui-select__popup'), null, '窗口缩放时关闭');
+});
+
 test('下拉列表：允许手动输入时，选“其他”后取输入框中的文本', () => {
   const { ui, doc } = setup();
   const control = ui.select({ options: ['甲'], allowCustom: true });
