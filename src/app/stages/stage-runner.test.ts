@@ -182,6 +182,11 @@ test('创意阶段：规划大纲后逐章生成并保存，结束时为待确�
   );
   assert.equal(run.progress?.done, run.progress?.total);
   assert.equal(harness.text.requests.length, 4);
+  assert.deepEqual(
+    harness.text.requests.map((request) => request.tool?.name),
+    ['submit_outline', 'submit_chapter', 'submit_chapter', 'submit_chapter'],
+    '每次请求都应指定输出工具'
+  );
   assert.ok(harness.text.requests.every((request) => request.system === readPrompt('system')));
   assert.match(harness.text.requests[2].user, /上一章结尾\s+……灯{120}/, '第 2 章应带上第 1 章的结尾');
   assert.equal(harness.notifications.at(-1)?.status, 'succeeded');

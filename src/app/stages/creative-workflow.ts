@@ -12,11 +12,12 @@ import { ChapterOutlineItem, CreativeParams } from '../../domain/models/creative
 import { StageProgress } from '../../domain/models/stage-run';
 import { ChapterRepository } from '../../domain/ports/chapter-repository';
 import { CreativeSourceReader } from '../../domain/ports/creative-source-reader';
-import { ImageInput } from '../../domain/ports/text-generation-port';
+import { ImageInput, OutputTool } from '../../domain/ports/text-generation-port';
 import { normalizeCreativeParams, parseChapter, parseOutline, parseSummary } from '../../domain/rules/creative-rules';
 import { FieldErrors, assertNoFieldErrors, readOptionalChoice, readRecord } from '../../domain/rules/field-readers';
 import { NovelSegment, NovelSplitSettings, splitNovel } from '../../domain/rules/novel-splitter';
 import { PromptTemplates } from '../../domain/ports/prompt-templates';
+import { SUBMIT_CHAPTER_TOOL, SUBMIT_SUMMARY_TOOL, createOutlineTool } from './output-tools/creative-output-tools';
 import { renderTemplate, wrapMaterial } from './prompt-templates';
 import { StageContext, StageWorkflow } from './stage-workflow';
 import { generateStructured } from './structured-generation';
@@ -97,6 +98,8 @@ interface AskOptions {
   readonly images?: readonly ImageInput[];
   /** 输入超出模型上限时给用户的建议。 */
   readonly overflowHint: string;
+  /** 用于强制结构化输出的工具。 */
+  readonly tool: OutputTool;
 }
 
 /** 从阶段记录的进度中读取创意进度，缺失或格式不对时视为从头开始。 */
@@ -211,7 +214,9 @@ export class CreativeWorkflow implements StageWorkflow {
       if (tokens > context.model.maxInputTokens * INPUT_BUDGET_RATIO) {
         throw new TextGenerationError('failed', `本次请求约 ${tokens} 个 token，超出模型输入上限。${options.overflowHint}`);
       }
-      return generateStructured(context.text, { system, user, images: options.images }, parse, { signal: context.signal });
+      return generateStructured(context.text, { system, user, images: options.images, tool: options.tool }, parse, {
+        signal: context.signal
+      });
     };
 
     return { context, input, system, state, segments, savedChapters, report, ask };
@@ -250,7 +255,8 @@ export class CreativeWorkflow implements StageWorkflow {
         report('分析图片');
         state.digest = await ask('creative-digest-images', { imageCount: String(images.length) }, parseSummary, {
           images,
-          overflowHint: '请减少图片数量后重试。'
+          overflowHint: '请减少图片数量后重试。',
+          tool: SUBMIT_SUMMARY_TOOL
         });
         report('分析图片');
       }
@@ -269,7 +275,7 @@ export class CreativeWorkflow implements StageWorkflow {
           segment: wrapMaterial(segment.text)
         },
         parseSummary,
-        { overflowHint: '请在设置中调小“每段字数上限”后重试。' }
+        { overflowHint: '请在设置中调小“每段字数上限”后重试。', tool: SUBMIT_SUMMARY_TOOL }
       );
       state.summaries.push(summary);
     }
@@ -298,7 +304,7 @@ export class CreativeWorkflow implements StageWorkflow {
         sourcesExample: novel ? ', "sources": [1, 2]' : ''
       },
       (json) => parseOutline(json, params, segments.length),
-      { overflowHint: '请在设置中增大“每段字数上限”以减少分段数，或缩短素材后重试。' }
+      { overflowHint: '请在设置中增大“每段字数上限”以减少分段数，或缩短素材后重试。', tool: createOutlineTool(novel) }
     );
     state.outline = outline;
     report('规划大纲');
@@ -338,7 +344,7 @@ export class CreativeWorkflow implements StageWorkflow {
           maxWords: String(params.chapterMaxWords)
         },
         (json) => parseChapter(json, item.seq, params),
-        { overflowHint: '请在设置中调小“每段字数上限”后重试。' }
+        { overflowHint: '请在设置中调小“每段字数上限”后重试。', tool: SUBMIT_CHAPTER_TOOL }
       );
       this.dependencies.chapters.save(context.run.id, draft, (this.dependencies.now?.() ?? new Date()).toISOString());
       savedChapters.set(item.seq, draft);

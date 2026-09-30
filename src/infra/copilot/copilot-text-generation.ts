@@ -4,7 +4,7 @@
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-09-30
-// 备注：首次调用时 VS Code 会向用户请求授权，因此生成必须由用户操作触发；系统段与用户段合并为一条用户消息发送。
+// 备注：首次调用时 VS Code 会向用户请求授权，因此生成必须由用户操作触发；系统段与用户段合并为一条用户消息发送；请求带输出工具且模型支持工具调用时，用 toolMode.Required 强制模型通过工具返回结构化结果。
 // ------------------------------------------------------------------------
 
 import * as vscode from 'vscode';
@@ -20,6 +20,8 @@ import { mapLanguageModelError } from './copilot-error-mapping';
 const COPILOT_VENDOR = 'copilot';
 const REQUEST_JUSTIFICATION = '生成创作内容并保存到本地数据库，内容由用户检查确认后才会使用。';
 const SYSTEM_SEPARATOR = '\n\n---\n\n';
+/** 使用输出工具时追加在用户段末尾的说明。 */
+const TOOL_INSTRUCTION = (name: string): string => `\n\n请调用工具 ${name} 提交结果，工具参数就是上面要求输出的 JSON 对象。`;
 
 /** 提供当前设置中的模型家族；空串表示自动选择。 */
 export interface CopilotModelSettings {
@@ -33,6 +35,12 @@ export interface CopilotModelSettings {
 function readImageInputSupport(model: vscode.LanguageModelChat): boolean {
   const capabilities = (model as unknown as { capabilities?: Record<string, unknown> }).capabilities;
   return capabilities?.imageInput === true || capabilities?.supportsImageToText === true;
+}
+
+/** 读取模型是否支持工具调用（与图片支持一样按两种命名探测）；探测不到时按不支持处理。 */
+function readToolCallingSupport(model: vscode.LanguageModelChat): boolean {
+  const capabilities = (model as unknown as { capabilities?: Record<string, unknown> }).capabilities;
+  return Boolean(capabilities?.toolCalling) || Boolean(capabilities?.supportsToolCalling);
 }
 
 /** 基于 vscode.lm 的 Copilot 文本生成。 */
@@ -61,8 +69,10 @@ export class CopilotTextGeneration implements TextGenerationPort {
 
   async generate(request: TextGenerationRequest, options?: TextGenerationOptions): Promise<string> {
     const model = await this.currentModel();
+    const tool = request.tool !== undefined && readToolCallingSupport(model) ? request.tool : undefined;
+    const user = tool === undefined ? request.user : `${request.user}${TOOL_INSTRUCTION(tool.name)}`;
     const parts: (vscode.LanguageModelTextPart | vscode.LanguageModelDataPart)[] = [
-      new vscode.LanguageModelTextPart(`${request.system}${SYSTEM_SEPARATOR}${request.user}`),
+      new vscode.LanguageModelTextPart(`${request.system}${SYSTEM_SEPARATOR}${user}`),
       ...(request.images ?? []).map((image) => vscode.LanguageModelDataPart.image(image.data, image.mimeType))
     ];
 
@@ -77,14 +87,27 @@ export class CopilotTextGeneration implements TextGenerationPort {
     try {
       const response = await model.sendRequest(
         [vscode.LanguageModelChatMessage.User(parts)],
-        { justification: REQUEST_JUSTIFICATION },
+        {
+          justification: REQUEST_JUSTIFICATION,
+          ...(tool === undefined
+            ? {}
+            : {
+                tools: [{ name: tool.name, description: tool.description, inputSchema: tool.inputSchema }],
+                toolMode: vscode.LanguageModelChatToolMode.Required
+              })
+        },
         cancellation.token
       );
       let text = '';
-      for await (const chunk of response.text) {
-        text += chunk;
+      let toolInput: object | undefined;
+      for await (const part of response.stream) {
+        if (part instanceof vscode.LanguageModelTextPart) {
+          text += part.value;
+        } else if (part instanceof vscode.LanguageModelToolCallPart && part.name === tool?.name) {
+          toolInput = part.input;
+        }
       }
-      return text;
+      return toolInput === undefined ? text : JSON.stringify(toolInput);
     } catch (error) {
       throw mapLanguageModelError(error);
     } finally {
