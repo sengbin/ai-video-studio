@@ -4,7 +4,7 @@
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-09-30
-// 备注：依赖 ui-core.js；返回统一的控件对象，用法见 ui-kit/docs/ui-components.md。
+// 备注：依赖 ui-core.js；返回统一的控件对象，用法见 docs/ui-components.md。
 // ------------------------------------------------------------------------
 
 'use strict';

@@ -120,82 +120,54 @@
     if (result) showMessage(`已删除项目“${result.name}”。`, false);
   }
 
-  /** 表格中的一行。 */
-  function renderRow(project) {
-    const editButton = aiUi.button({
-      kind: 'edit',
-      compact: true,
-      ariaLabel: `修改：${project.name}`,
-      onClick: () => openEditForm(project)
-    });
-    const deleteButton = aiUi.button({
-      kind: 'delete',
-      compact: true,
-      ariaLabel: `删除：${project.name}`,
-      onClick: () => void deleteProject(project)
-    });
-
-    /** 数量列：为 0 时淑化。 */
-    const countCell = (count) => aiUi.h('td', { class: count === 0 ? 'column-number is-zero' : 'column-number', text: String(count) });
-
-    return aiUi.h(
-      'tr',
-      {},
-      aiUi.h(
-        'td',
-        { class: 'column-name' },
-        aiUi.h('span', { class: 'project-name', text: project.name }),
-        project.description
-          ? aiUi.h('div', {
-              class: 'description project-description',
-              text: project.description,
-              attrs: { title: project.description }
-            })
-          : null
-      ),
-      aiUi.h(
-        'td',
-        { class: 'column-style' },
-        project.visualStyle
-          ? aiUi.h('span', { class: 'style-chip', text: project.visualStyle })
-          : aiUi.h('span', { class: 'cell-muted', text: UNSET_TEXT })
-      ),
-      countCell(project.workCount),
-      countCell(project.assetCount),
-      aiUi.h('td', {
-        class: 'column-time',
-        text: formatRelativeTime(project.updatedAt),
-        attrs: { title: new Date(project.updatedAt).toLocaleString('zh-CN') }
-      }),
-      aiUi.h('td', { class: 'column-actions' }, editButton.element, deleteButton.element)
-    );
-  }
+  /** 项目表格的列：数量为 0 时淡化，操作列放修改与删除按钮。 */
+  const PROJECT_COLUMNS = [
+    {
+      title: '项目名称',
+      width: '34%',
+      minWidth: 180,
+      render: (project) => aiUi.tableMainCell({ text: project.name, description: project.description })
+    },
+    {
+      title: '视觉风格',
+      width: '16%',
+      minWidth: 110,
+      emptyText: UNSET_TEXT,
+      render: (project) => project.visualStyle && aiUi.chip({ text: project.visualStyle })
+    },
+    { title: '作品数', key: 'workCount', type: 'number', muted: (project) => project.workCount === 0 },
+    { title: '资产数', key: 'assetCount', type: 'number', muted: (project) => project.assetCount === 0 },
+    {
+      title: '更新时间',
+      width: 110,
+      nowrap: true,
+      muted: true,
+      render: (project) => formatRelativeTime(project.updatedAt),
+      tooltip: (project) => new Date(project.updatedAt).toLocaleString('zh-CN')
+    },
+    {
+      title: '操作',
+      type: 'actions',
+      render: (project) => [
+        aiUi.button({
+          kind: 'edit',
+          compact: true,
+          ariaLabel: `修改：${project.name}`,
+          onClick: () => openEditForm(project)
+        }).element,
+        aiUi.button({
+          kind: 'delete',
+          compact: true,
+          ariaLabel: `删除：${project.name}`,
+          onClick: () => void deleteProject(project)
+        }).element
+      ]
+    }
+  ];
 
   /** 项目表格。 */
   function renderTable(visibleProjects) {
-    const headings = [
-      ['项目名称', 'column-name'],
-      ['视觉风格', 'column-style'],
-      ['作品数', 'column-number'],
-      ['资产数', 'column-number'],
-      ['更新时间', 'column-time'],
-      ['操作', 'column-actions']
-    ];
-    const headRow = aiUi.h(
-      'tr',
-      {},
-      headings.map(([text, className]) => aiUi.h('th', { class: className, text, attrs: { scope: 'col' } }))
-    );
-    return aiUi.h(
-      'div',
-      { class: 'table-container' },
-      aiUi.h(
-        'table',
-        { class: 'project-table', attrs: { 'aria-label': PAGE_TITLE } },
-        aiUi.h('thead', {}, headRow),
-        aiUi.h('tbody', {}, visibleProjects.map(renderRow))
-      )
-    );
+    return aiUi.table({ columns: PROJECT_COLUMNS, rows: visibleProjects, ariaLabel: PAGE_TITLE }).element;
   }
 
   /** 空状态、加载中和错误状态。 */

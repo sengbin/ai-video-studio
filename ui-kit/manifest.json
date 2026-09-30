@@ -1,5 +1,5 @@
 {
-  "styles": ["ui-tokens.css", "ui-controls.css", "ui-dialog.css", "ui-scrollbar.css"],
+  "styles": ["ui-tokens.css", "ui-controls.css", "ui-table.css", "ui-dialog.css", "ui-scrollbar.css"],
   "scripts": [
     "ui-core.js",
     "ui-scrollbar.js",
@@ -8,6 +8,7 @@
     "ui-select.js",
     "ui-choice-controls.js",
     "ui-field.js",
+    "ui-table.js",
     "ui-dialog.js"
   ]
 }

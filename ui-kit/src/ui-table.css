@@ -1,0 +1,114 @@
+/*
+ * ------------------------------------------------------------------------
+ * 名称：ui-table.css
+ * 说明：界面组件库的数据表格与标签样式：圆角卡片、表头色带、行分隔与悬停、数字列与操作列。
+ * 作者：Lion
+ * 邮箱：chengbin@3578.cn
+ * 日期：2026-09-30
+ * 备注：所有选择器以 ui- 开头；颜色来自 ui-tokens.css 的表格令牌；依赖 ui-controls.css 的紧凑按钮。
+ * ------------------------------------------------------------------------
+ */
+
+/* 表格放在圆角卡片里：整体比页面底色略亮，边框很淡 */
+.ui-table-container {
+  overflow-x: auto;
+  background: var(--table-surface);
+  border: 1px solid var(--table-border);
+  border-radius: 8px;
+}
+
+.ui-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  line-height: 1.4;
+  text-align: left;
+}
+
+.ui-table th,
+.ui-table td {
+  padding: 10px 14px;
+  vertical-align: middle;
+}
+
+/* 表头：色带加小号淡色文字，与内容行区分 */
+.ui-table thead th {
+  padding-top: 8px;
+  padding-bottom: 8px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  background: var(--table-header-bg);
+  border-bottom: 1px solid var(--table-border);
+}
+
+.ui-table tbody tr {
+  height: 56px;
+  transition: background-color 0.12s ease;
+}
+
+.ui-table tbody tr + tr td {
+  border-top: 1px solid var(--table-row-divider);
+}
+
+.ui-table tbody tr:hover {
+  background: var(--table-row-hover);
+}
+
+.ui-table__cell--nowrap {
+  white-space: nowrap;
+}
+
+/* 数字列：靠右，等宽数字 */
+.ui-table__cell--number {
+  width: 84px;
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 操作列：收缩到内容宽度，靠右，按钮之间留间距 */
+.ui-table__cell--actions {
+  width: 1%;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.ui-table__cell--actions .ui-button + .ui-button {
+  margin-left: 6px;
+}
+
+.ui-is-muted {
+  color: var(--text-muted);
+}
+
+.ui-table__title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* 说明在主文本下方，单行截断 */
+.ui-table__description {
+  max-width: 360px;
+  margin-top: 2px;
+  overflow: hidden;
+  color: var(--text-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 标签：圆角小标签 */
+.ui-chip {
+  display: inline-block;
+  max-width: 100%;
+  padding: 1px 8px;
+  overflow: hidden;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+  white-space: nowrap;
+  background: var(--chip-bg);
+  border: 1px solid var(--chip-border);
+  border-radius: 999px;
+}

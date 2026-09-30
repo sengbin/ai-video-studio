@@ -23,8 +23,8 @@ export const WEBVIEW_ROOT_PATHS = ['resources', UI_KIT_DIR] as const;
 const UI_TOKENS_STYLE = `${UI_KIT_DIR}/ui-tokens.css`;
 /** 编辑器区页面的基础样式（页面外观、标题、状态文字）。 */
 const EDITOR_PAGE_THEME_STYLE = 'resources/shared/theme.css';
-/** 界面组件库的控件、对话框与滚动条样式。 */
-const UI_COMPONENT_STYLES = ['ui-controls.css', 'ui-dialog.css', 'ui-scrollbar.css'].map((name) => `${UI_KIT_DIR}/${name}`);
+/** 界面组件库的控件、表格、对话框与滚动条样式。 */
+const UI_COMPONENT_STYLES = ['ui-controls.css', 'ui-table.css', 'ui-dialog.css', 'ui-scrollbar.css'].map((name) => `${UI_KIT_DIR}/${name}`);
 
 /** 通信桥与界面组件库的脚本，按依赖顺序排列。 */
 const UI_LIBRARY_SCRIPTS = [
@@ -37,6 +37,7 @@ const UI_LIBRARY_SCRIPTS = [
     'ui-select.js',
     'ui-choice-controls.js',
     'ui-field.js',
+    'ui-table.js',
     'ui-dialog.js'
   ].map((name) => `${UI_KIT_DIR}/${name}`)
 ];

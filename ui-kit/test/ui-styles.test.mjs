@@ -90,3 +90,14 @@ test('令牌：定义了禁用态颜色', () => {
     assert.ok(tokens.includes(`${name}:`), `缺少令牌 ${name}`);
   }
 });
+
+test('表格：样式只使用令牌颜色，令牌已定义；数字列靠右，操作列收缩到内容宽度', () => {
+  const css = readStyle('ui-table.css');
+  const tokens = readStyle('ui-tokens.css');
+  const used = new Set(css.match(/--(?:table|chip)-[a-z-]+/g));
+  assert.ok(used.size > 0, '表格样式应使用表格令牌');
+  for (const name of used) assert.ok(tokens.includes(`${name}:`), `缺少令牌 ${name}`);
+  assert.doesNotMatch(css.replace(/\/\*[\s\S]*?\*\//g, ''), /#[0-9a-f]{3,8}\b|\brgba?\(/i, '表格样式不应写死颜色');
+  assert.match(ruleBody(css, '.ui-table__cell--number'), /text-align:\s*right/);
+  assert.match(ruleBody(css, '.ui-table__cell--actions'), /width:\s*1%/);
+});

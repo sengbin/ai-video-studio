@@ -3,7 +3,7 @@
 .gitignore
 src/**
 ui-kit/test/**
-ui-kit/docs/**
+docs/**
 ui-kit/manifest.json
 tsconfig.json
 build.ps1

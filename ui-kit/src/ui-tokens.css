@@ -41,6 +41,15 @@
   --button-danger-hover-bg: rgb(180, 58, 51);
   --button-danger-active-bg: rgb(141, 40, 35);
 
+  /* 表格与标签：由文字色与背景色混合得出，亮暗主题自动适配 */
+  --table-surface: color-mix(in srgb, var(--text) 3%, var(--bg));
+  --table-header-bg: color-mix(in srgb, var(--text) 6%, var(--bg));
+  --table-border: color-mix(in srgb, var(--text) 12%, transparent);
+  --table-row-divider: color-mix(in srgb, var(--text) 8%, transparent);
+  --table-row-hover: color-mix(in srgb, var(--text) 6%, transparent);
+  --chip-bg: color-mix(in srgb, var(--vscode-button-background) 22%, transparent);
+  --chip-border: color-mix(in srgb, var(--vscode-button-background) 45%, transparent);
+
   /* 禁用态：所有控件共用，随主题文字色变化 */
   --disabled-text: color-mix(in srgb, var(--text) 42%, transparent);
   --disabled-bg: color-mix(in srgb, var(--text) 7%, transparent);

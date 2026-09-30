@@ -1,6 +1,6 @@
 # 界面组件库说明书
 
-本文说明 AI Video Studio（智影）页面内界面组件库的结构、用法和扩展方法。所有 Webview 页面（编辑器区页面和侧栏）都必须使用这套组件，**不使用 VS Code 内置的确认框、输入框和消息弹窗，也不使用浏览器原生的表单控件外观**。页面与表单如何使用这些组件，见 [page-form-design.md](../../doc/page-form-design.md)。
+本文说明 AI Video Studio（智影）页面内界面组件库的结构、用法和扩展方法。所有 Webview 页面（编辑器区页面和侧栏）都必须使用这套组件，**不使用 VS Code 内置的确认框、输入框和消息弹窗，也不使用浏览器原生的表单控件外观**。页面与表单如何使用这些组件，见 [page-form-design.md](page-form-design.md)。
 
 ## 1. 设计目标与原则
 
@@ -16,12 +16,12 @@
 ## 2. 文件结构
 
 ```
-ui-kit/                        组件库（自绘控件、对话框及其文档、测试都集中在这里，唯一源码）
+ui-kit/                        组件库（自绘控件、对话框及其测试都集中在这里，唯一源码）
   manifest.json                文件清单：样式与脚本的加载顺序（供测试使用，与 page-resources.ts 一致）
-  docs/ui-components.md        本说明书
   src/
     ui-tokens.css              设计令牌：颜色、状态色、控件与对话框变量（亮暗主题）
     ui-controls.css            按钮、输入、下拉、单选、复选、开关、字段包装的样式（含各控件的禁用外观）
+    ui-table.css               数据表格、主副文本单元格、标签的样式
     ui-dialog.css              对话框、遮罩、标题栏、调整大小把手、删除确认提示的样式
     ui-scrollbar.css           自绘滚动条：无箭头、无背景、悬停才显示滑块
     ui-core.js                 命名空间 aiUi、元素创建 h、唯一 id、事件发射器、层容器、指针跟踪、控件基类
@@ -31,6 +31,7 @@ ui-kit/                        组件库（自绘控件、对话框及其文档�
     ui-select.js               下拉列表
     ui-choice-controls.js      单选组、复选框、复选框组、开关
     ui-field.js                字段包装：标签、说明、错误提示
+    ui-table.js                数据表格、主副文本单元格、标签
     ui-dialog.js               对话框：确认、提示、删除确认、弹出页面
   test/
     load-manifest.mjs          读取 manifest.json，给出 src 目录路径
@@ -38,12 +39,13 @@ ui-kit/                        组件库（自绘控件、对话框及其文档�
     manifest.test.mjs          清单与 src 一一对应、加载顺序、文件头
     ui-controls.test.mjs       控件测试（含可用与禁用两种状态）
     ui-dialog.test.mjs         对话框测试（确认、删除确认、拖动、调整大小）
+    ui-table.test.mjs          表格测试（表头与行、列类型、占位与淡色、重设行数据、标签）
     ui-styles.test.mjs         样式静态检查（滚动条、禁用态令牌）
 ```
 
-各文件职责单一：控件按类别分文件，对话框独立成文件，令牌与样式分开，便于按需修改。所有控件与对话框的代码、样式、文档和测试都在 `ui-kit/` 下，页面与扩展宿主的代码不在其中。
+各文件职责单一：控件按类别分文件，对话框独立成文件，令牌与样式分开，便于按需修改。所有控件与对话框的代码、样式和测试都在 `ui-kit/` 下，页面与扩展宿主的代码不在其中；本说明书与其他开发文档一起放在根目录 `docs/`。
 
-扩展直接从 `ui-kit/src` 加载组件库，没有复制或构建步骤：页面清单中的路径相对扩展根目录（如 `ui-kit/src/ui-core.js`、`resources/form/form.css`），`src/app/panels/webview-resources.ts` 把 `resources` 与 `ui-kit/src` 设为 Webview 可加载的目录并转换资源地址。打包扩展时 `ui-kit/src` 会被包含，`ui-kit/test`、`ui-kit/docs`、`ui-kit/manifest.json` 不会。
+扩展直接从 `ui-kit/src` 加载组件库，没有复制或构建步骤：页面清单中的路径相对扩展根目录（如 `ui-kit/src/ui-core.js`、`resources/form/form.css`），`src/app/panels/webview-resources.ts` 把 `resources` 与 `ui-kit/src` 设为 Webview 可加载的目录并转换资源地址。打包扩展时 `ui-kit/src` 会被包含，`ui-kit/test`、`ui-kit/manifest.json` 与 `docs/` 不会。
 
 ## 3. 接入页面
 
@@ -238,6 +240,59 @@ const audio = aiUi.switchControl({ label: '生成声音', checked: true, onChang
 | 开关 | 轨道与滑块变灰（开启时为淡强调色），左侧文字变灰，点开关或文字都不切换 |
 
 禁用时根元素带 `ui-is-disabled` 类，页面自己的样式也可以据此调整。
+
+### 5.10 数据表格 `aiUi.table`
+
+按列描述渲染表头和行，页面只写列定义和行数据，不手写 `table`、`tr`、`td` 与类名：
+
+```js
+const table = aiUi.table({
+  ariaLabel: '全部项目',
+  columns: [
+    { title: '项目名称', width: '34%', minWidth: 180, render: (row) => aiUi.tableMainCell({ text: row.name, description: row.description }) },
+    { title: '视觉风格', width: '16%', emptyText: '未设置', render: (row) => row.style && aiUi.chip({ text: row.style }) },
+    { title: '作品数', key: 'workCount', type: 'number', muted: (row) => row.workCount === 0 },
+    { title: '更新时间', width: 110, nowrap: true, muted: true, render: (row) => formatTime(row.updatedAt), tooltip: (row) => fullTime(row) },
+    { title: '操作', type: 'actions', render: (row) => [aiUi.button({ kind: 'edit', compact: true }).element, aiUi.button({ kind: 'delete', compact: true }).element] }
+  ],
+  rows
+});
+container.append(table.element);
+table.setRows(newRows);   // 整体重绘表体
+```
+
+表格选项：
+
+| 选项 | 说明 |
+|---|---|
+| `columns` | 列描述数组，至少一列，见下表；列描述有误时立即抛错 |
+| `rows` | 行数据数组，可省略后用 `setRows` 设置 |
+| `ariaLabel` | 表格的可访问名称 |
+
+列描述：
+
+| 字段 | 说明 |
+|---|---|
+| `title` | 表头文字，必填 |
+| `key` | 取值的字段名，用于直接显示行数据中的文本或数字（数字 0 正常显示） |
+| `render(row, index)` | 自定义内容，返回节点、文本或节点数组；与 `key` 至少提供一个 |
+| `type` | `text`（默认）；`number` 数字列，靠右、等宽数字、不换行、默认宽 84px；`actions` 操作列，靠右、收缩到内容宽度、按钮之间留间距 |
+| `width`、`minWidth` | 列宽，数字为像素，字符串原样使用（如 `"34%"`）；设在表头上 |
+| `nowrap` | 内容不换行 |
+| `muted` | 淡色显示，布尔值或 `(row) => 布尔值`，如数量为 0 时淡化 |
+| `emptyText` | 内容为空（`null`、`undefined`、空串、`false`）时显示的淡色占位文字 |
+| `tooltip(row)` | 单元格的悬停提示 |
+
+返回 `{ element, setRows(rows), getRows() }`。行内文本按文本写入，不解析为 HTML。表格外观：圆角卡片、表头色带、行分隔线、悬停高亮，颜色来自 `--table-*` 令牌，亮暗主题自动适配。表格的空状态、加载中和错误状态由页面自己显示（不渲染表格）。
+
+页面专属的单元格样式写在页面自己的样式文件里，并限定在 `.ui-table` 下，不改组件库的样式。
+
+### 5.11 主副文本单元格与标签
+
+| 函数 | 说明 |
+|---|---|
+| `aiUi.tableMainCell({ text, description })` | 表格单元格内容：加粗主文本，下方可选一行淡色说明（单行截断，悬停显示全文） |
+| `aiUi.chip({ text })` | 圆角小标签，用于视觉风格、分类等短文本，超长时省略 |
 
 ## 6. 字段包装 `aiUi.field`
 
@@ -508,6 +563,7 @@ await aiForm.open({ form: 'project.edit', params: { id: project.id } }); // 编�
 | 选择 | `--choice-mark-border`、`--option-hover-bg`、`--option-selected-bg`、`--switch-off-bg`、`--switch-off-hover-bg` |
 | 按钮 | `--button-secondary-*`、`--button-danger-*` |
 | 禁用态 | `--disabled-text`、`--disabled-bg`、`--disabled-border`（所有控件共用） |
+| 表格与标签 | `--table-surface`、`--table-header-bg`、`--table-border`、`--table-row-divider`、`--table-row-hover`、`--chip-bg`、`--chip-border` |
 | 滚动条 | `--scrollbar-size`、`--scrollbar-thumb-bg`、`--scrollbar-thumb-hover-bg`、`--scrollbar-thumb-active-bg`（定义在 `ui-scrollbar.css`） |
 | 对话框 | `--dialog-bg`、`--dialog-border`、`--dialog-divider`、`--dialog-titlebar-bg`、`--dialog-shadow`、`--dialog-overlay`、`--dialog-close-*`、`--danger-notice-*` |
 
@@ -543,6 +599,8 @@ await aiForm.open({ form: 'project.edit', params: { id: project.id } }); // 编�
 
 ## 12. 扩展组件库
 
+### 12.1 新增组件的步骤
+
 新增一种控件的清单：
 
 1. 在 `ui-kit/src/` 的合适文件中（或新文件）用 `aiUi.makeControl` 组装，返回统一的控件对象；根元素、聚焦目标、`aria` 目标、`labelable` 要设置正确。
@@ -552,6 +610,19 @@ await aiForm.open({ form: 'project.edit', params: { id: project.id } }); // 编�
 5. 更新本文档的控件说明，运行 `npm test`。
 
 新增一种对话框：在 `ui-dialog.js` 中基于 `aiUi.openDialog` 写一个函数并挂到 `aiUi`，不要复制对话框的基础逻辑。
+
+新增表格、标签这类非表单控件：脚本与样式成对新增（如 `ui-table.js`、`ui-table.css`），按 3.3 登记到清单，并在 `manifest.test.mjs` 的 `providers` 中登记它提供的 `aiUi.xxx` 名称，以便检查加载顺序。
+
+### 12.2 发现重复界面时先询问
+
+开发页面或表单时，如果发现要写的界面结构与已有页面重复（例如又要拼一个表格、卡片、状态提示、带图标的操作行），**不要直接复制粘贴结构和类名手动拼接**，按下面的顺序处理：
+
+1. 先看组件库有没有现成组件（见第 5 至 8 节与第 15 节速查）；有就直接用，不再询问。
+2. 没有时，**先向用户询问**是否把这段界面做成可复用组件，并简要说明：重复出现的位置、拟定的组件名称与接口（选项、返回值）、放置位置（`ui-kit/src`）。
+3. 用户同意：按 12.1 新增组件，把原有页面改为调用组件，删除页面里被替代的结构与样式，补充测试与本文档。
+4. 用户不同意或暂不处理：只在当前页面内实现，并在页面代码中把重复部分集中在一个函数里，不要在多处散落拼接。
+
+判断“重复”的参考：同一种结构在两个以上页面出现，或一个页面里会按同一模式渲染多次；仅样式相近而结构不同的，不算重复。询问只在“发现重复且组件库没有”时进行，不要对每个小改动都询问。
 
 ## 13. 例外与限制
 
@@ -575,7 +646,8 @@ await aiForm.open({ form: 'project.edit', params: { id: project.id } }); // 编�
 | `manifest.test.mjs` | 清单与 `src` 目录一一对应、没有重复、脚本只依赖排在它前面的脚本、源文件都有文件头 |
 | `ui-controls.test.mjs` | 各控件的读写值、变化通知、键盘操作，按钮预设，字段包装，滚动条悬停标记；“所有控件可用与禁用切换”的统一用例，新增控件时把它加入 `controlFactories` |
 | `ui-dialog.test.mjs` | 对话框结构与 ARIA、模态与非模态、确认、提示、删除确认的名称校验、标题行拖动及边界、弹出页面调整大小、焦点恢复 |
-| `ui-styles.test.mjs` | 样式文本的静态检查：滚动条无箭头无背景、悬停才显示、不使用标准滚动条属性；各控件的禁用样式使用禁用令牌 |
+| `ui-styles.test.mjs` | 样式文本的静态检查：滚动条无箭头无背景、悬停才显示、不使用标准滚动条属性；各控件的禁用样式使用禁用令牌；表格样式只用已定义的令牌 |
+| `ui-table.test.mjs` | 表格的表头与行、列类型与列宽、占位与淡色、悬停提示、`setRows`、列描述校验、文本不解析为 HTML，主副文本单元格与标签 |
 
 新增或修改组件时同步补充这些测试。编写用例时注意：jsdom 没有排版，不要断言真实像素位置；位置与尺寸由测试环境按元素内联样式换算，未设置高度时按 100 像素计算，视口为 1024 × 768。
 
@@ -610,6 +682,11 @@ const add = aiUi.button({ kind: 'add' });                // 添加 / 修改(edit
 
 // 字段
 const f = aiUi.field({ label, description, required: true, control: ctl });  // f.setError('…')
+
+// 表格与标签
+const table = aiUi.table({ ariaLabel, columns: [{ title, key, type, render }], rows });  // table.setRows(rows)
+aiUi.tableMainCell({ text, description });                 // 主副文本单元格
+aiUi.chip({ text });                                       // 标签
 
 // 对话框
 await aiUi.alert({ message });
