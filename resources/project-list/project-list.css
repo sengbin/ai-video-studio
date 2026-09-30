@@ -1,7 +1,7 @@
 /*
  * ------------------------------------------------------------------------
  * 名称：project-list.css
- * 说明：项目列表页样式：工具栏、项目表格和空状态。
+ * 说明：项目列表页样式：顶部搜索框、项目表格和空状态。
  * 作者：Lion
  * 邮箱：chengbin@3578.cn
  * 日期：2026-09-30
@@ -18,17 +18,17 @@ body.vscode-light {
   --table-border: color-mix(in srgb, rgb(0, 0, 0) 22%, rgb(255, 255, 255));
 }
 
-.list-toolbar {
+/* 顶部一行只放搜索框，靠右 */
+.list-header {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
-  margin: 0 0 8px;
+  justify-content: flex-end;
+  margin: 0 0 12px;
 }
 
-.list-toolbar .list-search {
-  flex: 1 1 200px;
-  max-width: 320px;
+.list-header .list-search {
+  flex: 0 1 280px;
+  min-width: 140px;
 }
 
 .table-container {

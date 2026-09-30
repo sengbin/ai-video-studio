@@ -221,12 +221,11 @@
         renderContent();
       }
     });
-    const createButton = aiUi.button({ text: '创建项目', kind: 'add', onClick: openCreateForm });
-    const toolbar = aiUi.h('div', { class: 'list-toolbar' }, aiUi.h('div', { class: 'list-search' }, search.element), createButton.element);
+    const header = aiUi.h('div', { class: 'list-header' }, aiUi.h('div', { class: 'list-search' }, search.element));
 
     messageElement = aiUi.h('p', { class: 'list-message', hidden: true, attrs: { role: 'status' } });
     contentElement = aiUi.h('div');
-    root.append(aiUi.h('h1', { text: PAGE_TITLE }), toolbar, messageElement, contentElement);
+    root.append(header, messageElement, contentElement);
   }
 
   renderPage();
