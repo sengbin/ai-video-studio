@@ -22,10 +22,10 @@ import {
 const PROMPTS_DIRECTORY = join(resolve(__dirname, '..', '..', '..', '..'), 'resources', 'prompts');
 
 /** 默认的假模型信息。 */
-export const DEFAULT_MODEL: TextModelInfo = { id: 'copilot/test', maxInputTokens: 100000, supportsImageInput: true };
+export const DEFAULT_MODEL: TextModelInfo = { id: 'copilot/test', maxInputTokens: 100000 };
 
-/** 响应函数：根据请求与调用序号返回模型输出，可返回永不结束的 Promise 模拟卡住。 */
-export type Responder = (request: TextGenerationRequest, callIndex: number) => string | Promise<string>;
+/** 响应函数：根据请求与调用序号返回模型提交的结果对象，可返回永不结束的 Promise 模拟卡住。 */
+export type Responder = (request: TextGenerationRequest, callIndex: number) => unknown;
 
 /** 读取真实的提示词模板文件（保持原样换行）。 */
 export function readPrompt(name: string): string {
@@ -57,7 +57,7 @@ export class ScriptedText implements TextGenerationPort {
     return Math.ceil(text.length / 2);
   }
 
-  async generate(request: TextGenerationRequest, options?: TextGenerationOptions): Promise<string> {
+  async generate(request: TextGenerationRequest, options?: TextGenerationOptions): Promise<unknown> {
     this.requests.push(request);
     const signal = options?.signal;
     if (signal?.aborted) {
@@ -76,27 +76,27 @@ export class ScriptedText implements TextGenerationPort {
   }
 }
 
-/** 默认响应：按请求中的任务标题返回符合要求的 JSON。 */
-export function standardResponder(request: TextGenerationRequest): string {
+/** 默认响应：按请求中的任务标题返回符合要求的结果对象。 */
+export function standardResponder(request: TextGenerationRequest): unknown {
   const user = request.user;
   if (user.includes('# 任务：提取原文要点')) {
-    return JSON.stringify({ summary: `要点${/第 (\d+) 段/.exec(user)?.[1] ?? ''}` });
+    return { summary: `要点${/第 (\d+) 段/.exec(user)?.[1] ?? ''}` };
   }
   if (user.includes('# 任务：分析灵感图片')) {
-    return JSON.stringify({ summary: '画面：灯塔与海' });
+    return { summary: '画面：灯塔与海' };
   }
   if (user.includes('# 任务：规划章节大纲')) {
-    return JSON.stringify({
+    return {
       chapters: [
         { title: '开端', summary: '守夜人上岗', sources: [1] },
         { title: '转折', summary: '收到信号', sources: [2] },
         { title: '结局', summary: '真相', sources: [3] }
       ]
-    });
+    };
   }
   const chapter = /# 任务：撰写第 (\d+) 章/.exec(user);
   if (chapter !== null) {
-    return JSON.stringify({ title: `第${chapter[1]}章`, content: '灯'.repeat(120) });
+    return { title: `第${chapter[1]}章`, content: '灯'.repeat(120) };
   }
   throw new Error(`未预期的请求：${user.slice(0, 40)}`);
 }

@@ -21,6 +21,8 @@ import { INTERRUPTED_MESSAGE, StageRunner } from './stage-runner';
 import { DEFAULT_MODEL, FILE_PROMPTS, Responder, ScriptedText, readPrompt, standardResponder } from './testing/scripted-text';
 
 const TARGET: StageTarget = { workId: 1, stage: 'creative', episodeId: null };
+/** 缺少正文的章节结果，会被规则校验拒绝。 */
+const BROKEN_OUTPUT = { title: '缺少正文' };
 const TEXT_INPUT = {
   sourceType: 'text',
   params: { idea: '灯塔守夜人', chapterMinWords: 100, chapterMaxWords: 200, maxChapters: 3 }
@@ -197,7 +199,7 @@ test('字数不符：不重试也不失败，章节照常保存，字数由界�
   const harness = createHarness({
     responder: (request) => {
       if (request.user.includes('# 任务：撰写第 1 章')) {
-        return JSON.stringify({ title: '第1章', content: '灯'.repeat(50) });
+        return { title: '第1章', content: '灯'.repeat(50) };
       }
       return standardResponder(request);
     }
@@ -213,7 +215,7 @@ test('字数不符：不重试也不失败，章节照常保存，字数由界�
 
 test('格式不符：不自动重试，直接记录失败并保留原始输出', async () => {
   const harness = createHarness({
-    responder: (request) => (request.user.includes('# 任务：撰写第 1 章') ? '不是 JSON' : standardResponder(request))
+    responder: (request) => (request.user.includes('# 任务：撰写第 1 章') ? BROKEN_OUTPUT : standardResponder(request))
   });
 
   const started = await harness.runner.start({ target: TARGET, input: TEXT_INPUT });
@@ -222,7 +224,7 @@ test('格式不符：不自动重试，直接记录失败并保留原始输出',
   const failed = harness.runs.findById(started.id)!;
   assert.equal(failed.status, 'failed');
   assert.match(failed.errorMessage ?? '', /模型输出不符合要求/);
-  assert.equal(failed.rawOutput, '不是 JSON');
+  assert.match(failed.rawOutput ?? '', /缺少正文/);
   assert.equal(harness.text.requests.length, 2, '大纲一次、第 1 章一次，不重试');
   assert.equal(harness.chapters.list(started.id).length, 0);
 });
@@ -232,7 +234,7 @@ test('失败后继续：输出不符合要求记录为失败并保留原始输�
   const harness = createHarness({
     responder: (request) => {
       if (broken && request.user.includes('# 任务：撰写第 2 章')) {
-        return '不是 JSON';
+        return BROKEN_OUTPUT;
       }
       return standardResponder(request);
     }
@@ -244,7 +246,7 @@ test('失败后继续：输出不符合要求记录为失败并保留原始输�
   const failed = harness.runs.findById(started.id)!;
   assert.equal(failed.status, 'failed');
   assert.match(failed.errorMessage ?? '', /模型输出不符合要求/);
-  assert.equal(failed.rawOutput, '不是 JSON');
+  assert.match(failed.rawOutput ?? '', /缺少正文/);
   assert.deepEqual(
     harness.chapters.list(started.id).map((chapter) => chapter.seq),
     [1]
@@ -268,7 +270,7 @@ test('取消：终止生成，记录为已取消并保留已完成章节，之�
   let blocked = true;
   const harness = createHarness({
     responder: (request) =>
-      blocked && request.user.includes('# 任务：撰写第 2 章') ? new Promise<string>(() => undefined) : standardResponder(request)
+      blocked && request.user.includes('# 任务：撰写第 2 章') ? new Promise<unknown>(() => undefined) : standardResponder(request)
   });
 
   const started = await harness.runner.start({ target: TARGET, input: TEXT_INPUT });
@@ -292,7 +294,7 @@ test('取消：终止生成，记录为已取消并保留已完成章节，之�
 });
 
 test('同一目标正在生成时不能再启动，也不能重试运行中的记录', async () => {
-  const harness = createHarness({ responder: () => new Promise<string>(() => undefined) });
+  const harness = createHarness({ responder: () => new Promise<unknown>(() => undefined) });
 
   const started = await harness.runner.start({ target: TARGET, input: TEXT_INPUT });
   await assert.rejects(harness.runner.start({ target: TARGET, input: TEXT_INPUT }), /正在生成/);
@@ -323,7 +325,7 @@ test('输入不合法或没有可用模型时不创建记录', async () => {
 });
 
 test('模型拒绝生成：记录为失败并给出原因，不重试', async () => {
-  const harness = createHarness({ responder: () => '{"refused": "素材含有不适宜内容"}' });
+  const harness = createHarness({ responder: () => ({ refused: '素材含有不适宜内容' }) });
 
   const started = await harness.runner.start({ target: TARGET, input: TEXT_INPUT });
   await harness.runner.whenIdle();
@@ -375,7 +377,7 @@ test('小说素材：大纲阶段失败后继续，已提取的要点不重复',
   let broken = true;
   const harness = createHarness({
     novelText: NOVEL_TEXT,
-    responder: (request) => (broken && request.user.includes('# 任务：规划章节大纲') ? '不是 JSON' : standardResponder(request))
+    responder: (request) => (broken && request.user.includes('# 任务：规划章节大纲') ? {} : standardResponder(request))
   });
 
   const started = await harness.runner.start({ target: TARGET, input: NOVEL_INPUT });
@@ -400,7 +402,7 @@ test('小说素材：缺少原文时失败并提示', async () => {
   assert.match(harness.runs.findById(started.id)?.errorMessage ?? '', /没有找到小说原文/);
 });
 
-test('图片素材：先带图片生成画面描述，大纲使用该描述；模型不支持图片时失败并提示', async () => {
+test('图片素材：先带图片生成画面描述，大纲使用该描述；模型报错时原样返回失败原因', async () => {
   const images: ImageInput[] = [
     { mimeType: 'image/png', data: new Uint8Array([1, 2]) },
     { mimeType: 'image/jpeg', data: new Uint8Array([3]) }
@@ -414,11 +416,15 @@ test('图片素材：先带图片生成画面描述，大纲使用该描述；�
   assert.ok(supported.text.requests[1].images === undefined, '大纲和章节请求不再带图片');
   assert.ok(supported.text.requests[1].user.includes('画面：灯塔与海'));
 
-  const unsupported = createHarness({ images, model: { supportsImageInput: false } });
-  const failed = await unsupported.runner.start({ target: TARGET, input: IMAGE_INPUT });
-  await unsupported.runner.whenIdle();
-  assert.match(unsupported.runs.findById(failed.id)?.errorMessage ?? '', /不支持图片输入/);
-  assert.equal(unsupported.text.requests.length, 0);
+  const rejected = createHarness({
+    images,
+    responder: () => {
+      throw new TextGenerationError('failed', '调用 Copilot 失败：模型不接受图片。');
+    }
+  });
+  const failed = await rejected.runner.start({ target: TARGET, input: IMAGE_INPUT });
+  await rejected.runner.whenIdle();
+  assert.match(rejected.runs.findById(failed.id)?.errorMessage ?? '', /模型不接受图片/);
 });
 
 test('启动恢复：遗留的运行中记录被置为失败', async () => {

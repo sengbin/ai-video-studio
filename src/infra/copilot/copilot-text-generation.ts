@@ -28,15 +28,6 @@ export interface CopilotModelSettings {
   getModelFamily(): string;
 }
 
-/**
- * 读取模型是否支持图片输入。类型声明里没有这个字段，按运行时对象上可能出现的两种命名探测；
- * 探测不到时按不支持处理，避免模型忽略图片后凭空描述。
- */
-function readImageInputSupport(model: vscode.LanguageModelChat): boolean {
-  const capabilities = (model as unknown as { capabilities?: Record<string, unknown> }).capabilities;
-  return capabilities?.imageInput === true || capabilities?.supportsImageToText === true;
-}
-
 /** 基于 vscode.lm 的 Copilot 文本生成。 */
 export class CopilotTextGeneration implements TextGenerationPort {
   private model: vscode.LanguageModelChat | undefined;
@@ -48,8 +39,7 @@ export class CopilotTextGeneration implements TextGenerationPort {
     this.model = model;
     return {
       id: `${model.vendor}/${model.family}`,
-      maxInputTokens: model.maxInputTokens,
-      supportsImageInput: readImageInputSupport(model)
+      maxInputTokens: model.maxInputTokens
     };
   }
 
@@ -61,7 +51,7 @@ export class CopilotTextGeneration implements TextGenerationPort {
     }
   }
 
-  async generate(request: TextGenerationRequest, options?: TextGenerationOptions): Promise<string> {
+  async generate(request: TextGenerationRequest, options?: TextGenerationOptions): Promise<unknown> {
     const model = await this.currentModel();
     const tool = request.tool;
     const parts: (vscode.LanguageModelTextPart | vscode.LanguageModelDataPart)[] = [
@@ -96,7 +86,7 @@ export class CopilotTextGeneration implements TextGenerationPort {
       if (toolInput === undefined) {
         throw new TextGenerationError('failed', '模型没有通过工具返回结果，当前模型可能不支持工具调用，请在设置中更换 Copilot 模型。');
       }
-      return JSON.stringify(toolInput);
+      return toolInput;
     } catch (error) {
       throw mapLanguageModelError(error);
     } finally {

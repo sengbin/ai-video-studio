@@ -145,7 +145,7 @@ test('编辑校验：标题与正文必填，章节必须存在，只能编辑�
 test('失败后重试：从已保存的章节继续，原始输出可查看', async () => {
   let broken = true;
   const { database, stages, runner, work } = createFixture((request) =>
-    broken && request.user.includes('# 任务：撰写第 3 章') ? '不是 JSON' : standardResponder(request)
+    broken && request.user.includes('# 任务：撰写第 3 章') ? { title: '缺少正文' } : standardResponder(request)
   );
   try {
     const run = await stages.startCreative(work.id, PARAMS);
@@ -155,7 +155,7 @@ test('失败后重试：从已保存的章节继续，原始输出可查看', as
     assert.equal(view.run.display, 'failed');
     assert.equal(view.chapters.length, 2);
     assert.equal(view.run.hasRawOutput, true);
-    assert.match(stages.getRawOutput(run.id), /不是 JSON/);
+    assert.match(stages.getRawOutput(run.id), /缺少正文/);
     assert.equal(view.actions.canRetry, true);
     assert.equal(view.actions.canEdit, false);
     assert.throws(() => stages.approve(run.id), ValidationError);

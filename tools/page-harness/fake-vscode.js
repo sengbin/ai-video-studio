@@ -158,11 +158,10 @@ function createModel(family) {
     version: '1',
     name: family,
     maxInputTokens: 128000,
-    capabilities: { imageInput: true },
     async countTokens(text) {
       return Math.ceil(String(text).length / 2);
     },
-    async sendRequest(messages, _options, token) {
+    async sendRequest(messages, options, token) {
       if (state.lmMode === 'fail') {
         throw Object.assign(new Error('模拟的调用失败'), { code: 'Unknown' });
       }
@@ -180,9 +179,12 @@ function createModel(family) {
         });
       });
       const output = respond(text);
+      const tool = options?.tools?.[0];
       return {
-        text: (async function* stream() {
-          yield output;
+        stream: (async function* stream() {
+          // 与真实 Copilot 一样，带输出工具时模型通过工具调用返回结果对象。
+          if (tool) yield new LanguageModelToolCallPart('call-1', tool.name, JSON.parse(output));
+          else yield new LanguageModelTextPart(output);
         })()
       };
     }
@@ -227,6 +229,14 @@ class LanguageModelDataPart {
   }
 }
 
+class LanguageModelToolCallPart {
+  constructor(callId, name, input) {
+    this.callId = callId;
+    this.name = name;
+    this.input = input;
+  }
+}
+
 const LanguageModelChatMessage = {
   User: (content) => ({ role: 'user', content: Array.isArray(content) ? content : [new LanguageModelTextPart(content)] })
 };
@@ -253,6 +263,8 @@ module.exports = {
   CancellationTokenSource,
   LanguageModelTextPart,
   LanguageModelDataPart,
+  LanguageModelToolCallPart,
+  LanguageModelChatToolMode: { Auto: 1, Required: 2 },
   LanguageModelChatMessage,
   __harness: { state, createMemento }
 };

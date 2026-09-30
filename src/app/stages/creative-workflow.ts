@@ -245,9 +245,6 @@ export class CreativeWorkflow implements StageWorkflow {
 
     if (sourceType === 'image') {
       if (state.digest === null) {
-        if (!context.model.supportsImageInput) {
-          throw new TextGenerationError('unsupported_input', '当前 Copilot 模型不支持图片输入，请在设置中更换模型。');
-        }
         const images = this.dependencies.sources.readImages(context.run.workId);
         if (images.length === 0) {
           throw new ValidationError({ [FORM_LEVEL_ERROR_KEY]: '没有找到灵感图片，请先添加图片。' });

@@ -84,7 +84,7 @@ test('联合运行：失败后继续时，要点与大纲从数据库中的进�
     const runs = new SqliteStageRunRepository(database);
     let broken = true;
     const text = new ScriptedText((request) =>
-      broken && request.user.includes('# 任务：撰写第 3 章') ? '不是 JSON' : standardResponder(request)
+      broken && request.user.includes('# 任务：撰写第 3 章') ? { title: '缺少正文' } : standardResponder(request)
     );
     const workflow = new CreativeWorkflow({
       chapters: new SqliteChapterRepository(database),

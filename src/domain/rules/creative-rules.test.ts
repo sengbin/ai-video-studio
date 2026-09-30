@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：creative-rules.test.ts
-// 说明：创意阶段规则的自动化测试：参数校验、字数统计、大纲与章节输出校验，以及模型 JSON 提取。
+// 说明：创意阶段规则的自动化测试：参数校验、字数统计、大纲与章节输出校验。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-09-30
@@ -12,7 +12,6 @@ import { test } from 'node:test';
 import { GeneratedOutputError, ValidationError } from '../errors';
 import { CreativeParams } from '../models/creative';
 import { countWords, normalizeCreativeParams, parseChapter, parseOutline, parseSummary } from './creative-rules';
-import { parseModelJson } from './json-output';
 
 const PARAMS: CreativeParams = {
   idea: null,
@@ -146,23 +145,6 @@ test('章节：字数过少或过多也接受，不做字数校验', () => {
 test('章节：标题或正文缺失、不是对象时报错', () => {
   assert.equal(captureIssues(() => parseChapter({ content: '' }, 1)).length, 2);
   assert.match(captureIssues(() => parseChapter('正文', 1)).join('；'), /title 和 content/);
-});
-
-test('模型 JSON：整段、代码块、夹带说明文字的输出都能提取', () => {
-  assert.deepEqual(parseModelJson('{"a":1}'), { a: 1 });
-  assert.deepEqual(parseModelJson('```json\n{"a":1}\n```'), { a: 1 });
-  assert.deepEqual(parseModelJson('好的，结果如下：\n{"a":[1,2]}\n希望有帮助。'), { a: [1, 2] });
-  assert.deepEqual(parseModelJson('结果：[{"title":"甲"}] 完毕'), [{ title: '甲' }]);
-});
-
-test('模型 JSON：合法的 JSON 字面量（如 null、0）不被当作解析失败', () => {
-  assert.equal(parseModelJson('null'), null);
-  assert.equal(parseModelJson('0'), 0);
-});
-
-test('模型 JSON：无法解析时抛出可反馈给模型的输出错误', () => {
-  assert.match(captureIssues(() => parseModelJson('没有任何 JSON')).join('；'), /不是合法的 JSON/);
-  assert.match(captureIssues(() => parseModelJson('{"a": 1')).join('；'), /不是合法的 JSON/);
 });
 
 test('大纲（小说）：每章必须给出合法的原文段序号，去重并排序', () => {

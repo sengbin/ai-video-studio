@@ -34,12 +34,11 @@ export class ConflictError extends Error {
   }
 }
 
-/** 文本生成失败的分类：不可用、未授权、限流、输入不受支持、被拒绝、已取消、其他。 */
+/** 文本生成失败的分类：不可用、未授权、限流、被拒绝、已取消、其他。 */
 export type TextGenerationFailure =
   | 'unavailable'
   | 'not_authorized'
   | 'rate_limited'
-  | 'unsupported_input'
   | 'refused'
   | 'canceled'
   | 'failed';

@@ -26,7 +26,7 @@ export interface TextGenerationRequest {
   readonly system: string;
   readonly user: string;
   readonly images?: readonly ImageInput[];
-  /** 实现必须强制模型通过该工具返回，并把工具参数序列化为 JSON 文本作为输出；模型没有通过工具返回时抛出错误。 */
+  /** 实现必须强制模型通过该工具返回，工具参数对象即生成结果；模型没有通过工具返回时抛出错误。 */
   readonly tool: OutputTool;
 }
 
@@ -42,8 +42,6 @@ export interface TextModelInfo {
   readonly id: string;
   /** 最大输入 token 数，用于分段预算。 */
   readonly maxInputTokens: number;
-  /** 是否支持图片输入。 */
-  readonly supportsImageInput: boolean;
 }
 
 /** 文本生成端口。 */
@@ -56,8 +54,8 @@ export interface TextGenerationPort {
   /** 估算文本占用的 token 数。 */
   countTokens(text: string): Promise<number>;
   /**
-   * 发送请求并返回完整的文本输出。
-   * @throws TextGenerationError 调用失败、被拒绝、被限流或已取消。
+   * 发送请求并返回模型通过输出工具提交的参数对象，内容未经校验。
+   * @throws TextGenerationError 调用失败、被拒绝、被限流、已取消或没有通过工具返回。
    */
-  generate(request: TextGenerationRequest, options?: TextGenerationOptions): Promise<string>;
+  generate(request: TextGenerationRequest, options?: TextGenerationOptions): Promise<unknown>;
 }
