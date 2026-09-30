@@ -1,0 +1,550 @@
+/*
+ * ------------------------------------------------------------------------
+ * 名称：ui-controls.css
+ * 说明：界面组件库的控件样式：按钮、单行与多行输入、下拉列表、单选、复选、开关和字段包装。
+ * 作者：Lion
+ * 邮箱：chengbin@3578.cn
+ * 日期：2026-09-30
+ * 备注：所有选择器以 ui- 开头，避免影响宿主页面；依赖 ui-tokens.css；尺寸遵循表单样式基线。
+ * ------------------------------------------------------------------------
+ */
+
+/* ---------- 按钮 ---------- */
+.ui-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-width: 0;
+  min-height: 0;
+  height: 22px;
+  padding: 0 8px;
+  color: var(--button-secondary-text);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 400;
+  white-space: nowrap;
+  background: var(--button-secondary-bg);
+  border: 0;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.ui-button:hover {
+  background: var(--button-secondary-hover-bg);
+}
+
+.ui-button:active {
+  background: var(--button-secondary-active-bg);
+}
+
+.ui-button:focus-visible {
+  outline: 1px solid var(--focus-border);
+  outline-offset: 1px;
+}
+
+.ui-button--primary {
+  color: var(--vscode-button-foreground);
+  background: var(--vscode-button-background);
+}
+
+.ui-button--primary:hover,
+.ui-button--primary:active {
+  background: var(--vscode-button-hoverBackground);
+}
+
+.ui-button--danger {
+  color: rgb(255, 255, 255);
+  background: var(--button-danger-bg);
+}
+
+.ui-button--danger:hover {
+  background: var(--button-danger-hover-bg);
+}
+
+.ui-button--danger:active {
+  background: var(--button-danger-active-bg);
+}
+
+/* 紧凑按钮，用于表格行内操作 */
+.ui-button--compact {
+  height: 20px;
+  min-width: 60px;
+  font-size: 11px;
+  border-radius: 4px;
+}
+
+.ui-button__icon {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* 纯图标按钮：方形，文字只作为可访问名称 */
+.ui-button--icon-only,
+.ui-button--compact.ui-button--icon-only {
+  width: 22px;
+  min-width: 0;
+  padding: 0;
+}
+
+.ui-button--compact.ui-button--icon-only {
+  width: 20px;
+}
+
+/* 禁用态：各样式统一为灰色，去掉悬停与按下反馈 */
+.ui-button:disabled,
+.ui-button:disabled:hover,
+.ui-button:disabled:active {
+  color: var(--disabled-text);
+  background: var(--disabled-bg);
+  cursor: not-allowed;
+}
+
+/* ---------- 单行、多行输入 ---------- */
+.ui-input,
+.ui-textarea {
+  display: block;
+  width: 100%;
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
+  border-radius: 4px;
+}
+
+.ui-input {
+  height: 24px;
+}
+
+.ui-input__field,
+.ui-textarea__field {
+  display: block;
+  width: 100%;
+  margin: 0;
+  color: var(--vscode-input-foreground);
+  font: inherit;
+  background: transparent;
+  border: 0;
+  outline: none;
+}
+
+.ui-input__field {
+  height: 22px;
+  padding: 0 8px;
+}
+
+.ui-input__field::placeholder,
+.ui-textarea__field::placeholder {
+  color: var(--text-muted);
+}
+
+.ui-textarea__field {
+  min-height: 78px;
+  padding: 6px 8px;
+  font-size: 11px;
+  line-height: 1.45;
+  resize: none;
+}
+
+/* 自绘的高度调整把手：右下角两条斜线，鼠标为上下调整光标 */
+.ui-textarea {
+  position: relative;
+}
+
+.ui-textarea__grip {
+  position: absolute;
+  right: 1px;
+  bottom: 1px;
+  width: 12px;
+  height: 12px;
+  cursor: ns-resize;
+  touch-action: none;
+  background: linear-gradient(
+    135deg,
+    transparent 0 55%,
+    var(--choice-mark-border) 55% 65%,
+    transparent 65% 78%,
+    var(--choice-mark-border) 78% 88%,
+    transparent 88%
+  );
+}
+
+.ui-textarea__grip:hover {
+  background: linear-gradient(
+    135deg,
+    transparent 0 55%,
+    var(--text) 55% 65%,
+    transparent 65% 78%,
+    var(--text) 78% 88%,
+    transparent 88%
+  );
+}
+
+.ui-input:focus-within,
+.ui-textarea:focus-within {
+  border-color: var(--focus-border);
+  outline: 1px solid var(--focus-border);
+  outline-offset: 0;
+}
+
+.ui-input.ui-is-invalid,
+.ui-textarea.ui-is-invalid,
+.ui-select__trigger.ui-is-invalid {
+  border-color: var(--status-error);
+}
+
+/* 禁用态：输入类控件换灰底、灰字、禁止光标 */
+.ui-input.ui-is-disabled,
+.ui-textarea.ui-is-disabled {
+  background: var(--disabled-bg);
+  border-color: var(--disabled-border);
+  cursor: not-allowed;
+}
+
+.ui-input__field:disabled,
+.ui-textarea__field:disabled {
+  color: var(--disabled-text);
+  cursor: not-allowed;
+}
+
+.ui-input__field:disabled::placeholder,
+.ui-textarea__field:disabled::placeholder {
+  color: var(--disabled-text);
+}
+
+.ui-textarea.ui-is-disabled .ui-textarea__grip {
+  display: none;
+}
+
+/* ---------- 下拉列表 ---------- */
+.ui-select {
+  position: relative;
+}
+
+.ui-select__trigger {
+  position: relative;
+  display: block;
+  width: 100%;
+  min-width: 88px;
+  min-height: 0;
+  height: 24px;
+  padding: 0 24px 0 6px;
+  color: var(--vscode-input-foreground);
+  font: inherit;
+  font-size: 11px;
+  text-align: left;
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.ui-select__trigger::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  width: 5px;
+  height: 5px;
+  margin-top: -4px;
+  border: solid currentColor;
+  border-width: 0 1.5px 1.5px 0;
+  opacity: 0.75;
+  transform: rotate(45deg);
+}
+
+.ui-select__trigger[aria-expanded="true"]::after {
+  margin-top: -1px;
+  transform: rotate(225deg);
+}
+
+.ui-select__trigger:focus-visible {
+  border-color: var(--focus-border);
+  outline: 1px solid var(--focus-border);
+  outline-offset: 0;
+}
+
+.ui-select__trigger:disabled {
+  color: var(--disabled-text);
+  background: var(--disabled-bg);
+  border-color: var(--disabled-border);
+  cursor: not-allowed;
+}
+
+.ui-select__trigger:disabled .ui-select__value {
+  color: var(--disabled-text);
+}
+
+.ui-select__value {
+  display: block;
+  overflow: hidden;
+  line-height: 22px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ui-select__value--placeholder {
+  color: var(--text-muted);
+}
+
+.ui-select__custom {
+  margin-top: 6px;
+}
+
+.ui-select__popup {
+  position: fixed;
+  z-index: 10000;
+  padding: 2px;
+  overflow-y: auto;
+  font-size: 11px;
+  background: var(--dialog-bg);
+  border: 1px solid var(--dialog-border);
+  border-radius: 4px;
+  box-shadow: var(--dialog-shadow);
+  pointer-events: auto;
+}
+
+.ui-select__option {
+  padding: 4px 8px;
+  overflow: hidden;
+  border-radius: 3px;
+  cursor: pointer;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ui-select__option--placeholder {
+  color: var(--text-muted);
+}
+
+.ui-select__option.is-active {
+  background: var(--option-hover-bg);
+}
+
+.ui-select__option[aria-selected="true"] {
+  background: var(--option-selected-bg);
+}
+
+/* ---------- 单选、复选 ---------- */
+.ui-choice-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ui-choice-group--horizontal {
+  flex-flow: row wrap;
+  gap: 6px 16px;
+}
+
+.ui-choice {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.ui-choice:focus-visible {
+  border-radius: 3px;
+  outline: 1px solid var(--focus-border);
+  outline-offset: 2px;
+}
+
+.ui-choice__mark {
+  position: relative;
+  flex: none;
+  width: 14px;
+  height: 14px;
+  background: var(--input-bg);
+  border: 1px solid var(--choice-mark-border);
+}
+
+.ui-choice__mark--radio {
+  border-radius: 50%;
+}
+
+.ui-choice__mark--checkbox {
+  border-radius: 3px;
+}
+
+.ui-choice[aria-checked="true"] .ui-choice__mark {
+  border-color: var(--vscode-button-background);
+}
+
+.ui-choice[aria-checked="true"] .ui-choice__mark--checkbox {
+  background: var(--vscode-button-background);
+}
+
+.ui-choice[aria-checked="true"] .ui-choice__mark--checkbox::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 3px;
+  width: 3px;
+  height: 7px;
+  border: solid var(--vscode-button-foreground);
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+.ui-choice[aria-checked="true"] .ui-choice__mark--radio::after {
+  content: '';
+  position: absolute;
+  inset: 3px;
+  background: var(--vscode-button-background);
+  border-radius: 50%;
+}
+
+.ui-choice[aria-disabled="true"] {
+  cursor: not-allowed;
+}
+
+.ui-choice[aria-disabled="true"] .ui-choice__label {
+  color: var(--disabled-text);
+}
+
+.ui-choice[aria-disabled="true"] .ui-choice__mark {
+  background: var(--disabled-bg);
+  border-color: var(--disabled-border);
+}
+
+.ui-choice[aria-disabled="true"][aria-checked="true"] .ui-choice__mark {
+  border-color: var(--disabled-text);
+}
+
+.ui-choice[aria-disabled="true"][aria-checked="true"] .ui-choice__mark--checkbox {
+  background: var(--disabled-text);
+}
+
+.ui-choice[aria-disabled="true"][aria-checked="true"] .ui-choice__mark--radio::after {
+  background: var(--disabled-text);
+}
+
+/* ---------- 开关 ---------- */
+.ui-switch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 8px 6px;
+}
+
+.ui-switch-row__label {
+  cursor: pointer;
+}
+
+.ui-switch {
+  position: relative;
+  flex: none;
+  width: 36px;
+  min-width: 36px;
+  min-height: 0;
+  height: 20px;
+  padding: 0;
+  background: var(--switch-off-bg);
+  border: 0;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background 0.18s ease;
+}
+
+.ui-switch:hover {
+  background: var(--switch-off-hover-bg);
+}
+
+.ui-switch[aria-checked="true"],
+.ui-switch[aria-checked="true"]:hover,
+.ui-switch[aria-checked="true"]:active {
+  background: var(--vscode-button-background);
+}
+
+.ui-switch[aria-checked="true"]:hover,
+.ui-switch[aria-checked="true"]:active {
+  background: var(--vscode-button-hoverBackground);
+}
+
+.ui-switch:focus-visible {
+  outline: 1px solid var(--focus-border);
+  outline-offset: 2px;
+}
+
+.ui-switch:disabled,
+.ui-switch:disabled:hover,
+.ui-switch:disabled:active {
+  background: var(--disabled-border);
+  cursor: not-allowed;
+}
+
+.ui-switch:disabled[aria-checked="true"],
+.ui-switch:disabled[aria-checked="true"]:hover,
+.ui-switch:disabled[aria-checked="true"]:active {
+  background: color-mix(in srgb, var(--vscode-button-background) 35%, transparent);
+}
+
+.ui-switch:disabled .ui-switch__thumb {
+  background: var(--disabled-text);
+  box-shadow: none;
+}
+
+.ui-switch-row.ui-is-disabled .ui-switch-row__label {
+  color: var(--disabled-text);
+  cursor: not-allowed;
+}
+
+.ui-switch__thumb {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 14px;
+  height: 14px;
+  background: rgb(255, 255, 255);
+  border-radius: 50%;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.22);
+  transition: transform 0.18s ease;
+}
+
+.ui-switch[aria-checked="true"] .ui-switch__thumb {
+  transform: translateX(16px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-switch,
+  .ui-switch__thumb {
+    transition: none;
+  }
+}
+
+/* ---------- 字段包装 ---------- */
+.ui-field {
+  margin: 0 0 12px;
+}
+
+.ui-field__label {
+  display: block;
+  margin: 0 0 2px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.ui-field__description {
+  margin: 0 0 6px;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.ui-field__description--after {
+  margin: 4px 0 0;
+}
+
+.ui-field__error {
+  margin: 4px 0 0;
+  color: var(--status-error);
+  font-size: 12px;
+}

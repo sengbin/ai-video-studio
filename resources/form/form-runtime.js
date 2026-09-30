@@ -1,10 +1,10 @@
 // ------------------------------------------------------------------------
 // 名称：form-runtime.js
-// 说明：表单引擎：从宿主取得表单描述并渲染控件，负责即时校验、唯一性检查、提交与取消。
+// 说明：表单引擎：从宿主取得表单描述，用界面组件库渲染控件，负责即时校验、唯一性检查、提交与取消确认。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-09-30
-// 备注：请求名称与 src/app/forms/form-handlers.ts 一致；字段值一律以文本传输。
+// 备注：请求名称与 src/app/forms/form-handlers.ts 一致；字段值一律以文本传输（布尔为 true/false，多选为 JSON 数组文本）。
 // ------------------------------------------------------------------------
 
 'use strict';
@@ -15,40 +15,76 @@
   const REQUEST_SUBMIT = 'form.submit';
   const REQUEST_CANCEL = 'form.cancel';
 
-  const CUSTOM_OPTION_VALUE = '__custom__';
-  const CUSTOM_OPTION_LABEL = '其他（手动输入）';
-  const EMPTY_OPTION_LABEL = '请选择';
-  const REQUIRED_PREFIX = '必填，';
   const FORM_LEVEL_ERROR_KEY = '';
   const CANCEL_LABEL = '取消';
   const SUBMITTING_LABEL = '保存中…';
+  const SAVED_LABEL = '已保存';
+  const DISCARD_TITLE = '放弃修改';
+  const DISCARD_MESSAGE = '放弃未保存的修改？';
+  const DISCARD_CONFIRM_TEXT = '放弃修改';
+  const DISCARD_CANCEL_TEXT = '继续编辑';
+  const CHOOSE_ONE_CONTROLS = ['select', 'radio'];
 
   const root = document.getElementById('app');
-  /** 字段键 → 字段控制器，按渲染顺序保存。 */
-  const controllers = new Map();
+  /** 字段键 → 字段条目，按渲染顺序保存。 */
+  const entries = new Map();
   let schema = null;
   let initialSnapshot = '';
   let isSubmitting = false;
   let summaryElement = null;
   let submitButton = null;
 
-  /**
-   * 创建元素。
-   * @param {string} tag 标签名。
-   * @param {string} [className] 类名。
-   * @param {Record<string, string>} [attributes] 属性。
-   */
-  function createElement(tag, className, attributes) {
-    const element = document.createElement(tag);
-    if (className) element.className = className;
-    for (const [name, value] of Object.entries(attributes || {})) element.setAttribute(name, value);
-    return element;
+  /** 解析多选值文本为数组；无法解析时按空数组。 */
+  function parseList(text) {
+    try {
+      const value = JSON.parse(text || '[]');
+      return Array.isArray(value) ? value : [];
+    } catch {
+      return [];
+    }
+  }
+
+  /** 按字段描述创建控件，并说明其值的种类：text、boolean 或 list。 */
+  function createControl(fieldSchema, initialText) {
+    const options = fieldSchema.options || [];
+    switch (fieldSchema.control) {
+      case 'textarea':
+        return { kind: 'text', control: aiUi.textArea({ value: initialText, placeholder: fieldSchema.placeholder }) };
+      case 'select':
+        return {
+          kind: 'text',
+          control: aiUi.select({
+            options,
+            value: initialText,
+            allowEmpty: !fieldSchema.required,
+            allowCustom: Boolean(fieldSchema.allowCustom)
+          })
+        };
+      case 'radio':
+        return { kind: 'text', control: aiUi.radioGroup({ options, value: initialText }) };
+      case 'checkbox':
+        return { kind: 'boolean', control: aiUi.checkbox({ label: fieldSchema.label, checked: initialText === 'true' }) };
+      case 'switch':
+        return { kind: 'boolean', control: aiUi.switchControl({ label: fieldSchema.label, checked: initialText === 'true' }) };
+      case 'checkboxes':
+        return { kind: 'list', control: aiUi.checkboxGroup({ options, value: parseList(initialText) }) };
+      default:
+        return { kind: 'text', control: aiUi.textInput({ value: initialText, placeholder: fieldSchema.placeholder }) };
+    }
+  }
+
+  /** 读取字段当前值，转换为提交用的文本。 */
+  function readText(entry) {
+    const value = entry.control.getValue();
+    if (entry.kind === 'boolean') return value ? 'true' : 'false';
+    if (entry.kind === 'list') return JSON.stringify(value);
+    return value;
   }
 
   /** 读取全部字段的当前值。 */
   function collectValues() {
     const values = {};
-    for (const [key, controller] of controllers) values[key] = controller.getValue();
+    for (const [key, entry] of entries) values[key] = readText(entry);
     return values;
   }
 
@@ -61,153 +97,80 @@
    * 本地校验一个字段：必填与长度。
    * @returns {string} 错误提示；无错误返回空串。
    */
-  function validateLocally(controller) {
-    const { field } = controller;
-    const text = controller.getValue().trim();
-    if (text.length === 0) return field.required ? `${field.label}不能为空。` : '';
-    if (field.maxLength !== undefined && text.length > field.maxLength) {
-      return `${field.label}不能超过 ${field.maxLength} 字（当前 ${text.length} 字）。`;
+  function validateLocally(entry) {
+    const fieldSchema = entry.schema;
+    if (entry.kind === 'boolean') return '';
+    if (entry.kind === 'list') {
+      return fieldSchema.required && entry.control.getValue().length === 0 ? `${fieldSchema.label}至少选择一项。` : '';
+    }
+    const text = entry.control.getValue().trim();
+    if (text.length === 0) {
+      if (!fieldSchema.required) return '';
+      return CHOOSE_ONE_CONTROLS.includes(fieldSchema.control) ? `${fieldSchema.label}必须选择。` : `${fieldSchema.label}不能为空。`;
+    }
+    if (fieldSchema.maxLength !== undefined && text.length > fieldSchema.maxLength) {
+      return `${fieldSchema.label}不能超过 ${fieldSchema.maxLength} 字（当前 ${text.length} 字）。`;
     }
     return '';
   }
 
-  /**
-   * 创建下拉框控件，可选带“其他（手动输入）”。
-   * @returns {{ element: HTMLElement, input: HTMLElement, getValue: () => string }}
-   */
-  function createSelectControl(field, id, initialValue, onChange) {
-    const wrapper = createElement('div');
-    const select = createElement('select', 'field-select', { id });
-    const options = field.options || [];
-    select.append(new Option(EMPTY_OPTION_LABEL, ''));
-    for (const option of options) select.append(new Option(option, option));
-    if (field.allowCustom) select.append(new Option(CUSTOM_OPTION_LABEL, CUSTOM_OPTION_VALUE));
-
-    const customInput = field.allowCustom
-      ? createElement('input', 'field-input field-custom-input', { type: 'text', 'aria-label': `${field.label}（手动输入）` })
-      : null;
-    wrapper.append(select);
-    if (customInput) {
-      customInput.hidden = true;
-      wrapper.append(customInput);
-    }
-
-    if (initialValue && options.includes(initialValue)) {
-      select.value = initialValue;
-    } else if (initialValue && customInput) {
-      select.value = CUSTOM_OPTION_VALUE;
-      customInput.value = initialValue;
-      customInput.hidden = false;
-    }
-
-    select.addEventListener('change', () => {
-      if (customInput) {
-        const isCustom = select.value === CUSTOM_OPTION_VALUE;
-        customInput.hidden = !isCustom;
-        if (isCustom) customInput.focus();
-      }
-      onChange();
+  /** 渲染一个字段并登记条目。 */
+  function renderField(fieldSchema, initialText) {
+    const { kind, control } = createControl(fieldSchema, initialText);
+    const isInlineLabel = kind === 'boolean';
+    const field = aiUi.field({
+      label: isInlineLabel ? undefined : fieldSchema.label,
+      description: fieldSchema.description,
+      required: fieldSchema.required,
+      control
     });
-    if (customInput) customInput.addEventListener('input', onChange);
+    const entry = { schema: fieldSchema, kind, control, field, uniqueError: '', uniqueCheckedValue: null };
+    entries.set(fieldSchema.key, entry);
 
-    return {
-      element: wrapper,
-      input: select,
-      getValue: () => (customInput && select.value === CUSTOM_OPTION_VALUE ? customInput.value : select.value)
-    };
-  }
-
-  /** 创建单行或多行文本控件。 */
-  function createTextControl(field, id, initialValue, onChange) {
-    const isMultiline = field.control === 'textarea';
-    const input = isMultiline
-      ? createElement('textarea', 'field-textarea', { id })
-      : createElement('input', 'field-input', { id, type: 'text' });
-    if (field.placeholder) input.setAttribute('placeholder', field.placeholder);
-    input.value = initialValue || '';
-    input.addEventListener('input', onChange);
-    return { element: input, input, getValue: () => input.value };
-  }
-
-  /** 渲染一个字段并登记控制器。 */
-  function renderField(field, initialValue) {
-    const id = `field-${field.key}`;
-    const descriptionId = `${id}-description`;
-    const errorId = `${id}-error`;
-
-    const container = createElement('div', 'form-field');
-    const label = createElement('label', 'field-label', { for: id });
-    label.textContent = field.label;
-    const description = createElement('p', 'description field-description', { id: descriptionId });
-    description.textContent = field.required ? `${REQUIRED_PREFIX}${field.description}` : field.description;
-    const error = createElement('p', 'field-error status-error', { id: errorId });
-    error.hidden = true;
-
-    const controller = { field, uniqueError: '', uniqueCheckedValue: null };
-    const onChange = () => {
-      // 内容变化后，此前的错误不再适用，等下次失去焦点或提交时重新校验。
-      controller.uniqueError = '';
-      controller.uniqueCheckedValue = null;
-      setError(controller, '');
-    };
-    const control = field.control === 'select'
-      ? createSelectControl(field, id, initialValue, onChange)
-      : createTextControl(field, id, initialValue, onChange);
-    control.input.setAttribute('aria-describedby', `${descriptionId} ${errorId}`);
-
-    controller.getValue = control.getValue;
-    controller.focus = () => control.input.focus();
-    controller.errorElement = error;
-    controller.inputElement = control.input;
-
-    container.append(label, description, control.element, error);
-    controllers.set(field.key, controller);
-
-    // 失去焦点时校验；焦点在下拉框与其自定义输入框之间移动时不算离开字段。
-    container.addEventListener('focusout', (event) => {
-      if (event.relatedTarget && container.contains(event.relatedTarget)) return;
-      void validateOnBlur(controller);
+    // 内容变化后，此前的错误不再适用，等下次失去焦点或提交时重新校验。
+    control.onChange(() => {
+      entry.uniqueError = '';
+      entry.uniqueCheckedValue = null;
+      field.setError('');
     });
-    return container;
-  }
-
-  /** 设置或清除字段错误，并同步无障碍状态。 */
-  function setError(controller, message) {
-    controller.errorElement.textContent = message;
-    controller.errorElement.hidden = message === '';
-    if (message) controller.inputElement.setAttribute('aria-invalid', 'true');
-    else controller.inputElement.removeAttribute('aria-invalid');
+    // 焦点在字段内部的控件之间移动时不算离开字段。
+    field.element.addEventListener('focusout', (event) => {
+      if (event.relatedTarget && field.element.contains(event.relatedTarget)) return;
+      void validateOnBlur(entry);
+    });
+    return field.element;
   }
 
   /** 字段失去焦点：先本地校验，再按需向宿主检查唯一性。 */
-  async function validateOnBlur(controller) {
-    const localError = validateLocally(controller);
+  async function validateOnBlur(entry) {
+    const localError = validateLocally(entry);
     if (localError) {
-      setError(controller, localError);
+      entry.field.setError(localError);
       return;
     }
-    const value = controller.getValue().trim();
-    if (!controller.field.checkUnique || value === '' || controller.uniqueCheckedValue === value) return;
+    if (!entry.schema.checkUnique || entry.kind !== 'text') return;
+    const value = entry.control.getValue().trim();
+    if (value === '' || entry.uniqueCheckedValue === value) return;
 
     try {
-      const result = await window.hostBridge.request(REQUEST_CHECK_FIELD, { key: controller.field.key, value });
+      const result = await window.hostBridge.request(REQUEST_CHECK_FIELD, { key: entry.schema.key, value });
       // 等待期间用户又改了内容时，丢弃过期结果。
-      if (controller.getValue().trim() !== value) return;
-      controller.uniqueCheckedValue = value;
-      controller.uniqueError = result && result.error ? result.error : '';
-      setError(controller, controller.uniqueError);
+      if (entry.control.getValue().trim() !== value) return;
+      entry.uniqueCheckedValue = value;
+      entry.uniqueError = result && result.error ? result.error : '';
+      entry.field.setError(entry.uniqueError);
     } catch {
       // 检查失败不阻止继续填写，提交时宿主会再次校验。
     }
   }
 
-  /** 校验全部字段，返回有错误的字段控制器。 */
+  /** 校验全部字段，返回有错误的字段条目。 */
   function validateAll() {
     const invalid = [];
-    for (const controller of controllers.values()) {
-      const message = validateLocally(controller) || controller.uniqueError;
-      setError(controller, message);
-      if (message) invalid.push(controller);
+    for (const entry of entries.values()) {
+      const message = validateLocally(entry) || entry.uniqueError;
+      entry.field.setError(message);
+      if (message) invalid.push(entry);
     }
     return invalid;
   }
@@ -222,24 +185,23 @@
   /** 切换提交中状态：禁止重复提交并更新按钮文字。 */
   function setSubmitting(value) {
     isSubmitting = value;
-    submitButton.disabled = value;
-    submitButton.textContent = value ? SUBMITTING_LABEL : schema.submitLabel;
+    submitButton.setDisabled(value);
+    submitButton.setText(value ? SUBMITTING_LABEL : schema.submitLabel);
   }
 
-  /** 应用宿主返回的错误；返回是否有字段收到了错误。 */
+  /** 应用宿主返回的错误。 */
   function applyServerError(error) {
     const fieldErrors = (error && error.fieldErrors) || {};
     let hasFieldError = false;
     for (const [key, message] of Object.entries(fieldErrors)) {
-      const controller = controllers.get(key);
-      if (controller) {
-        setError(controller, message);
+      const entry = entries.get(key);
+      if (entry) {
+        entry.field.setError(message);
         hasFieldError = true;
       }
     }
     const summary = fieldErrors[FORM_LEVEL_ERROR_KEY] || (!hasFieldError && error && error.message) || '';
     showSummary(hasFieldError && !summary ? '请修改标出的字段后重新保存。' : summary);
-    return hasFieldError;
   }
 
   async function handleSubmit(event) {
@@ -250,7 +212,7 @@
     const invalid = validateAll();
     if (invalid.length > 0) {
       showSummary(`有 ${invalid.length} 项需要修改，请检查标出的字段。`);
-      invalid[0].focus();
+      invalid[0].control.focus();
       return;
     }
 
@@ -258,16 +220,27 @@
     try {
       await window.hostBridge.request(REQUEST_SUBMIT, { values: collectValues() });
       // 提交成功后宿主会关闭面板；保持禁用避免重复提交。
-      submitButton.textContent = '已保存';
+      submitButton.setText(SAVED_LABEL);
     } catch (error) {
       setSubmitting(false);
       applyServerError(error);
     }
   }
 
+  /** 取消：有修改时先用页内对话框确认放弃，再请求宿主关闭面板。 */
   async function handleCancel() {
+    if (isDirty()) {
+      const shouldDiscard = await aiUi.confirm({
+        title: DISCARD_TITLE,
+        message: DISCARD_MESSAGE,
+        confirmText: DISCARD_CONFIRM_TEXT,
+        cancelText: DISCARD_CANCEL_TEXT,
+        variant: 'danger'
+      });
+      if (!shouldDiscard) return;
+    }
     try {
-      await window.hostBridge.request(REQUEST_CANCEL, { dirty: isDirty() });
+      await window.hostBridge.request(REQUEST_CANCEL);
     } catch (error) {
       showSummary((error && error.message) || '操作失败，请重试。');
     }
@@ -279,31 +252,25 @@
     const values = initResult.values || {};
     root.textContent = '';
 
-    const page = createElement('div', 'form-page');
-    const title = createElement('h1');
-    title.textContent = schema.title;
-    summaryElement = createElement('div', 'form-error-summary status-error', { role: 'alert', tabindex: '-1' });
-    summaryElement.hidden = true;
+    summaryElement = aiUi.h('div', {
+      class: 'form-error-summary status-error',
+      hidden: true,
+      attrs: { role: 'alert', tabindex: '-1' }
+    });
+    const cancelButton = aiUi.button({ text: CANCEL_LABEL, onClick: () => void handleCancel() });
+    submitButton = aiUi.button({ text: schema.submitLabel, variant: 'primary', type: 'submit' });
 
-    const form = createElement('form', '', { novalidate: 'novalidate' });
-    for (const field of schema.fields) form.append(renderField(field, values[field.key] || ''));
-
-    const actions = createElement('div', 'form-actions');
-    const cancelButton = createElement('button', 'button button-secondary', { type: 'button' });
-    cancelButton.textContent = CANCEL_LABEL;
-    cancelButton.addEventListener('click', () => void handleCancel());
-    submitButton = createElement('button', 'button button-primary', { type: 'submit' });
-    submitButton.textContent = schema.submitLabel;
-    actions.append(cancelButton, submitButton);
-    form.append(actions);
-    form.addEventListener('submit', (event) => void handleSubmit(event));
-
-    page.append(title, summaryElement, form);
-    root.append(page);
+    const form = aiUi.h(
+      'form',
+      { attrs: { novalidate: 'novalidate' }, on: { submit: (event) => void handleSubmit(event) } },
+      schema.fields.map((fieldSchema) => renderField(fieldSchema, values[fieldSchema.key] || '')),
+      aiUi.h('div', { class: 'form-actions' }, cancelButton.element, submitButton.element)
+    );
+    root.append(aiUi.h('div', { class: 'form-page' }, aiUi.h('h1', { text: schema.title }), summaryElement, form));
     initialSnapshot = JSON.stringify(collectValues());
 
-    const firstController = controllers.values().next().value;
-    if (firstController) firstController.focus();
+    const firstEntry = entries.values().next().value;
+    if (firstEntry) firstEntry.control.focus();
   }
 
   window.hostBridge

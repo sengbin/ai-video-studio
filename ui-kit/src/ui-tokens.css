@@ -1,0 +1,90 @@
+/*
+ * ------------------------------------------------------------------------
+ * 名称：ui-tokens.css
+ * 说明：界面组件库的设计令牌：颜色、状态色、控件与对话框的亮暗主题变量。
+ * 作者：Lion
+ * 邮箱：chengbin@3578.cn
+ * 日期：2026-09-30
+ * 备注：只定义 CSS 变量，不含元素样式，因此侧栏与编辑器区页面都可加载；颜色统一使用 rgb() 写法。
+ * ------------------------------------------------------------------------
+ */
+
+:root {
+  color-scheme: light dark;
+  --bg: var(--vscode-sideBar-background);
+  --text: var(--vscode-foreground);
+  --text-muted: var(--vscode-descriptionForeground);
+  --focus-border: var(--vscode-focusBorder, rgb(0, 120, 212));
+  --divider: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+
+  --status-success: rgb(79, 220, 138);
+  --status-warning: rgb(242, 177, 74);
+  --status-error: rgb(255, 123, 114);
+
+  /* 输入控件 */
+  --input-bg: color-mix(in srgb, var(--bg) 92%, rgb(0, 0, 0));
+  --input-border: color-mix(in srgb, var(--vscode-input-border, rgb(60, 60, 60)) 86%, rgb(0, 0, 0));
+
+  /* 选择类控件 */
+  --choice-mark-border: color-mix(in srgb, var(--text) 55%, transparent);
+  --option-hover-bg: color-mix(in srgb, var(--text) 10%, transparent);
+  --option-selected-bg: color-mix(in srgb, var(--vscode-button-background) 30%, transparent);
+  --switch-off-bg: color-mix(in srgb, var(--text) 20%, transparent);
+  --switch-off-hover-bg: color-mix(in srgb, var(--text) 28%, transparent);
+
+  /* 按钮 */
+  --button-secondary-bg: rgba(255, 255, 255, 0.08);
+  --button-secondary-hover-bg: rgba(255, 255, 255, 0.12);
+  --button-secondary-active-bg: rgba(255, 255, 255, 0.16);
+  --button-secondary-text: rgba(237, 237, 237, 0.92);
+  --button-danger-bg: rgb(161, 51, 45);
+  --button-danger-hover-bg: rgb(180, 58, 51);
+  --button-danger-active-bg: rgb(141, 40, 35);
+
+  /* 禁用态：所有控件共用，随主题文字色变化 */
+  --disabled-text: color-mix(in srgb, var(--text) 42%, transparent);
+  --disabled-bg: color-mix(in srgb, var(--text) 7%, transparent);
+  --disabled-border: color-mix(in srgb, var(--text) 14%, transparent);
+
+  /* 对话框 */
+  --dialog-bg: color-mix(in srgb, var(--vscode-editorWidget-background, var(--bg)) 90%, rgb(255, 255, 255));
+  --dialog-border: color-mix(in srgb, rgb(255, 255, 255) 16%, var(--bg));
+  --dialog-divider: color-mix(in srgb, var(--text) 18%, transparent);
+  --dialog-titlebar-bg: color-mix(in srgb, var(--text) 10%, var(--dialog-bg));
+  --dialog-shadow: 0 4px 20px color-mix(in srgb, rgb(0, 0, 0) 30%, transparent);
+  --dialog-overlay: rgba(0, 0, 0, 0.45);
+  --dialog-close-color: rgb(255, 123, 114);
+  --dialog-close-hover-color: rgb(255, 255, 255);
+  --dialog-close-hover-bg: rgb(196, 43, 28);
+  --dialog-close-active-bg: rgb(160, 33, 22);
+  --danger-notice-bg: rgb(92, 28, 24);
+  --danger-notice-border: rgb(196, 43, 28);
+  --danger-notice-text: rgb(255, 226, 223);
+}
+
+body.vscode-light {
+  --status-success: rgb(31, 122, 63);
+  --status-warning: rgb(169, 106, 16);
+  --status-error: rgb(180, 35, 24);
+
+  --input-bg: color-mix(in srgb, var(--vscode-input-background) 93%, rgb(217, 217, 217));
+  --input-border: color-mix(in srgb, var(--vscode-input-border, rgb(200, 200, 200)) 55%, rgb(255, 255, 255));
+
+  --choice-mark-border: color-mix(in srgb, var(--text) 60%, transparent);
+
+  --button-secondary-bg: rgba(90, 90, 90, 0.14);
+  --button-secondary-hover-bg: rgba(90, 90, 90, 0.2);
+  --button-secondary-active-bg: rgba(90, 90, 90, 0.26);
+  --button-secondary-text: rgb(47, 47, 47);
+  --button-danger-bg: rgb(169, 48, 41);
+  --button-danger-hover-bg: rgb(151, 43, 37);
+  --button-danger-active-bg: rgb(132, 37, 31);
+
+  --dialog-bg: color-mix(in srgb, var(--bg) 40%, rgb(255, 255, 255));
+  --dialog-border: color-mix(in srgb, rgb(0, 0, 0) 22%, rgb(255, 255, 255));
+  --dialog-titlebar-bg: color-mix(in srgb, rgb(0, 0, 0) 6%, var(--dialog-bg));
+  --dialog-close-color: rgb(180, 35, 24);
+  --danger-notice-bg: rgb(253, 232, 230);
+  --danger-notice-border: rgb(196, 43, 28);
+  --danger-notice-text: rgb(120, 20, 14);
+}

@@ -9,16 +9,15 @@
 
 import * as vscode from 'vscode';
 import { MessageRouter } from '../app/messaging/message-router';
+import { SIDEBAR_PAGE_RESOURCES } from '../app/panels/page-resources';
 import { createSidebarHtml } from './sidebar-html';
 import { SIDEBAR_SECTIONS } from './sidebar-menu-config';
 
 /** 侧栏视图标识，需与 package.json 中 views 的 id 一致。 */
 export const SIDEBAR_VIEW_ID = 'aiVideoStudio.sidebar';
 
-/** 侧栏页面的静态资源目录（相对扩展根目录）。 */
-const SIDEBAR_RESOURCE_PATH = ['resources', 'sidebar'] as const;
-const SIDEBAR_STYLE_FILE = 'sidebar.css';
-const SIDEBAR_SCRIPT_FILE = 'sidebar.js';
+/** 页面静态资源根目录（相对扩展根目录）。 */
+const RESOURCE_ROOT_PATH = 'resources';
 
 /** 提供侧栏 Webview 视图。 */
 export class SidebarViewProvider implements vscode.WebviewViewProvider {
@@ -36,15 +35,27 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
    * @param view VS Code 创建的 Webview 视图。
    */
   resolveWebviewView(view: vscode.WebviewView): void {
-    const resourceRoot = vscode.Uri.joinPath(this.extensionUri, ...SIDEBAR_RESOURCE_PATH);
+    const resourceRoot = vscode.Uri.joinPath(this.extensionUri, RESOURCE_ROOT_PATH);
     const webview = view.webview;
+    const toWebviewUri = (relativePath: string): string =>
+      webview.asWebviewUri(vscode.Uri.joinPath(resourceRoot, ...relativePath.split('/'))).toString();
     webview.options = { enableScripts: true, localResourceRoots: [resourceRoot] };
     webview.html = createSidebarHtml({
       cspSource: webview.cspSource,
-      styleUri: webview.asWebviewUri(vscode.Uri.joinPath(resourceRoot, SIDEBAR_STYLE_FILE)).toString(),
-      scriptUri: webview.asWebviewUri(vscode.Uri.joinPath(resourceRoot, SIDEBAR_SCRIPT_FILE)).toString(),
+      styleUris: SIDEBAR_PAGE_RESOURCES.styles.map(toWebviewUri),
+      scriptUris: SIDEBAR_PAGE_RESOURCES.scripts.map(toWebviewUri),
       sections: SIDEBAR_SECTIONS
     });
-    webview.onDidReceiveMessage((message: unknown) => this.router.handle(message));
+    webview.onDidReceiveMessage(async (message: unknown) => {
+      const response = await this.router.handle(message);
+      if (response === undefined) {
+        return;
+      }
+      try {
+        await webview.postMessage(response);
+      } catch {
+        // 回复时视图已销毁，无需处理。
+      }
+    });
   }
 }

@@ -1,26 +1,20 @@
 // ------------------------------------------------------------------------
 // 名称：form-panel.ts
-// 说明：表单面板：为一个表单定义打开独立面板，并接入关闭与放弃确认。
+// 说明：表单面板：为一个表单定义打开独立面板，接入提交与取消后的关闭。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-09-30
-// 备注：表单页面由 resources/form 下的表单引擎渲染；面板标签页被直接关闭时无法拦截确认。
+// 备注：页面由 resources/form 下的表单引擎渲染；未保存修改的确认在页面内完成，直接关闭标签页时无法拦截。
 // ------------------------------------------------------------------------
 
-import * as vscode from 'vscode';
 import { MessageRouter } from '../messaging/message-router';
 import { OpenedPanel, PanelManager } from '../panels/panel-manager';
+import { FORM_PAGE_RESOURCES } from '../panels/page-resources';
 import { FormDefinition } from './form-definition';
 import { registerFormHandlers } from './form-handlers';
 
 /** 表单面板的视图类型。 */
 const FORM_PANEL_VIEW_TYPE = 'aiVideoStudio.form';
-/** 表单页面使用的样式与脚本，路径相对 resources 目录。 */
-const FORM_PAGE_STYLES = ['shared/theme.css', 'shared/controls.css', 'form/form.css'] as const;
-const FORM_PAGE_SCRIPTS = ['shared/host-bridge.js', 'form/form-runtime.js'] as const;
-
-const DISCARD_PROMPT = '放弃未保存的修改？';
-const DISCARD_ACTION = '放弃修改';
 
 /** 打开表单面板的入口。 */
 export class FormPanelOpener {
@@ -44,7 +38,6 @@ export class FormPanelOpener {
         onSubmitted?.();
         opened?.close();
       },
-      confirmDiscard: async () => (await vscode.window.showWarningMessage(DISCARD_PROMPT, { modal: true }, DISCARD_ACTION)) === DISCARD_ACTION,
       onCancelled: () => opened?.close()
     });
 
@@ -52,8 +45,8 @@ export class FormPanelOpener {
       key,
       viewType: FORM_PANEL_VIEW_TYPE,
       title: definition.schema.title,
-      styles: FORM_PAGE_STYLES,
-      scripts: FORM_PAGE_SCRIPTS,
+      styles: FORM_PAGE_RESOURCES.styles,
+      scripts: FORM_PAGE_RESOURCES.scripts,
       router
     });
   }

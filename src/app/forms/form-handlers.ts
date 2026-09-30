@@ -4,7 +4,7 @@
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-09-30
-// 备注：不依赖 VS Code；关闭面板、确认放弃等行为通过 hooks 注入。
+// 备注：不依赖 VS Code；关闭面板等行为通过 hooks 注入。未保存修改的确认由页面内对话框完成，宿主只负责关闭。
 // ------------------------------------------------------------------------
 
 import { FORM_LEVEL_ERROR_KEY, ValidationError } from '../../domain/errors';
@@ -24,9 +24,7 @@ export const FORM_REQUESTS = {
 export interface FormHandlerHooks {
   /** 提交成功后调用，通常用于关闭面板并刷新来源页。 */
   onSubmitted(): void;
-  /** 有未保存修改时确认是否放弃；返回 true 表示放弃。 */
-  confirmDiscard(): Promise<boolean>;
-  /** 用户取消并确认放弃后调用，通常用于关闭面板。 */
+  /** 用户取消（页面已完成放弃确认）后调用，通常用于关闭面板。 */
   onCancelled(): void;
 }
 
@@ -53,13 +51,9 @@ export function registerFormHandlers(router: MessageRouter, definition: FormDefi
     return {};
   });
 
-  router.register(FORM_REQUESTS.cancel, async (payload) => {
-    const isDirty = readRecord(payload).dirty === true;
-    if (isDirty && !(await hooks.confirmDiscard())) {
-      return { closed: false };
-    }
+  router.register(FORM_REQUESTS.cancel, () => {
     hooks.onCancelled();
-    return { closed: true };
+    return {};
   });
 }
 

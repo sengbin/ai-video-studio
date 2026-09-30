@@ -23,7 +23,6 @@ import { SIDEBAR_VIEW_ID, SidebarViewProvider } from './sidebar/sidebar-view-pro
 
 /** 数据库文件名，位于扩展的全局存储目录。 */
 const DATABASE_FILE_NAME = 'ai-video-studio.sqlite';
-const UNAVAILABLE_MESSAGE = '该功能尚未开放。';
 
 /**
  * 激活扩展：打开数据库并升级结构，装配服务与页面，注册侧栏视图。
@@ -44,9 +43,7 @@ export function activate(context: vscode.ExtensionContext): void {
     .register('project-list', 'main', () => projectPages.showProjectList())
     .register('project-list', 'action', () => projectPages.showCreateForm());
   const sidebarRouter = new MessageRouter();
-  registerSidebarHandlers(sidebarRouter, actionRegistry, () => {
-    void vscode.window.showInformationMessage(UNAVAILABLE_MESSAGE);
-  });
+  registerSidebarHandlers(sidebarRouter, actionRegistry);
 
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(

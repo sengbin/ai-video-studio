@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：project-list.js
-// 说明：项目列表页脚本：加载并渲染项目表格，处理搜索、创建、编辑与删除。
+// 说明：项目列表页脚本：用界面组件库渲染项目表格，处理搜索、创建、编辑与带名称确认的删除。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-09-30
@@ -13,12 +13,14 @@
   const REQUEST_LIST = 'projects.list';
   const REQUEST_CREATE = 'projects.create';
   const REQUEST_EDIT = 'projects.edit';
+  const REQUEST_PREPARE_DELETE = 'projects.prepareDelete';
   const REQUEST_DELETE = 'projects.delete';
   const EVENT_CHANGED = 'projects.changed';
 
   const PAGE_TITLE = '全部项目';
   const UNSET_TEXT = '未设置';
   const JUST_NOW_TEXT = '刚刚';
+  const GENERIC_ERROR_TEXT = '操作失败，请重试。';
   const RELATIVE_TIME_LIMIT_DAYS = 30;
   const MINUTE_MS = 60 * 1000;
   const HOUR_MS = 60 * MINUTE_MS;
@@ -31,28 +33,6 @@
   let filterText = '';
   let contentElement = null;
   let messageElement = null;
-
-  /**
-   * 创建元素。
-   * @param {string} tag 标签名。
-   * @param {string} [className] 类名。
-   * @param {string} [text] 文本内容。
-   */
-  function createElement(tag, className, text) {
-    const element = document.createElement(tag);
-    if (className) element.className = className;
-    if (text !== undefined) element.textContent = text;
-    return element;
-  }
-
-  /** 创建按钮。 */
-  function createButton(label, className, onClick, ariaLabel) {
-    const button = createElement('button', className, label);
-    button.type = 'button';
-    if (ariaLabel) button.setAttribute('aria-label', ariaLabel);
-    button.addEventListener('click', onClick);
-    return button;
-  }
 
   /** 相对时间：一分钟内“刚刚”，30 天内用相对表述，更早显示日期。 */
   function formatRelativeTime(isoText) {
@@ -68,17 +48,17 @@
   /** 在操作结果区显示文字；空串表示清除。 */
   function showMessage(text, isError) {
     messageElement.textContent = text;
-    messageElement.className = isError ? 'list-message status-error' : 'list-message';
+    messageElement.className = isError ? 'list-message status-error' : 'list-message status-success';
     messageElement.hidden = text === '';
   }
 
-  /** 发起请求，失败时在操作结果区显示原因。 */
+  /** 发起请求，失败时在操作结果区显示原因；成功返回响应数据，失败返回 undefined。 */
   async function runAction(name, payload) {
     showMessage('', false);
     try {
       return await window.hostBridge.request(name, payload);
     } catch (error) {
-      showMessage((error && error.message) || '操作失败，请重试。', true);
+      showMessage((error && error.message) || GENERIC_ERROR_TEXT, true);
       return undefined;
     }
   }
@@ -97,39 +77,61 @@
     renderContent();
   }
 
+  /** 删除项目：先取影响范围，再用页内删除对话框要求输入项目名称，最后请求删除。 */
+  async function deleteProject(project) {
+    const impact = await runAction(REQUEST_PREPARE_DELETE, { id: project.id });
+    if (!impact) return;
+
+    const confirmed = await aiUi.confirmDelete({
+      title: '删除项目',
+      message: `将删除项目“${impact.name}”及其下的全部内容，且无法恢复：`,
+      details: [`${impact.workCount} 个作品`, `${impact.assetCount} 个资产`, `${impact.videoResultCount} 个视频结果`],
+      confirmName: impact.name,
+      nameLabel: '项目名称'
+    });
+    if (!confirmed) return;
+
+    const result = await runAction(REQUEST_DELETE, { id: project.id, confirmName: impact.name });
+    if (result) showMessage(`已删除项目“${result.name}”。`, false);
+  }
+
   /** 表格中的一行。 */
   function renderRow(project) {
-    const row = document.createElement('tr');
-    const nameCell = document.createElement('td');
-    nameCell.append(createElement('span', 'project-name', project.name));
-    if (project.description) {
-      nameCell.append(createElement('div', 'description', project.description));
-    }
+    const editButton = aiUi.button({
+      kind: 'edit',
+      compact: true,
+      ariaLabel: `修改：${project.name}`,
+      onClick: () => void runAction(REQUEST_EDIT, { id: project.id })
+    });
+    const deleteButton = aiUi.button({
+      kind: 'delete',
+      compact: true,
+      ariaLabel: `删除：${project.name}`,
+      onClick: () => void deleteProject(project)
+    });
 
-    const styleCell = createElement('td', '', project.visualStyle || UNSET_TEXT);
-    const workCell = createElement('td', 'column-number', String(project.workCount));
-    const assetCell = createElement('td', 'column-number', String(project.assetCount));
-    const timeCell = createElement('td', '', formatRelativeTime(project.updatedAt));
-    timeCell.title = new Date(project.updatedAt).toLocaleString('zh-CN');
-
-    const actionsCell = createElement('td', 'column-actions');
-    actionsCell.append(
-      createButton('编辑', 'button button-compact', () => void runAction(REQUEST_EDIT, { id: project.id }), `编辑：${project.name}`),
-      createButton('删除', 'button button-compact button-danger', () => void runAction(REQUEST_DELETE, { id: project.id }), `删除：${project.name}`)
+    return aiUi.h(
+      'tr',
+      {},
+      aiUi.h(
+        'td',
+        {},
+        aiUi.h('span', { class: 'project-name', text: project.name }),
+        project.description ? aiUi.h('div', { class: 'description', text: project.description }) : null
+      ),
+      aiUi.h('td', { text: project.visualStyle || UNSET_TEXT }),
+      aiUi.h('td', { class: 'column-number', text: String(project.workCount) }),
+      aiUi.h('td', { class: 'column-number', text: String(project.assetCount) }),
+      aiUi.h('td', {
+        text: formatRelativeTime(project.updatedAt),
+        attrs: { title: new Date(project.updatedAt).toLocaleString('zh-CN') }
+      }),
+      aiUi.h('td', { class: 'column-actions' }, editButton.element, deleteButton.element)
     );
-
-    row.append(nameCell, styleCell, workCell, assetCell, timeCell, actionsCell);
-    return row;
   }
 
   /** 项目表格。 */
   function renderTable(visibleProjects) {
-    const container = createElement('div', 'table-container');
-    const table = createElement('table', 'project-table');
-    table.setAttribute('aria-label', PAGE_TITLE);
-
-    const head = document.createElement('thead');
-    const headRow = document.createElement('tr');
     const headings = [
       ['项目名称', ''],
       ['视觉风格', ''],
@@ -138,26 +140,26 @@
       ['更新时间', ''],
       ['操作', 'column-actions']
     ];
-    for (const [text, className] of headings) {
-      const cell = createElement('th', className, text);
-      cell.scope = 'col';
-      headRow.append(cell);
-    }
-    head.append(headRow);
-
-    const body = document.createElement('tbody');
-    for (const project of visibleProjects) body.append(renderRow(project));
-    table.append(head, body);
-    container.append(table);
-    return container;
+    const headRow = aiUi.h(
+      'tr',
+      {},
+      headings.map(([text, className]) => aiUi.h('th', { class: className, text, attrs: { scope: 'col' } }))
+    );
+    return aiUi.h(
+      'div',
+      { class: 'table-container' },
+      aiUi.h(
+        'table',
+        { class: 'project-table', attrs: { 'aria-label': PAGE_TITLE } },
+        aiUi.h('thead', {}, headRow),
+        aiUi.h('tbody', {}, visibleProjects.map(renderRow))
+      )
+    );
   }
 
   /** 空状态、加载中和错误状态。 */
   function renderState(text, button) {
-    const state = createElement('div', 'list-state');
-    state.append(createElement('p', 'description', text));
-    if (button) state.append(button);
-    return state;
+    return aiUi.h('div', { class: 'list-state' }, aiUi.h('p', { class: 'description', text }), button && button.element);
   }
 
   /** 按当前状态刷新内容区。 */
@@ -168,44 +170,38 @@
       return;
     }
     if (loadError) {
-      contentElement.append(renderState(loadError, createButton('重试', 'button', () => void loadProjects())));
+      contentElement.append(renderState(loadError, aiUi.button({ text: '重试', onClick: () => void loadProjects() })));
       return;
     }
     if (projects.length === 0) {
-      contentElement.append(renderState('还没有项目。', createButton('创建项目', 'button button-primary', () => void runAction(REQUEST_CREATE))));
+      contentElement.append(
+        renderState('还没有项目。', aiUi.button({ text: '创建项目', kind: 'add', onClick: () => void runAction(REQUEST_CREATE) }))
+      );
       return;
     }
 
     const keyword = filterText.trim().toLowerCase();
     const visibleProjects = projects.filter((project) => project.name.toLowerCase().includes(keyword));
-    if (visibleProjects.length === 0) {
-      contentElement.append(renderState('没有匹配的项目。'));
-      return;
-    }
-    contentElement.append(renderTable(visibleProjects));
+    contentElement.append(visibleProjects.length === 0 ? renderState('没有匹配的项目。') : renderTable(visibleProjects));
   }
 
   /** 渲染页面骨架。 */
   function renderPage() {
-    const title = createElement('h1', '', PAGE_TITLE);
-
-    const toolbar = createElement('div', 'list-toolbar');
-    const search = createElement('input', 'field-input');
-    search.type = 'search';
-    search.placeholder = '搜索项目名称';
-    search.setAttribute('aria-label', '搜索项目名称');
-    search.addEventListener('input', () => {
-      filterText = search.value;
-      renderContent();
+    const search = aiUi.textInput({
+      type: 'search',
+      placeholder: '搜索项目名称',
+      ariaLabel: '搜索项目名称',
+      onChange: (value) => {
+        filterText = value;
+        renderContent();
+      }
     });
-    toolbar.append(search, createButton('创建项目', 'button button-primary', () => void runAction(REQUEST_CREATE)));
+    const createButton = aiUi.button({ text: '创建项目', kind: 'add', onClick: () => void runAction(REQUEST_CREATE) });
+    const toolbar = aiUi.h('div', { class: 'list-toolbar' }, aiUi.h('div', { class: 'list-search' }, search.element), createButton.element);
 
-    messageElement = createElement('p', 'list-message');
-    messageElement.setAttribute('role', 'status');
-    messageElement.hidden = true;
-    contentElement = createElement('div');
-
-    root.append(title, toolbar, messageElement, contentElement);
+    messageElement = aiUi.h('p', { class: 'list-message', hidden: true, attrs: { role: 'status' } });
+    contentElement = aiUi.h('div');
+    root.append(aiUi.h('h1', { text: PAGE_TITLE }), toolbar, messageElement, contentElement);
   }
 
   renderPage();

@@ -26,9 +26,8 @@ body.vscode-light {
   margin: 0 0 8px;
 }
 
-.list-toolbar .field-input {
+.list-toolbar .list-search {
   flex: 1 1 200px;
-  width: auto;
   max-width: 320px;
 }
 
@@ -70,7 +69,7 @@ body.vscode-light {
   white-space: nowrap;
 }
 
-.project-table .column-actions .button + .button {
+.project-table .column-actions .ui-button + .ui-button {
   margin-left: 6px;
 }
 
@@ -86,7 +85,7 @@ body.vscode-light {
   padding: 16px 0;
 }
 
-.list-state .button {
+.list-state .ui-button {
   margin-top: 8px;
 }
 

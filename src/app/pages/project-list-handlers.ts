@@ -1,10 +1,10 @@
 // ------------------------------------------------------------------------
 // 名称：project-list-handlers.ts
-// 说明：项目列表页的请求处理：读取列表、创建、编辑、删除。
+// 说明：项目列表页的请求处理：读取列表、创建、编辑、删除（先取影响范围，再校验确认名称后删除）。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-09-30
-// 备注：不依赖 VS Code；打开表单和删除确认通过 actions 注入。
+// 备注：不依赖 VS Code；打开表单通过 actions 注入，删除确认在页面内对话框完成，宿主仅校验确认名称。
 // ------------------------------------------------------------------------
 
 import { FORM_LEVEL_ERROR_KEY, ValidationError } from '../../domain/errors';
@@ -18,6 +18,7 @@ export const PROJECT_LIST_REQUESTS = {
   list: 'projects.list',
   create: 'projects.create',
   edit: 'projects.edit',
+  prepareDelete: 'projects.prepareDelete',
   delete: 'projects.delete'
 } as const;
 
@@ -26,14 +27,15 @@ export const PROJECT_LIST_EVENTS = {
   changed: 'projects.changed'
 } as const;
 
+/** 删除确认名称不一致时的提示。 */
+const CONFIRM_NAME_MISMATCH_MESSAGE = '输入的名称与项目名称不一致。';
+
 /** 项目列表页需要外部完成的界面动作。 */
 export interface ProjectListActions {
   /** 打开“新建项目”表单。 */
   openCreateForm(): void;
   /** 打开“编辑项目”表单。 */
   openEditForm(project: Project): void;
-  /** 确认并删除项目；返回是否已删除。 */
-  confirmAndDelete(project: Project): Promise<boolean>;
 }
 
 /**
@@ -59,9 +61,18 @@ export function registerProjectListHandlers(
     return {};
   });
 
-  router.register(PROJECT_LIST_REQUESTS.delete, async (payload) => {
+  router.register(PROJECT_LIST_REQUESTS.prepareDelete, (payload) => {
     const project = service.getProject(readProjectId(payload));
-    return { deleted: await actions.confirmAndDelete(project) };
+    return { name: project.name, ...service.getDeletionImpact(project.id) };
+  });
+
+  router.register(PROJECT_LIST_REQUESTS.delete, (payload) => {
+    const project = service.getProject(readProjectId(payload));
+    if (readRecord(payload).confirmName !== project.name) {
+      throw new ValidationError({ confirmName: CONFIRM_NAME_MISMATCH_MESSAGE });
+    }
+    service.deleteProject(project.id);
+    return { deleted: true, name: project.name };
   });
 }
 

@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：form-handlers.test.ts
-// 说明：表单请求处理的自动化测试：初始化、字段检查、提交、取消与放弃确认。
+// 说明：表单请求处理的自动化测试：初始化、字段检查、提交与取消。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-09-30
@@ -15,8 +15,8 @@ import { FormDefinition, FormValues } from './form-definition';
 import { FORM_REQUESTS, FormHandlerHooks, registerFormHandlers } from './form-handlers';
 
 /** 记录钩子被调用情况的测试夹具。 */
-function createFixture(options: { discardConfirmed?: boolean; submit?: (values: FormValues) => void } = {}) {
-  const calls = { submitted: 0, cancelled: 0, confirmAsked: 0, submittedValues: [] as FormValues[] };
+function createFixture(options: { submit?: (values: FormValues) => void } = {}) {
+  const calls = { submitted: 0, cancelled: 0, submittedValues: [] as FormValues[] };
   const definition: FormDefinition = {
     schema: {
       title: '新建项目',
@@ -30,10 +30,6 @@ function createFixture(options: { discardConfirmed?: boolean; submit?: (values: 
   const hooks: FormHandlerHooks = {
     onSubmitted: () => {
       calls.submitted += 1;
-    },
-    confirmDiscard: async () => {
-      calls.confirmAsked += 1;
-      return options.discardConfirmed ?? false;
     },
     onCancelled: () => {
       calls.cancelled += 1;
@@ -96,25 +92,10 @@ test('提交拒绝非文本的字段值和缺失的 values', async () => {
   assert.equal(calls.submitted, 0);
 });
 
-test('取消：没有修改时直接关闭，不询问', async () => {
+test('取消：触发已取消钩子（未保存修改的确认由页面完成）', async () => {
   const { send, calls } = createFixture();
-  const response = await send(FORM_REQUESTS.cancel, { dirty: false });
-  assert.deepEqual(response?.ok && response.data, { closed: true });
-  assert.equal(calls.confirmAsked, 0);
+  const response = await send(FORM_REQUESTS.cancel);
+  assert.ok(response?.ok);
   assert.equal(calls.cancelled, 1);
-});
-
-test('取消：有修改且用户确认放弃时关闭', async () => {
-  const { send, calls } = createFixture({ discardConfirmed: true });
-  const response = await send(FORM_REQUESTS.cancel, { dirty: true });
-  assert.deepEqual(response?.ok && response.data, { closed: true });
-  assert.equal(calls.confirmAsked, 1);
-  assert.equal(calls.cancelled, 1);
-});
-
-test('取消：有修改但用户不放弃时保持打开', async () => {
-  const { send, calls } = createFixture({ discardConfirmed: false });
-  const response = await send(FORM_REQUESTS.cancel, { dirty: true });
-  assert.deepEqual(response?.ok && response.data, { closed: false });
-  assert.equal(calls.cancelled, 0);
+  assert.equal(calls.submitted, 0);
 });

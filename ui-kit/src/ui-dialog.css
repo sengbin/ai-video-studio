@@ -1,0 +1,227 @@
+/*
+ * ------------------------------------------------------------------------
+ * 名称：ui-dialog.css
+ * 说明：界面组件库的对话框样式：Windows 风格标题栏、模态遮罩、消息、删除确认提示和可调整大小的弹出页面。
+ * 作者：Lion
+ * 邮箱：chengbin@3578.cn
+ * 日期：2026-09-30
+ * 备注：所有选择器以 ui- 开头；依赖 ui-tokens.css；颜色统一使用 rgb() 写法。
+ * ------------------------------------------------------------------------
+ */
+
+:root {
+  --dialog-titlebar-height: 32px;
+  --dialog-resize-grip: 14px;
+  --dialog-resize-edge: 6px;
+}
+
+/* 层容器：铺满视口但不拦截指针，子元素各自恢复 */
+.ui-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  pointer-events: none;
+}
+
+.ui-overlay {
+  position: absolute;
+  inset: 0;
+  background: var(--dialog-overlay);
+  pointer-events: auto;
+}
+
+.ui-dialog {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
+  overflow: hidden;
+  color: var(--text);
+  font-family: var(--vscode-font-family);
+  font-size: 12px;
+  line-height: 1.45;
+  background: var(--dialog-bg);
+  border: 1px solid var(--dialog-border);
+  border-radius: 6px;
+  box-shadow: var(--dialog-shadow);
+  pointer-events: auto;
+}
+
+.ui-dialog:focus {
+  outline: none;
+}
+
+/* 标题行：背景色随主题，下方一条分割线，最右是关闭按钮 */
+.ui-dialog__titlebar {
+  display: flex;
+  flex: none;
+  align-items: stretch;
+  height: var(--dialog-titlebar-height);
+  background: var(--dialog-titlebar-bg);
+  border-bottom: 1px solid var(--dialog-divider);
+  touch-action: none;
+  user-select: none;
+}
+
+/* 拖动中不选中文字 */
+.ui-dialog--dragging {
+  user-select: none;
+}
+
+.ui-dialog__title {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  min-width: 0;
+  padding: 0 12px;
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ui-dialog__close {
+  position: relative;
+  flex: none;
+  width: 46px;
+  min-height: 0;
+  padding: 0;
+  color: var(--dialog-close-color);
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  cursor: pointer;
+}
+
+.ui-dialog__close:hover {
+  color: var(--dialog-close-hover-color);
+  background: var(--dialog-close-hover-bg);
+}
+
+.ui-dialog__close:active {
+  color: var(--dialog-close-hover-color);
+  background: var(--dialog-close-active-bg);
+}
+
+.ui-dialog__close:focus-visible {
+  outline: 1px solid var(--focus-border);
+  outline-offset: -2px;
+}
+
+.ui-dialog__close-icon::before,
+.ui-dialog__close-icon::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 12px;
+  height: 1.5px;
+  background: currentColor;
+  transform: translate(-50%, -50%) rotate(45deg);
+}
+
+.ui-dialog__close-icon::after {
+  transform: translate(-50%, -50%) rotate(-45deg);
+}
+
+.ui-dialog__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 16px;
+  overflow: auto;
+}
+
+.ui-dialog--page .ui-dialog__body {
+  padding: 12px 16px;
+}
+
+.ui-dialog__footer {
+  display: flex;
+  flex: none;
+  gap: 6px;
+  justify-content: flex-end;
+  padding: 0 16px 16px;
+}
+
+.ui-dialog__footer .ui-button {
+  min-width: 72px;
+}
+
+/* 调整大小：右边、下边和右下角三个把手，标题行和角落处让出空间避免抢占关闭按钮 */
+.ui-dialog__resize {
+  position: absolute;
+  z-index: 1;
+}
+
+.ui-dialog__resize--e {
+  top: var(--dialog-titlebar-height);
+  right: 0;
+  bottom: var(--dialog-resize-grip);
+  width: var(--dialog-resize-edge);
+  cursor: ew-resize;
+}
+
+.ui-dialog__resize--s {
+  right: var(--dialog-resize-grip);
+  bottom: 0;
+  left: 0;
+  height: var(--dialog-resize-edge);
+  cursor: ns-resize;
+}
+
+.ui-dialog__resize--se {
+  right: 0;
+  bottom: 0;
+  z-index: 2;
+  width: var(--dialog-resize-grip);
+  height: var(--dialog-resize-grip);
+  cursor: nwse-resize;
+  background: linear-gradient(
+    135deg,
+    transparent 0 55%,
+    var(--choice-mark-border) 55% 62%,
+    transparent 62% 76%,
+    var(--choice-mark-border) 76% 83%,
+    transparent 83%
+  );
+}
+
+/* 消息内容 */
+.ui-message p {
+  margin: 0 0 8px;
+}
+
+.ui-message p:last-child {
+  margin-bottom: 0;
+}
+
+.ui-message__details {
+  margin: 0 0 8px;
+  padding-left: 20px;
+}
+
+/* 删除确认提示：红色背景，醒目地要求输入名称 */
+.ui-danger-notice {
+  margin: 12px 0 8px;
+  padding: 8px 10px;
+  color: var(--danger-notice-text);
+  background: var(--danger-notice-bg);
+  border: 1px solid var(--danger-notice-border);
+  border-radius: 4px;
+}
+
+.ui-danger-notice p {
+  margin: 0;
+}
+
+.ui-danger-notice__name {
+  padding: 0 4px;
+  font-weight: 700;
+  background: color-mix(in srgb, var(--danger-notice-text) 18%, transparent);
+  border-radius: 3px;
+  user-select: all;
+}

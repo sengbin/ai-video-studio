@@ -14,15 +14,14 @@ import { SidebarActionRegistry } from './sidebar-actions';
 import { SIDEBAR_REQUESTS, registerSidebarHandlers } from './sidebar-handlers';
 import { SIDEBAR_SECTIONS } from './sidebar-menu-config';
 
-/** 创建路由器、注册表和记录“尚未开放”调用的夹具。 */
+/** 创建路由器和注册表的夹具。 */
 function createFixture() {
   const registry = new SidebarActionRegistry(SIDEBAR_SECTIONS);
-  const unavailable: string[] = [];
   const router = new MessageRouter();
-  registerSidebarHandlers(router, registry, (itemId) => unavailable.push(itemId));
+  registerSidebarHandlers(router, registry);
   const click = (payload: unknown) =>
     router.handle({ type: 'request', requestId: 1, name: SIDEBAR_REQUESTS.open, payload });
-  return { registry, unavailable, click };
+  return { registry, click };
 }
 
 test('菜单配置：分区与菜单行 id 全局唯一，尾部操作和标签非空', () => {
@@ -40,7 +39,7 @@ test('菜单配置：分区与菜单行 id 全局唯一，尾部操作和标签�
 });
 
 test('已注册的动作被执行，点击位置互不影响', async () => {
-  const { registry, click, unavailable } = createFixture();
+  const { registry, click } = createFixture();
   const calls: string[] = [];
   registry
     .register('project-list', 'main', () => calls.push('list'))
@@ -52,14 +51,12 @@ test('已注册的动作被执行，点击位置互不影响', async () => {
   assert.deepEqual(main?.ok && main.data, { handled: true });
   assert.deepEqual(action?.ok && action.data, { handled: true });
   assert.deepEqual(calls, ['list', 'create']);
-  assert.deepEqual(unavailable, []);
 });
 
-test('未注册的入口触发“尚未开放”回调', async () => {
-  const { click, unavailable } = createFixture();
+test('未注册的入口返回 handled 为 false，由页面提示', async () => {
+  const { click } = createFixture();
   const response = await click({ itemId: 'video-workbench', target: 'main' });
   assert.deepEqual(response?.ok && response.data, { handled: false });
-  assert.deepEqual(unavailable, ['video-workbench']);
 });
 
 test('点击参数不合法时返回校验错误', async () => {

@@ -53,9 +53,11 @@
     "publish": "vsce publish"
   },
   "devDependencies": {
+    "@types/jsdom": "^30.0.0",
     "@types/node": "^22.15.30",
     "@types/vscode": "^1.108.0",
     "@vscode/vsce": "^4.0.0",
+    "jsdom": "^29.1.1",
     "typescript": "^7.0.2"
   }
 }

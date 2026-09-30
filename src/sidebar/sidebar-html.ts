@@ -4,7 +4,7 @@
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-09-30
-// 备注：样式与脚本位于 resources/sidebar，由外部文件引用。
+// 备注：样式与脚本位于 resources 目录，由外部文件引用；清单见 app/panels/page-resources.ts。
 // ------------------------------------------------------------------------
 
 import { createNonce, escapeHtml } from '../app/panels/html-utils';
@@ -14,8 +14,10 @@ import { SidebarMenuItem, SidebarMenuSection } from './sidebar-menu-config';
 export interface SidebarHtmlOptions {
   /** Webview 的 CSP 来源，用于放行外部样式文件。 */
   readonly cspSource: string;
-  readonly styleUri: string;
-  readonly scriptUri: string;
+  /** 样式文件的 Webview 地址，按顺序引用。 */
+  readonly styleUris: readonly string[];
+  /** 脚本文件的 Webview 地址，按顺序执行。 */
+  readonly scriptUris: readonly string[];
   readonly sections: readonly SidebarMenuSection[];
 }
 
@@ -27,19 +29,23 @@ export interface SidebarHtmlOptions {
 export function createSidebarHtml(options: SidebarHtmlOptions): string {
   const nonce = createNonce();
   const sectionsHtml = options.sections.map(renderSection).join('\n');
+  const styleTags = options.styleUris.map((uri) => `  <link rel="stylesheet" href="${escapeHtml(uri)}">`).join('\n');
+  const scriptTags = options.scriptUris
+    .map((uri) => `  <script nonce="${nonce}" src="${escapeHtml(uri)}"></script>`)
+    .join('\n');
   return `<!doctype html>
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${options.cspSource}; script-src 'nonce-${nonce}';">
-  <link rel="stylesheet" href="${escapeHtml(options.styleUri)}">
+${styleTags}
 </head>
 <body>
   <main>
 ${sectionsHtml}
   </main>
-  <script nonce="${nonce}" src="${escapeHtml(options.scriptUri)}"></script>
+${scriptTags}
 </body>
 </html>`;
 }
