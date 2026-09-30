@@ -30,6 +30,7 @@ test('每个脚本只依赖排在它前面的脚本（按 aiUi.xxx 的使用检�
     'ui-input-controls.js': ['textInput', 'textArea'],
     'ui-select.js': ['select'],
     'ui-choice-controls.js': ['radioGroup', 'checkbox', 'checkboxGroup', 'switchControl'],
+    'ui-file-picker.js': ['filePicker'],
     'ui-field.js': ['field'],
     'ui-table.js': ['table', 'tableMainCell', 'chip'],
     'ui-dialog.js': ['openDialog', 'alert', 'confirm', 'confirmDelete', 'openPage']

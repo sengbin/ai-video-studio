@@ -10,4 +10,5 @@ build.ps1
 **/*.map
 out/**/*.test.js
 out/**/testing/**
+tools/**
 node_modules/**

@@ -23,10 +23,10 @@ export interface FormDefinition {
    */
   checkField?(key: string, value: string): string | undefined;
   /**
-   * 提交表单。
+   * 提交表单，可以是异步的（例如需要先确认 Copilot 可用）；完成前表单会话保持有效。
    * @throws ValidationError、ConflictError 等领域错误。
    */
-  submit(values: FormValues): void;
+  submit(values: FormValues): void | Promise<void>;
 }
 
 /**

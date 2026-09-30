@@ -288,6 +288,38 @@ test('拖动时对话框限制在可视区域内', () => {
   assert.equal(px(dialog, 'top'), env.window.innerHeight - 100 - VIEWPORT_MARGIN);
 });
 
+test('内容打开后才增高（表单异步渲染）时，对话框收回到可视范围内；关闭后停止监听', () => {
+  const { ui } = setup();
+  const observers = [];
+  env.window.ResizeObserver = class {
+    constructor(callback) {
+      this.callback = callback;
+      this.disconnected = false;
+      observers.push(this);
+    }
+    observe() {}
+    disconnect() {
+      this.disconnected = true;
+    }
+  };
+  const handle = ui.openPage({ title: '表单', content: '加载中…', width: 400, height: 100 });
+  const dialog = handle.element;
+  const initialTop = px(dialog, 'top');
+  assert.equal(initialTop, (env.window.innerHeight - 100) / 2, '先按加载中的小尺寸居中');
+
+  // 内容渲染完成，高度变大：下沿超出窗口，需要向上收回。
+  dialog.style.height = '700px';
+  observers[0].callback();
+  assert.equal(px(dialog, 'top'), env.window.innerHeight - 700 - VIEWPORT_MARGIN);
+
+  dialog.style.height = '500px';
+  observers[0].callback();
+  assert.equal(px(dialog, 'top'), env.window.innerHeight - 700 - VIEWPORT_MARGIN, '高度变小时不会改变位置');
+
+  handle.close();
+  assert.equal(observers[0].disconnected, true);
+});
+
 test('弹出页面同样可以拖动标题行移动', () => {
   const { ui } = setup();
   const handle = ui.openPage({ title: '页面', content: '内容', modal: false });

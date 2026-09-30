@@ -15,7 +15,7 @@ import { FormCatalog, FormDefinition, FormValues } from './form-definition';
 import { FORM_REQUESTS, registerFormHandlers } from './form-handlers';
 
 /** 创建路由器与一个名为 `demo` 的表单；返回提交记录与发送请求的函数。 */
-function createFixture(options: { submit?: (values: FormValues) => void } = {}) {
+function createFixture(options: { submit?: (values: FormValues) => void | Promise<void> } = {}) {
   const submittedValues: FormValues[] = [];
   const openedParams: unknown[] = [];
   const catalog: FormCatalog = new Map([
@@ -31,7 +31,11 @@ function createFixture(options: { submit?: (values: FormValues) => void } = {}) 
           },
           initialValues: { name: '' },
           checkField: (key, value) => (key === 'name' && value === '重名' ? '已存在同名项目。' : undefined),
-          submit: options.submit ?? ((values) => submittedValues.push(values))
+          submit:
+            options.submit ??
+            ((values) => {
+              submittedValues.push(values);
+            })
         };
       }
     ]
@@ -116,6 +120,28 @@ test('提交失败：错误按类型返回，会话保留以便修改后重新�
   const retried = await send(FORM_REQUESTS.submit, { formId, values: { name: '灯塔' } });
   assert.ok(retried?.ok);
   assert.deepEqual(submitted, [{ name: '灯塔' }]);
+});
+
+test('异步提交：等待完成后才返回；异步失败时会话保留，成功后失效', async () => {
+  let shouldFail = true;
+  const finished: string[] = [];
+  const { send, open } = createFixture({
+    submit: async (values) => {
+      await Promise.resolve();
+      if (shouldFail) throw new ValidationError({ name: '模型暂不可用。' });
+      finished.push(String(values.name));
+    }
+  });
+  const formId = await open();
+  const failed = await send(FORM_REQUESTS.submit, { formId, values: { name: '灯塔' } });
+  assert.ok(failed && !failed.ok && failed.error.kind === 'validation');
+
+  shouldFail = false;
+  const succeeded = await send(FORM_REQUESTS.submit, { formId, values: { name: '灯塔' } });
+  assert.ok(succeeded?.ok);
+  assert.deepEqual(finished, ['灯塔']);
+  const again = await send(FORM_REQUESTS.submit, { formId, values: { name: '灯塔' } });
+  assert.ok(again && !again.ok && again.error.kind === 'not-found');
 });
 
 test('提交拒绝非文本的字段值和缺失的 values', async () => {

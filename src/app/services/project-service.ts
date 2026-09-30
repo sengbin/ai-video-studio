@@ -39,6 +39,11 @@ export class ProjectService {
     return this.repository.listSummaries();
   }
 
+  /** 按标识查找项目；不存在返回 undefined。 */
+  findProject(id: number): Project | undefined {
+    return this.repository.findById(id);
+  }
+
   /**
    * 读取项目。
    * @throws NotFoundError 项目不存在。

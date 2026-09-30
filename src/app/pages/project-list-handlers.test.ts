@@ -14,20 +14,24 @@ import { IN_MEMORY_DATABASE_PATH, openDatabase } from '../../infra/database/data
 import { SqliteProjectRepository } from '../../infra/database/sqlite-project-repository';
 import { MessageRouter } from '../messaging/message-router';
 import { ProjectService } from '../services/project-service';
-import { PROJECT_LIST_REQUESTS, ProjectListAction, registerProjectListHandlers } from './project-list-handlers';
+import { PROJECT_LIST_REQUESTS, ProjectListRequest, registerProjectListHandlers } from './project-list-handlers';
 
-/** 创建路由器、服务和可设置待执行动作的夹具。 */
+/** 创建路由器、服务和可设置待处理请求的夹具。 */
 function createFixture() {
   const database = openDatabase(IN_MEMORY_DATABASE_PATH);
   const service = new ProjectService(new SqliteProjectRepository(database));
-  const state: { pendingAction: ProjectListAction | undefined } = { pendingAction: undefined };
+  const state: { pendingAction: ProjectListRequest | undefined; openedProjectIds: number[] } = {
+    pendingAction: undefined,
+    openedProjectIds: []
+  };
   const router = new MessageRouter();
   registerProjectListHandlers(router, service, {
     takePendingAction: () => {
       const taken = state.pendingAction;
       state.pendingAction = undefined;
       return taken;
-    }
+    },
+    openProject: (projectId) => state.openedProjectIds.push(projectId)
   });
   const send = (name: string, payload?: unknown) => router.handle({ type: 'request', requestId: 1, name, payload });
   return { database, service, state, send };
@@ -45,17 +49,37 @@ test('读取列表返回项目摘要', async () => {
   }
 });
 
-test('取待执行动作：有则返回并只返回一次，没有则为 undefined', async () => {
+test('取待处理请求：有则返回并只返回一次（动作、提示文字均可带），没有则为 undefined', async () => {
   const { database, state, send } = createFixture();
   try {
     const none = await send(PROJECT_LIST_REQUESTS.takePendingAction);
-    assert.deepEqual(none?.ok && none.data, { action: undefined });
+    assert.deepEqual(none?.ok && none.data, { action: undefined, notice: undefined });
 
-    state.pendingAction = 'create';
+    state.pendingAction = { action: 'create' };
     const first = await send(PROJECT_LIST_REQUESTS.takePendingAction);
-    assert.deepEqual(first?.ok && first.data, { action: 'create' });
+    assert.deepEqual(first?.ok && first.data, { action: 'create', notice: undefined });
     const second = await send(PROJECT_LIST_REQUESTS.takePendingAction);
-    assert.deepEqual(second?.ok && second.data, { action: undefined });
+    assert.deepEqual(second?.ok && second.data, { action: undefined, notice: undefined });
+
+    state.pendingAction = { notice: '请先选择或创建项目' };
+    const withNotice = await send(PROJECT_LIST_REQUESTS.takePendingAction);
+    assert.deepEqual(withNotice?.ok && withNotice.data, { action: undefined, notice: '请先选择或创建项目' });
+  } finally {
+    database.close();
+  }
+});
+
+test('打开项目：交给宿主打开详情页，项目不存在时返回错误', async () => {
+  const { database, service, state, send } = createFixture();
+  try {
+    const project = service.createProject({ name: '甲' });
+    const opened = await send(PROJECT_LIST_REQUESTS.open, { id: project.id });
+    assert.ok(opened?.ok);
+    assert.deepEqual(state.openedProjectIds, [project.id]);
+
+    const missing = await send(PROJECT_LIST_REQUESTS.open, { id: 999 });
+    assert.ok(missing && !missing.ok && missing.error.kind === 'not-found');
+    assert.equal(state.openedProjectIds.length, 1);
   } finally {
     database.close();
   }

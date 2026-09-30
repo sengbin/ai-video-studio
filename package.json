@@ -79,6 +79,7 @@
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p .",
     "watch": "tsc -watch -p .",
+    "harness": "node tools/page-harness/server.js",
     "test": "npm run compile && node --test \"out/**/*.test.js\" \"ui-kit/test/**/*.test.mjs\"",
     "package": "vsce package",
     "publish": "vsce publish"

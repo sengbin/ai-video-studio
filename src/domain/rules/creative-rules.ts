@@ -14,7 +14,8 @@ import {
   assertNoFieldErrors,
   readInteger,
   readOptionalText,
-  readRecord
+  readRecord,
+  readText
 } from './field-readers';
 
 /** 每章最少字数的下限。 */
@@ -198,4 +199,22 @@ export function parseSummary(raw: unknown): string {
     throw new GeneratedOutputError([`summary 有 ${summary.length} 字，超过上限 ${SUMMARY_MAX_LENGTH} 字，请精简。`]);
   }
   return summary;
+}
+
+/** 人工编辑保存的章节正文长度上限。 */
+export const CHAPTER_CONTENT_MAX_LENGTH = 100000;
+
+/**
+ * 校验并规范化用户手动编辑保存的一章：只检查格式与长度，字数范围只在界面提示，不阻止保存。
+ * @param rawInput 界面提交的原始内容 { seq, title, content }。
+ * @throws ValidationError 存在不合法的字段。
+ */
+export function normalizeChapterEdit(rawInput: unknown): ChapterDraft {
+  const source = readRecord(rawInput);
+  const errors: FieldErrors = {};
+  const seq = readInteger(source, { key: 'seq', label: '章节序号', required: true, min: 1, max: MAX_CHAPTERS_LIMIT }, errors);
+  const title = readText(source, { key: 'title', label: '章节标题', required: true, maxLength: CHAPTER_TITLE_MAX_LENGTH }, errors);
+  const content = readText(source, { key: 'content', label: '章节正文', required: true, maxLength: CHAPTER_CONTENT_MAX_LENGTH }, errors);
+  assertNoFieldErrors(errors);
+  return { seq, title, content };
 }

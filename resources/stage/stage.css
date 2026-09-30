@@ -1,0 +1,139 @@
+/*
+ * ------------------------------------------------------------------------
+ * 名称：stage.css
+ * 说明：创意阶段产出页样式：顶部状态栏、进度条、章节列表与章节编辑区。
+ * 作者：Lion
+ * 邮箱：chengbin@3578.cn
+ * 日期：2026-09-30
+ * 备注：颜色统一使用主题变量；不使用内联样式（Webview 的内容安全策略不允许）。
+ * ------------------------------------------------------------------------
+ */
+
+.stage-header h1 {
+  margin: 0 0 4px;
+}
+
+/* 版本、状态与按钮在同一行，窄宽度时换行 */
+.stage-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin: 10px 0 0;
+}
+
+.stage-bar__version {
+  flex: 0 1 180px;
+  min-width: 140px;
+}
+
+.stage-bar__buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.stage-message {
+  margin: 8px 0;
+}
+
+.stage-progress-area {
+  margin: 10px 0 0;
+}
+
+.stage-progress {
+  display: block;
+  width: 100%;
+  height: 6px;
+  margin: 0 0 4px;
+}
+
+/* 左侧章节列表、右侧编辑区；窄宽度时上下排列 */
+.stage-body {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin: 16px 0 0;
+}
+
+.stage-chapters {
+  flex: 0 0 240px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 200px;
+  max-height: 70vh;
+  overflow-y: auto;
+}
+
+.stage-chapter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+  padding: 6px 8px;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  background: transparent;
+  border: 1px solid var(--table-border);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.stage-chapter:hover {
+  background: var(--option-hover-bg);
+}
+
+.stage-chapter:focus-visible {
+  outline: 1px solid var(--focus-border);
+  outline-offset: 1px;
+}
+
+.stage-chapter.is-selected {
+  background: var(--option-selected-bg);
+  border-color: var(--focus-border);
+}
+
+.stage-chapter__title {
+  flex: 1 1 100%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stage-chapter__meta,
+.stage-chapter__hint {
+  font-size: 11px;
+}
+
+.stage-detail {
+  flex: 1 1 360px;
+  min-width: 0;
+}
+
+.stage-editor__title,
+.stage-editor__content {
+  margin: 0 0 8px;
+}
+
+.stage-editor .ui-textarea__field {
+  min-height: 360px;
+  font-size: 12px;
+}
+
+.stage-editor__actions {
+  display: flex;
+  gap: 8px;
+  margin: 8px 0 0;
+}
+
+/* 原始输出：保留换行，过长时滚动 */
+.stage-raw {
+  margin: 0;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}

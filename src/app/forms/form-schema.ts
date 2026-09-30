@@ -4,11 +4,11 @@
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-09-30
-// 备注：所有字段值以文本传输：选择类字段未选择时为空串，复选框、开关为 true/false，多选（checkboxes）为 JSON 数组文本。
+// 备注：所有字段值以文本传输：选择类字段未选择时为空串，复选框、开关为 true/false，多选（checkboxes）为 JSON 数组文本，文件（file）为“[{name, mimeType, size, data}]”的 JSON 文本（data 为 Base64）。
 // ------------------------------------------------------------------------
 
-/** 表单控件类型，对应界面组件库的控件：单行、多行、下拉、单选组、复选框、开关、复选框组。 */
-export type FormControl = 'text' | 'textarea' | 'select' | 'radio' | 'checkbox' | 'switch' | 'checkboxes';
+/** 表单控件类型，对应界面组件库的控件：单行、多行、下拉、单选组、复选框、开关、复选框组、文件选择。 */
+export type FormControl = 'text' | 'textarea' | 'select' | 'radio' | 'checkbox' | 'switch' | 'checkboxes' | 'file';
 
 /** 单个字段的描述。 */
 export interface FormFieldSchema {
@@ -29,6 +29,14 @@ export interface FormFieldSchema {
   readonly placeholder?: string;
   /** 失去焦点时是否向宿主检查唯一性。 */
   readonly checkUnique?: boolean;
+  /** 文件允许的扩展名（小写、含点）；仅 file 使用。 */
+  readonly accept?: readonly string[];
+  /** 是否可多选；仅 file 使用。 */
+  readonly multiple?: boolean;
+  /** 最多文件数；仅 file 使用。 */
+  readonly maxFiles?: number;
+  /** 单个文件大小上限（字节）；仅 file 使用，界面先拦截，宿主会再次校验。 */
+  readonly maxFileBytes?: number;
 }
 
 /** 表单描述。 */

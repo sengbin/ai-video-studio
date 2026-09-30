@@ -10,11 +10,29 @@
 import { mkdirSync } from 'node:fs';
 import * as vscode from 'vscode';
 import { MessageRouter } from './app/messaging/message-router';
+import { ProjectDetailPages } from './app/pages/project-detail-pages';
 import { ProjectPages } from './app/pages/project-pages';
+import { SettingsPages } from './app/pages/settings-pages';
+import { StagePages } from './app/pages/stage-pages';
 import { PanelManager } from './app/panels/panel-manager';
+import { ChangeNotifier } from './app/services/change-notifier';
 import { ProjectService } from './app/services/project-service';
+import { RecentProjectStore } from './app/services/recent-project-store';
+import { StageChange, StageService } from './app/services/stage-service';
+import { TextSettingsService } from './app/services/text-settings-service';
+import { WorkService } from './app/services/work-service';
+import { CreativeWorkflow } from './app/stages/creative-workflow';
+import { StageRunner } from './app/stages/stage-runner';
+import { WorkSourceType } from './domain/models/work';
+import { CopilotModelCatalog } from './infra/copilot/copilot-model-catalog';
+import { CopilotTextGeneration } from './infra/copilot/copilot-text-generation';
+import { VsCodeTextGenerationSettings } from './infra/copilot/vscode-text-generation-settings';
 import { openDatabase } from './infra/database/database-connection';
 import { SqliteProjectRepository } from './infra/database/sqlite-project-repository';
+import { SqliteChapterRepository, SqliteStageRunRepository } from './infra/database/sqlite-stage-run-repository';
+import { SqliteWorkRepository } from './infra/database/sqlite-work-repository';
+import { SqliteWorkSourceReader } from './infra/database/sqlite-work-source-reader';
+import { FilePromptTemplates } from './infra/prompts/file-prompt-templates';
 import { SidebarActionRegistry } from './sidebar/sidebar-actions';
 import { registerSidebarHandlers } from './sidebar/sidebar-handlers';
 import { SIDEBAR_SECTIONS } from './sidebar/sidebar-menu-config';
@@ -22,6 +40,16 @@ import { SIDEBAR_VIEW_ID, SidebarViewProvider } from './sidebar/sidebar-view-pro
 
 /** 数据库文件名，位于扩展的全局存储目录。 */
 const DATABASE_FILE_NAME = 'ai-video-studio.sqlite';
+
+/** 侧栏创作入口找不到最近使用的项目时，项目列表页顶部的提示。 */
+const NO_RECENT_PROJECT_NOTICE = '请先选择或创建项目';
+
+/** 侧栏创作入口与素材来源的对应关系。 */
+const CREATION_ENTRIES: ReadonlyArray<readonly [string, WorkSourceType]> = [
+  ['text-inspiration', 'text'],
+  ['image-inspiration', 'image'],
+  ['novel-adaptation', 'novel']
+];
 
 /**
  * 激活扩展：打开数据库并升级结构，装配服务与页面，注册侧栏视图。
@@ -34,13 +62,53 @@ export function activate(context: vscode.ExtensionContext): void {
   }
   context.subscriptions.push({ dispose: () => database.close() });
 
-  const projectService = new ProjectService(new SqliteProjectRepository(database));
-  const panels = new PanelManager(context.extensionUri);
-  const projectPages = new ProjectPages(projectService, panels);
+  // 存储与外部服务。
+  const runs = new SqliteStageRunRepository(database);
+  const chapters = new SqliteChapterRepository(database);
+  const settingsStore = new VsCodeTextGenerationSettings();
 
+  // 应用服务。
+  const projectService = new ProjectService(new SqliteProjectRepository(database));
+  const workService = new WorkService(new SqliteWorkRepository(database), runs);
+  const stageChanges = new ChangeNotifier<StageChange>();
+  const runner = new StageRunner({
+    runs,
+    text: new CopilotTextGeneration(settingsStore),
+    workflows: [
+      new CreativeWorkflow({
+        chapters,
+        sources: new SqliteWorkSourceReader(database),
+        prompts: new FilePromptTemplates(vscode.Uri.joinPath(context.extensionUri, 'resources', 'prompts').fsPath),
+        getSplitSettings: () => settingsStore.getSplitSettings()
+      })
+    ],
+    notify: (run) => stageChanges.notify({ workId: run.workId, runId: run.id, stage: run.stage })
+  });
+  // 上次退出时还在生成的记录已经无法继续，置为失败，用户可以在产出页点“重试”。
+  runner.recoverInterrupted();
+  const stageService = new StageService({ works: workService, runs, chapters, runner, changes: stageChanges });
+  const textSettingsService = new TextSettingsService(settingsStore, new CopilotModelCatalog());
+  const recentProjects = new RecentProjectStore(context.globalState, (id) => projectService.findProject(id));
+
+  // 页面。
+  const panels = new PanelManager(context.extensionUri);
+  const services = { projects: projectService, works: workService, stages: stageService };
+  const stagePages = new StagePages(services, panels);
+  const detailPages = new ProjectDetailPages(services, panels, recentProjects, (workId) => stagePages.showCreative(workId));
+  const projectPages = new ProjectPages(projectService, panels, (projectId) => detailPages.show(projectId));
+  const settingsPages = new SettingsPages(textSettingsService, panels);
+
+  // 侧栏：尚未实现的入口不注册动作，点击时由侧栏提示“该功能尚未开放”。
   const actionRegistry = new SidebarActionRegistry(SIDEBAR_SECTIONS)
     .register('project-list', 'main', () => projectPages.showProjectList())
-    .register('project-list', 'action', () => projectPages.showCreateForm());
+    .register('project-list', 'action', () => projectPages.showCreateForm())
+    .register('model-settings', 'main', () => settingsPages.show());
+  for (const [itemId, sourceType] of CREATION_ENTRIES) {
+    // 主入口：打开最近项目并按素材来源筛选；尾部操作：打开最近项目并弹出该来源的新建作品表单。
+    actionRegistry
+      .register(itemId, 'main', () => openRecentProject(recentProjects, projectPages, detailPages, { filterSource: sourceType }))
+      .register(itemId, 'action', () => openRecentProject(recentProjects, projectPages, detailPages, { createSource: sourceType }));
+  }
   const sidebarRouter = new MessageRouter();
   registerSidebarHandlers(sidebarRouter, actionRegistry);
 
@@ -52,6 +120,23 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 }
 
+/**
+ * 打开最近使用的项目详情页；没有最近项目（首次使用或已被删除）时打开项目列表页并提示先选择项目。
+ * @param request 详情页需要处理的请求。
+ */
+function openRecentProject(
+  recentProjects: RecentProjectStore,
+  projectPages: ProjectPages,
+  detailPages: ProjectDetailPages,
+  request: Parameters<ProjectDetailPages['show']>[1]
+): void {
+  const recent = recentProjects.get();
+  if (recent === undefined) {
+    projectPages.showProjectList(NO_RECENT_PROJECT_NOTICE);
+    return;
+  }
+  detailPages.show(recent.id, request);
+}
 /** 停用扩展；注册的资源由 VS Code 通过 subscriptions 统一释放。 */
 export function deactivate(): void {}
 

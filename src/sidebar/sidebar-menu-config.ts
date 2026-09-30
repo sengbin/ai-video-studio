@@ -79,7 +79,7 @@ export const SIDEBAR_SECTIONS: readonly SidebarMenuSection[] = [
     title: '设置',
     surface: 'flat',
     items: [
-      { id: 'model-settings', title: '模型', actionLabel: '添加', badge: '预览' },
+      { id: 'model-settings', title: '模型', actionLabel: '添加' },
       { id: 'data-backup', title: '数据备份', badge: '预览' }
     ]
   }

@@ -4,7 +4,7 @@
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-09-30
-// 备注：请求与事件名称与 src/app/pages/project-list-handlers.ts、src/app/forms/project-form.ts 一致；依赖 form/form-runtime.js（aiForm）。
+// 备注：请求与事件名称与 src/app/pages/project-list-handlers.ts、src/app/forms/project-form.ts 一致；依赖 form/form-runtime.js（aiForm）与 shared/page-format.js（pageFormat）。
 // ------------------------------------------------------------------------
 
 'use strict';
@@ -14,6 +14,7 @@
   const REQUEST_TAKE_PENDING_ACTION = 'projects.takePendingAction';
   const REQUEST_PREPARE_DELETE = 'projects.prepareDelete';
   const REQUEST_DELETE = 'projects.delete';
+  const REQUEST_OPEN = 'projects.open';
   const EVENT_CHANGED = 'projects.changed';
   const EVENT_ACTION = 'projects.action';
   const ACTION_CREATE = 'create';
@@ -22,12 +23,9 @@
 
   const PAGE_TITLE = '全部项目';
   const UNSET_TEXT = '未设置';
-  const JUST_NOW_TEXT = '刚刚';
   const GENERIC_ERROR_TEXT = '操作失败，请重试。';
-  const RELATIVE_TIME_LIMIT_DAYS = 30;
-  const MINUTE_MS = 60 * 1000;
-  const HOUR_MS = 60 * MINUTE_MS;
-  const DAY_MS = 24 * HOUR_MS;
+
+  const { formatRelativeTime } = window.pageFormat;
 
   const root = document.getElementById('app');
   let projects = [];
@@ -38,22 +36,25 @@
   let contentElement = null;
   let messageElement = null;
 
-  /** 相对时间：一分钟内“刚刚”，30 天内用相对表述，更早显示日期。 */
-  function formatRelativeTime(isoText) {
-    const elapsed = Date.now() - Date.parse(isoText);
-    if (Number.isNaN(elapsed) || elapsed < MINUTE_MS) return JUST_NOW_TEXT;
-    const formatter = new Intl.RelativeTimeFormat('zh-CN', { numeric: 'auto' });
-    if (elapsed < HOUR_MS) return formatter.format(-Math.floor(elapsed / MINUTE_MS), 'minute');
-    if (elapsed < DAY_MS) return formatter.format(-Math.floor(elapsed / HOUR_MS), 'hour');
-    if (elapsed < RELATIVE_TIME_LIMIT_DAYS * DAY_MS) return formatter.format(-Math.floor(elapsed / DAY_MS), 'day');
-    return new Date(isoText).toLocaleDateString('zh-CN');
-  }
-
   /** 在操作结果区显示文字；空串表示清除。 */
   function showMessage(text, isError) {
     messageElement.textContent = text;
     messageElement.className = isError ? 'list-message status-error' : 'list-message status-success';
     messageElement.hidden = text === '';
+  }
+
+  /** 显示中性提示（如侧栏引导用户先选择项目），不带成功或失败的颜色。 */
+  function showNotice(text) {
+    messageElement.textContent = text;
+    messageElement.className = 'list-message description';
+    messageElement.hidden = text === '';
+  }
+
+  /** 处理宿主带来的请求：先显示提示，再执行动作。 */
+  function handleRequest(request) {
+    if (!request) return;
+    if (request.notice) showNotice(request.notice);
+    if (request.action === ACTION_CREATE) openCreateForm();
   }
 
   /** 发起请求，失败时在操作结果区显示原因；成功返回响应数据，失败返回 undefined。 */
@@ -150,6 +151,12 @@
       type: 'actions',
       render: (project) => [
         aiUi.button({
+          text: '打开',
+          compact: true,
+          ariaLabel: `打开：${project.name}`,
+          onClick: () => void runAction(REQUEST_OPEN, { id: project.id })
+        }).element,
+        aiUi.button({
           kind: 'edit',
           compact: true,
           ariaLabel: `修改：${project.name}`,
@@ -218,15 +225,11 @@
 
   renderPage();
   window.hostBridge.onEvent(EVENT_CHANGED, () => void loadProjects());
-  window.hostBridge.onEvent(EVENT_ACTION, (payload) => {
-    if (payload && payload.action === ACTION_CREATE) openCreateForm();
-  });
-  // 页面打开前已登记的动作（如侧栏点“创建项目”），加载完成后主动取走。
+  window.hostBridge.onEvent(EVENT_ACTION, handleRequest);
+  // 页面打开前已登记的请求（如侧栏点“创建项目”），加载完成后主动取走。
   window.hostBridge
     .request(REQUEST_TAKE_PENDING_ACTION)
-    .then((result) => {
-      if (result && result.action === ACTION_CREATE) openCreateForm();
-    })
+    .then(handleRequest)
     .catch(() => undefined);
   void loadProjects();
 })();

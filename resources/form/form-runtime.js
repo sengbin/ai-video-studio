@@ -62,6 +62,17 @@
         return { kind: 'boolean', control: aiUi.switchControl({ label: fieldSchema.label, checked: initialText === 'true' }) };
       case 'checkboxes':
         return { kind: 'list', control: aiUi.checkboxGroup({ options, value: parseList(initialText) }) };
+      case 'file':
+        return {
+          kind: 'files',
+          control: aiUi.filePicker({
+            accept: fieldSchema.accept || [],
+            multiple: Boolean(fieldSchema.multiple),
+            maxFiles: fieldSchema.maxFiles,
+            maxFileBytes: fieldSchema.maxFileBytes,
+            ariaLabel: fieldSchema.label
+          })
+        };
       default:
         return { kind: 'text', control: aiUi.textInput({ value: initialText, placeholder: fieldSchema.placeholder }) };
     }
@@ -74,8 +85,9 @@
   function validateLocally(entry) {
     const fieldSchema = entry.schema;
     if (entry.kind === 'boolean') return '';
-    if (entry.kind === 'list') {
-      return fieldSchema.required && entry.control.getValue().length === 0 ? `${fieldSchema.label}至少选择一项。` : '';
+    if (entry.kind === 'list' || entry.kind === 'files') {
+      const unit = entry.kind === 'files' ? '个文件' : '项';
+      return fieldSchema.required && entry.control.getValue().length === 0 ? `${fieldSchema.label}至少选择一${unit}。` : '';
     }
     const text = entry.control.getValue().trim();
     if (text.length === 0) {
@@ -92,7 +104,7 @@
   function readText(entry) {
     const value = entry.control.getValue();
     if (entry.kind === 'boolean') return value ? 'true' : 'false';
-    if (entry.kind === 'list') return JSON.stringify(value);
+    if (entry.kind === 'list' || entry.kind === 'files') return JSON.stringify(value);
     return value;
   }
 
@@ -219,6 +231,8 @@
       event.preventDefault();
       if (isSubmitting) return;
       showSummary('');
+      // 文件还在读取时先等它读完，避免提交不完整的内容。
+      await Promise.all([...entries.values()].map((entry) => (entry.control.whenReady ? entry.control.whenReady() : undefined)));
       const invalid = validateAll();
       if (invalid.length > 0) {
         showSummary(`有 ${invalid.length} 项需要修改，请检查标出的字段。`);

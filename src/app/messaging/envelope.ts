@@ -8,7 +8,7 @@
 // ------------------------------------------------------------------------
 
 /** 错误类别，界面据此决定展示方式。 */
-export type ErrorKind = 'validation' | 'conflict' | 'not-found' | 'unsupported' | 'unexpected';
+export type ErrorKind = 'validation' | 'conflict' | 'not-found' | 'unsupported' | 'unavailable' | 'unexpected';
 
 /** 响应中的错误载荷。 */
 export interface ErrorPayload {

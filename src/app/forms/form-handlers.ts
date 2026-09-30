@@ -61,9 +61,9 @@ export function registerFormHandlers(router: MessageRouter, catalog: FormCatalog
     return { error: findSession(payload).definition.checkField?.(key, value) };
   });
 
-  router.register(FORM_REQUESTS.submit, (payload) => {
+  router.register(FORM_REQUESTS.submit, async (payload) => {
     const { formId, definition } = findSession(payload);
-    definition.submit(readFormValues(readRecord(payload).values));
+    await definition.submit(readFormValues(readRecord(payload).values));
     sessions.delete(formId);
     return {};
   });

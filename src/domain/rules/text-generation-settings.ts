@@ -7,6 +7,7 @@
 // 备注：设置来自用户可自由编辑的 VS Code 设置，不可信；不合法的值回退为默认值或夹到允许范围内。
 // ------------------------------------------------------------------------
 
+import { FORM_LEVEL_ERROR_KEY, ValidationError } from '../errors';
 import { NovelSplitMode, NovelSplitSettings } from './novel-splitter';
 
 /** 每段字数上限的允许范围与默认值。 */
@@ -41,4 +42,59 @@ export function normalizeTextGenerationSettings(raw: RawTextGenerationSettings):
       ? Math.min(SEGMENT_CHARS_MAX, Math.max(SEGMENT_CHARS_MIN, Math.floor(raw.maxSegmentChars)))
       : DEFAULT_SEGMENT_CHARS;
   return { modelFamily, novelSplit: { mode, maxSegmentChars } };
+}
+
+/** 对文本生成设置的一次修改，只包含要改的项，已经过校验。 */
+export interface TextGenerationSettingsPatch {
+  readonly modelFamily?: string;
+  readonly splitMode?: NovelSplitMode;
+  readonly maxSegmentChars?: number;
+}
+
+/** 模型家族名称的最大长度。 */
+export const MODEL_FAMILY_MAX_LENGTH = 100;
+
+/**
+ * 校验设置页提交的修改：与读取时“回退默认值”不同，这里不合法的值直接拒绝，让用户知道没有保存。
+ * @param rawInput 界面提交的原始内容，只处理出现的键。
+ * @throws ValidationError 存在不合法的值，或没有任何要修改的项。
+ */
+export function normalizeTextGenerationSettingsPatch(rawInput: unknown): TextGenerationSettingsPatch {
+  if (typeof rawInput !== 'object' || rawInput === null || Array.isArray(rawInput)) {
+    throw new ValidationError({ [FORM_LEVEL_ERROR_KEY]: '提交内容格式不正确。' });
+  }
+  const source = rawInput as Record<string, unknown>;
+  const errors: Record<string, string> = {};
+  const patch: { -readonly [K in keyof TextGenerationSettingsPatch]: TextGenerationSettingsPatch[K] } = {};
+
+  if (source.modelFamily !== undefined) {
+    if (typeof source.modelFamily !== 'string' || source.modelFamily.trim().length > MODEL_FAMILY_MAX_LENGTH) {
+      errors.modelFamily = `Copilot 模型必须是不超过 ${MODEL_FAMILY_MAX_LENGTH} 字的文本。`;
+    } else {
+      patch.modelFamily = source.modelFamily.trim();
+    }
+  }
+  if (source.splitMode !== undefined) {
+    if (source.splitMode === 'chapter' || source.splitMode === 'length') {
+      patch.splitMode = source.splitMode;
+    } else {
+      errors.splitMode = '小说分段方式必须是“按章节”或“按字数”。';
+    }
+  }
+  if (source.maxSegmentChars !== undefined) {
+    const value = source.maxSegmentChars;
+    if (typeof value === 'number' && Number.isInteger(value) && value >= SEGMENT_CHARS_MIN && value <= SEGMENT_CHARS_MAX) {
+      patch.maxSegmentChars = value;
+    } else {
+      errors.maxSegmentChars = `每段字数上限必须是 ${SEGMENT_CHARS_MIN} 到 ${SEGMENT_CHARS_MAX} 之间的整数。`;
+    }
+  }
+
+  if (Object.keys(errors).length > 0) {
+    throw new ValidationError(errors);
+  }
+  if (Object.keys(patch).length === 0) {
+    throw new ValidationError({ [FORM_LEVEL_ERROR_KEY]: '没有需要保存的设置。' });
+  }
+  return patch;
 }

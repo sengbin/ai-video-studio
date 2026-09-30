@@ -123,13 +123,16 @@
     }
   }
 
+  /** 让对话框保持在可视范围内：窗口缩小或内容增高（如表单异步渲染完成）后，超出的部分向上、向左收回。 */
+  function keepInViewport(dialog) {
+    const rect = dialog.getBoundingClientRect();
+    dialog.style.left = `${clamp(rect.left, VIEWPORT_MARGIN, window.innerWidth - rect.width - VIEWPORT_MARGIN)}px`;
+    dialog.style.top = `${clamp(rect.top, VIEWPORT_MARGIN, window.innerHeight - rect.height - VIEWPORT_MARGIN)}px`;
+  }
+
   /** 窗口大小变化时，让对话框保持在可视范围内。 */
   function handleWindowResize() {
-    for (const record of stack) {
-      const rect = record.dialog.getBoundingClientRect();
-      record.dialog.style.left = `${clamp(rect.left, VIEWPORT_MARGIN, window.innerWidth - rect.width - VIEWPORT_MARGIN)}px`;
-      record.dialog.style.top = `${clamp(rect.top, VIEWPORT_MARGIN, window.innerHeight - rect.height - VIEWPORT_MARGIN)}px`;
-    }
+    for (const record of stack) keepInViewport(record.dialog);
   }
 
   function installListeners() {
@@ -328,6 +331,7 @@
         if (isClosed) return;
         isClosed = true;
         stack.splice(stack.indexOf(record), 1);
+        if (record.stopObserving) record.stopObserving();
         dialog.remove();
         if (record.overlay) record.overlay.remove();
         updateInert();
@@ -380,6 +384,12 @@
     installListeners();
     updateInert();
     placeDialog(dialog, config.modal ? 0 : cascadeIndex);
+    // 内容之后才增高（表单先显示“加载中”再渲染字段）时，居中时的位置会让对话框下沿超出窗口，需要重新收回。
+    if (typeof window.ResizeObserver === 'function') {
+      const observer = new window.ResizeObserver(() => keepInViewport(dialog));
+      observer.observe(dialog);
+      record.stopObserving = () => observer.disconnect();
+    }
 
     resolveInitialFocus(record, body, cancelButton, closeButton).focus();
     return handle;

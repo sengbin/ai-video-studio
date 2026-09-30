@@ -7,7 +7,7 @@
 // 备注：未知异常只向界面暴露简短说明，完整信息记录到控制台。
 // ------------------------------------------------------------------------
 
-import { ConflictError, FORM_LEVEL_ERROR_KEY, NotFoundError, ValidationError } from '../../domain/errors';
+import { ConflictError, FORM_LEVEL_ERROR_KEY, NotFoundError, TextGenerationError, ValidationError } from '../../domain/errors';
 import { ErrorPayload } from './envelope';
 
 /** 未知异常对界面展示的固定前缀。 */
@@ -26,6 +26,10 @@ export function toErrorPayload(error: unknown): ErrorPayload {
   }
   if (error instanceof NotFoundError) {
     return { kind: 'not-found', message: error.message, fieldErrors: { [FORM_LEVEL_ERROR_KEY]: error.message } };
+  }
+  if (error instanceof TextGenerationError) {
+    // 文本生成服务（Copilot）不可用、未授权等：原因已是面向用户的说明，直接作为表单级提示显示。
+    return { kind: 'unavailable', message: error.message, fieldErrors: { [FORM_LEVEL_ERROR_KEY]: error.message } };
   }
 
   console.error('处理界面请求时出现未预期的错误：', error);

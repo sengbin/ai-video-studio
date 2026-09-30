@@ -21,6 +21,7 @@ ui-kit/                        组件库（自绘控件、对话框及其测试�
   src/
     ui-tokens.css              设计令牌：颜色、状态色、控件与对话框变量（亮暗主题）
     ui-controls.css            按钮、输入、下拉、单选、复选、开关、字段包装的样式（含各控件的禁用外观）
+    ui-file-picker.css         文件选择控件的样式：选择按钮、文件列表、提示行
     ui-table.css               数据表格、主副文本单元格、标签的样式
     ui-dialog.css              对话框、遮罩、标题栏、调整大小把手、删除确认提示的样式
     ui-scrollbar.css           自绘滚动条：无箭头、无背景、悬停才显示滑块
@@ -30,6 +31,7 @@ ui-kit/                        组件库（自绘控件、对话框及其测试�
     ui-input-controls.js       单行输入框、多行文本框
     ui-select.js               下拉列表
     ui-choice-controls.js      单选组、复选框、复选框组、开关
+    ui-file-picker.js          文件选择：单选或多选、读为 Base64、列表与排序、限制提示
     ui-field.js                字段包装：标签、说明、错误提示
     ui-table.js                数据表格、主副文本单元格、标签
     ui-dialog.js               对话框：确认、提示、删除确认、弹出页面
@@ -38,6 +40,7 @@ ui-kit/                        组件库（自绘控件、对话框及其测试�
     ui-environment.mjs         DOM 测试环境（jsdom）：加载组件库脚本、模拟排版与事件
     manifest.test.mjs          清单与 src 一一对应、加载顺序、文件头
     ui-controls.test.mjs       控件测试（含可用与禁用两种状态）
+    ui-file-picker.test.mjs    文件选择测试（Base64 读取、限制、排序、变化通知）
     ui-dialog.test.mjs         对话框测试（确认、删除确认、拖动、调整大小）
     ui-table.test.mjs          表格测试（表头与行、列类型、占位与淡色、重设行数据、标签）
     ui-styles.test.mjs         样式静态检查（滚动条、禁用态令牌）
@@ -56,6 +59,9 @@ ui-kit/                        组件库（自绘控件、对话框及其测试�
 | 清单 | 用途 |
 |---|---|
 | `PROJECT_LIST_PAGE_RESOURCES` | 项目列表页（新建、编辑表单在页内弹出，因此一并加载表单引擎 `form/form-runtime.js`） |
+| `PROJECT_DETAIL_PAGE_RESOURCES` | 项目详情页（编辑项目、新建作品表单在页内弹出） |
+| `STAGE_PAGE_RESOURCES` | 阶段产出页（“重新生成”表单在页内弹出） |
+| `SETTINGS_PAGE_RESOURCES` | 模型设置页（设置即时保存，没有弹出表单） |
 | `SIDEBAR_PAGE_RESOURCES` | 侧栏页面（不加载 `theme.css`，避免影响自己的布局） |
 
 编辑器区页面的加载顺序固定为：令牌样式、页面基础样式、控件与对话框样式、页面自己的样式；脚本为通信桥、组件库脚本、页面自己的脚本。这个顺序由 `createEditorPageResources` 保证。
@@ -294,6 +300,30 @@ table.setRows(newRows);   // 整体重绘表体
 | `aiUi.tableMainCell({ text, description })` | 表格单元格内容：加粗主文本，下方可选一行淡色说明（单行截断，悬停显示全文） |
 | `aiUi.chip({ text })` | 圆角小标签，用于视觉风格、分类等短文本，超长时省略 |
 
+### 5.12 文件选择 `aiUi.filePicker`
+
+```js
+const images = aiUi.filePicker({ accept: ['.png', '.jpg', '.jpeg', '.webp'], multiple: true, maxFiles: 10, maxFileBytes: 10 * 1024 * 1024 });
+const novel = aiUi.filePicker({ accept: ['.txt', '.md'], maxFileBytes: 5 * 1024 * 1024, buttonText: '选择文件' });
+await images.whenReady();          // 所有文件读取完成
+const files = images.getValue();   // [{ name, mimeType, size, data }]，data 为不带前缀的 Base64
+```
+
+| 选项 | 说明 |
+|---|---|
+| `accept` | 允许的扩展名（小写、含点），空表示不限 |
+| `multiple`、`maxFiles` | 是否可多选与最多文件数；单选时新选的文件替换旧文件 |
+| `maxFileBytes` | 单个文件大小上限（字节） |
+| `buttonText`、`emptyText`、`ariaLabel`、`disabled`、`onChange` | 按钮文字、未选文件时的提示、无障碍名称、禁用、变化通知 |
+
+行为：
+
+- 类型、数量、大小不符或空文件不会加入列表，原因显示在控件下方的提示行（`role="status"`），其余合法文件仍然加入。
+- 多选时每个文件一行，带“上移”“下移”“移除”按钮（列表顺序就是 `getValue()` 的顺序，边界按钮禁用）；单选时只有“移除”。
+- 文件内容异步读取，读取中显示“读取中…”；提交前用 `whenReady()` 等待读取完成（表单引擎已自动处理）。
+- 前端限制只是体验层，宿主必须按内容重新校验（文件头、编码、大小），见 `src/domain/rules/work-rules.ts`。
+- 控件对象的 `focusTarget` 为选择按钮，`ariaTarget` 为外层 `role="group"`，`labelable` 为 false，因此字段包装用 `aria-labelledby` 关联标签。
+
 ## 6. 字段包装 `aiUi.field`
 
 给任意控件加上标签、说明和错误提示，并建立无障碍关联：
@@ -463,6 +493,7 @@ const page = aiUi.openPage({
 - 标题行最右是关闭按钮 ×：平时为红色 ×，鼠标悬停时整个按钮变为红色背景、× 变白，按下时红色更深。
 - 按住**标题行**拖动，可以移动对话框或弹出页面（关闭按钮上按下不会拖动）；移动范围限制在窗口内，不会拖出可视区域；不需要拖动时可传 `draggable: false`。
 - 对话框（确认、提示、删除）**不可调整大小**；只有弹出页面可以调整大小。窗口大小变化时，对话框会被推回可视区域内。
+- 内容在打开之后才增高（如表单先显示“加载中”再渲染字段）时，对话框通过 `ResizeObserver` 自动向上、向左收回，不会让下沿超出窗口；内容超过窗口高度时内容区内部滚动。
 - 内容区超出时出现自绘滚动条（见 10.3）。
 - 窄宽度（例如侧栏）下对话框宽度不超过窗口宽度减去边距。
 
@@ -478,13 +509,14 @@ const page = aiUi.openPage({
 |---|---|
 | `key` | 字段键，也是提交内容中的键 |
 | `label`、`description` | 标签与说明；`required` 为 true 时说明前自动加“必填，” |
-| `control` | `text`、`textarea`、`select`、`radio`、`checkbox`、`switch`、`checkboxes` |
+| `control` | `text`、`textarea`、`select`、`radio`、`checkbox`、`switch`、`checkboxes`、`file` |
 | `required` | 是否必填 |
 | `maxLength` | 最大长度，界面即时校验，宿主再次校验 |
 | `options` | 选项，`select`、`radio`、`checkboxes` 使用 |
 | `allowCustom` | 下拉是否提供“其他（手动输入）” |
 | `placeholder` | 输入框占位示例 |
 | `checkUnique` | 失去焦点时向宿主检查唯一性 |
+| `accept`、`multiple`、`maxFiles`、`maxFileBytes` | `file` 使用，含义见 5.12；必填时至少需要选择一个文件 |
 
 ### 8.2 值的编码
 
@@ -495,6 +527,7 @@ const page = aiUi.openPage({
 | `text`、`textarea`、`select`、`radio` | 原文本，未选为空串 |
 | `checkbox`、`switch` | `true` 或 `false` |
 | `checkboxes` | JSON 数组文本，如 `["旁白","音效"]` |
+| `file` | JSON 数组文本 `[{"name","mimeType","size","data"}]`，`data` 为 Base64；提交前引擎会等待文件读取完成；宿主用 `src/domain/rules/work-rules.ts` 类似的规则按内容重新校验 |
 
 ### 8.3 定义一个新表单
 
@@ -504,7 +537,7 @@ export function createXxxForm(service: XxxService): FormDefinition {
     schema: { title: '新建作品', submitLabel: '保存', fields: [ /* 字段描述 */ ] },
     initialValues: {},
     checkField: (key, value) => (key === 'name' && !service.isNameAvailable(value) ? '已存在同名作品。' : undefined),
-    submit: (values) => { service.create(values); }   // 失败时抛出 ValidationError、ConflictError
+    submit: (values) => { service.create(values); }   // 失败时抛出 ValidationError、ConflictError；也可以是 async 函数
   };
 }
 
@@ -645,7 +678,8 @@ await aiForm.open({ form: 'project.edit', params: { id: project.id } }); // 编�
 | `ui-environment.mjs` | 测试环境：建立 jsdom 页面，按 `manifest.json` 的顺序加载 `src` 下的脚本；提供 `fire`、`pressKey`、`typeText`、`drag` 等模拟操作 |
 | `manifest.test.mjs` | 清单与 `src` 目录一一对应、没有重复、脚本只依赖排在它前面的脚本、源文件都有文件头 |
 | `ui-controls.test.mjs` | 各控件的读写值、变化通知、键盘操作，按钮预设，字段包装，滚动条悬停标记；“所有控件可用与禁用切换”的统一用例，新增控件时把它加入 `controlFactories` |
-| `ui-dialog.test.mjs` | 对话框结构与 ARIA、模态与非模态、确认、提示、删除确认的名称校验、标题行拖动及边界、弹出页面调整大小、焦点恢复 |
+| `ui-file-picker.test.mjs` | 文件选择：Base64 读取、类型与大小与数量限制、上移下移移除、变化通知（jsdom 中创建的对象需先转为普通对象再用 `deepEqual` 比较） |
+| `ui-dialog.test.mjs` | 对话框结构与 ARIA、模态与非模态、确认、提示、删除确认的名称校验、标题行拖动及边界、弹出页面调整大小、内容增高后收回可视范围、焦点恢复 |
 | `ui-styles.test.mjs` | 样式文本的静态检查：滚动条无箭头无背景、悬停才显示、不使用标准滚动条属性；各控件的禁用样式使用禁用令牌；表格样式只用已定义的令牌 |
 | `ui-table.test.mjs` | 表格的表头与行、列类型与列宽、占位与淡色、悬停提示、`setRows`、列描述校验、文本不解析为 HTML，主副文本单元格与标签 |
 
@@ -665,6 +699,8 @@ await aiForm.open({ form: 'project.edit', params: { id: project.id } }); // 编�
 8. 拖动对话框和弹出页面的标题行能移动，不会拖出窗口，在关闭按钮上按下不拖动。
 9. 亮暗主题下所有控件和按钮的可用、禁用两种外观，尤其是单选、复选、开关的选中与未选中。
 10. 滚动条：平时不显示，鼠标移到可滚动区域上才出现，没有箭头和轨道背景。屏幕截图工具可能不会捕捉到悬停状态的滑块，需要用真实鼠标验证。
+11. 较高的表单弹出页面（如新建作品）在窗口较矮时不超出窗口，内容区内部滚动，提交按钮始终可达。
+12. 文件选择：选择、上移、下移、移除；类型、大小、数量不符时提示原因；字段提交出错时错误显示在控件下方。
 
 ## 15. 速查
 
@@ -677,6 +713,7 @@ const rad = aiUi.radioGroup({ options: [...], value: 'a' });
 const chk = aiUi.checkbox({ label: '…', checked: true });
 const grp = aiUi.checkboxGroup({ options: [...], value: ['a'] });
 const sw  = aiUi.switchControl({ label: '…' });
+const files = aiUi.filePicker({ accept: ['.txt'], maxFileBytes: 5 * 1024 * 1024 });  // files.getValue() → [{ name, mimeType, size, data }]
 const btn = aiUi.button({ text: '保存', variant: 'primary', onClick });
 const add = aiUi.button({ kind: 'add' });                // 添加 / 修改(edit) / 删除(delete)，带图标
 

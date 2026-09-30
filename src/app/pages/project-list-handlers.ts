@@ -16,6 +16,7 @@ import { ProjectService } from '../services/project-service';
 export const PROJECT_LIST_REQUESTS = {
   list: 'projects.list',
   takePendingAction: 'projects.takePendingAction',
+  open: 'projects.open',
   prepareDelete: 'projects.prepareDelete',
   delete: 'projects.delete'
 } as const;
@@ -29,13 +30,21 @@ export const PROJECT_LIST_EVENTS = {
 /** 页面打开或已打开时需要它立即执行的动作：目前只有弹出“新建项目”表单。 */
 export type ProjectListAction = 'create';
 
+/** 页面打开或已打开时需要它处理的请求：可带一个动作，也可带一句提示文字（如“请先选择或创建项目”）。 */
+export interface ProjectListRequest {
+  readonly action?: ProjectListAction;
+  readonly notice?: string;
+}
+
 /** 删除确认名称不一致时的提示。 */
 const CONFIRM_NAME_MISMATCH_MESSAGE = '输入的名称与项目名称不一致。';
 
 /** 项目列表页需要外部提供的能力。 */
 export interface ProjectListActions {
-  /** 取走页面打开前登记的待执行动作（如侧栏点“创建项目”）；没有时返回 undefined，取走后不再返回。 */
-  takePendingAction(): ProjectListAction | undefined;
+  /** 取走页面打开前登记的待处理请求（如侧栏点“创建项目”）；没有时返回 undefined，取走后不再返回。 */
+  takePendingAction(): ProjectListRequest | undefined;
+  /** 打开项目详情页。 */
+  openProject(projectId: number): void;
 }
 
 /**
@@ -51,7 +60,16 @@ export function registerProjectListHandlers(
 ): void {
   router.register(PROJECT_LIST_REQUESTS.list, () => service.listProjects());
 
-  router.register(PROJECT_LIST_REQUESTS.takePendingAction, () => ({ action: actions.takePendingAction() }));
+  router.register(PROJECT_LIST_REQUESTS.takePendingAction, () => {
+    const taken = actions.takePendingAction();
+    return { action: taken?.action, notice: taken?.notice };
+  });
+
+  router.register(PROJECT_LIST_REQUESTS.open, (payload) => {
+    const project = service.getProject(readEntityId(payload, '项目'));
+    actions.openProject(project.id);
+    return { opened: true };
+  });
 
   router.register(PROJECT_LIST_REQUESTS.prepareDelete, (payload) => {
     const project = service.getProject(readEntityId(payload, '项目'));

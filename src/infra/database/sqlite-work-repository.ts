@@ -1,0 +1,94 @@
+// ------------------------------------------------------------------------
+// 名称：sqlite-work-repository.ts
+// 说明：作品仓库的 SQLite 实现：查询作品，并在一个事务内创建作品、第 1 集与素材文件。
+// 作者：Lion
+// 邮箱：chengbin@3578.cn
+// 日期：2026-09-30
+// 备注：素材按二进制保存在 work_sources 表，sort_order 记录上传顺序；删除作品由外键级联清除其下全部数据。
+// ------------------------------------------------------------------------
+
+import type { DatabaseSync } from 'node:sqlite';
+import { NewWorkSource, Work, WorkInput, WorkKind, WorkSourceType } from '../../domain/models/work';
+import { WorkRepository } from '../../domain/ports/work-repository';
+import { runInTransaction } from './transaction';
+
+/** works 表的一行。 */
+interface WorkRow {
+  readonly id: number;
+  readonly project_id: number;
+  readonly name: string;
+  readonly kind: WorkKind;
+  readonly source_type: WorkSourceType | null;
+  readonly created_at: string;
+  readonly updated_at: string;
+}
+
+/** 基于 SQLite 的作品仓库。 */
+export class SqliteWorkRepository implements WorkRepository {
+  constructor(private readonly database: DatabaseSync) {}
+
+  listByProject(projectId: number): Work[] {
+    const rows = this.database
+      .prepare('SELECT * FROM works WHERE project_id = ? ORDER BY created_at DESC, id DESC')
+      .all(projectId) as unknown as WorkRow[];
+    return rows.map(toWork);
+  }
+
+  findById(id: number): Work | undefined {
+    const row = this.database.prepare('SELECT * FROM works WHERE id = ?').get(id) as unknown as WorkRow | undefined;
+    return row === undefined ? undefined : toWork(row);
+  }
+
+  findByName(projectId: number, name: string): Work | undefined {
+    const row = this.database
+      .prepare('SELECT * FROM works WHERE project_id = ? AND name = ?')
+      .get(projectId, name) as unknown as WorkRow | undefined;
+    return row === undefined ? undefined : toWork(row);
+  }
+
+  insert(projectId: number, input: WorkInput, sources: readonly NewWorkSource[], timestamp: string): Work {
+    return runInTransaction(this.database, () => {
+      const result = this.database
+        .prepare('INSERT INTO works (project_id, name, kind, source_type, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
+        .run(projectId, input.name, input.kind, input.sourceType, timestamp, timestamp);
+      const workId = Number(result.lastInsertRowid);
+
+      if (input.kind === 'single') {
+        this.database
+          .prepare('INSERT INTO episodes (work_id, seq, title, created_at, updated_at) VALUES (?, 1, ?, ?, ?)')
+          .run(workId, input.name, timestamp, timestamp);
+      }
+
+      const insertSource = this.database.prepare(
+        `INSERT INTO work_sources (work_id, kind, file_name, mime, size_bytes, content, sort_order, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      );
+      sources.forEach((source, index) => {
+        insertSource.run(workId, source.kind, source.fileName, source.mime, source.content.length, source.content, index, timestamp);
+      });
+
+      const created = this.findById(workId);
+      if (created === undefined) {
+        throw new Error(`作品 ${workId} 写入后读取失败。`);
+      }
+      return created;
+    });
+  }
+
+  remove(id: number): boolean {
+    return Number(this.database.prepare('DELETE FROM works WHERE id = ?').run(id).changes) > 0;
+  }
+}
+
+/** 数据库行转领域对象；旧数据没有素材来源时按文字灵感处理。 */
+function toWork(row: WorkRow): Work {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    name: row.name,
+    kind: row.kind,
+    sourceType: row.source_type ?? 'text',
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}

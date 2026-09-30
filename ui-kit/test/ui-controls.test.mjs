@@ -32,7 +32,8 @@ function controlFactories(ui) {
     ['单选组', (disabled) => ui.radioGroup({ options, disabled })],
     ['复选框', (disabled) => ui.checkbox({ label: '选项', disabled })],
     ['复选框组', (disabled) => ui.checkboxGroup({ options, disabled })],
-    ['开关', (disabled) => ui.switchControl({ label: '开关', disabled })]
+    ['开关', (disabled) => ui.switchControl({ label: '开关', disabled })],
+    ['文件选择', (disabled) => ui.filePicker({ disabled })]
   ];
 }
 

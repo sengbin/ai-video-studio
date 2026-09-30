@@ -1,0 +1,89 @@
+/*
+ * ------------------------------------------------------------------------
+ * 名称：ui-file-picker.css
+ * 说明：界面组件库的文件选择控件样式：选择按钮、文件列表和说明文字。
+ * 作者：Lion
+ * 邮箱：chengbin@3578.cn
+ * 日期：2026-09-30
+ * 备注：所有选择器以 ui- 开头；颜色只用令牌；隐藏的原生文件输入不参与布局。
+ * ------------------------------------------------------------------------
+ */
+
+.ui-file-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-start;
+}
+
+/* 原生文件输入只用来弹出系统的选择框 */
+.ui-file-picker__input {
+  display: none;
+}
+
+.ui-file-picker__list {
+  align-self: stretch;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
+  border-radius: 3px;
+}
+
+.ui-file-picker__empty {
+  padding: 4px 8px;
+  color: var(--text-muted);
+}
+
+.ui-file-picker__item {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  min-height: 26px;
+  padding: 2px 8px;
+}
+
+.ui-file-picker__item + .ui-file-picker__item {
+  border-top: 1px solid var(--divider);
+}
+
+.ui-file-picker__name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ui-file-picker__size {
+  flex: none;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.ui-file-picker__actions {
+  display: inline-flex;
+  flex: none;
+  gap: 4px;
+}
+
+.ui-file-picker__actions .ui-button {
+  min-width: 0;
+}
+
+.ui-file-picker__message {
+  margin: 0;
+  color: var(--text-muted);
+  white-space: pre-line;
+}
+
+.ui-file-picker__message.ui-is-error {
+  color: var(--status-error);
+}
+
+.ui-file-picker.ui-is-disabled .ui-file-picker__list {
+  color: var(--disabled-text);
+  background: var(--disabled-bg);
+  border-color: var(--disabled-border);
+}

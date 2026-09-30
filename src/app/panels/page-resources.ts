@@ -24,7 +24,7 @@ const UI_TOKENS_STYLE = `${UI_KIT_DIR}/ui-tokens.css`;
 /** 编辑器区页面的基础样式（页面外观、标题、状态文字）。 */
 const EDITOR_PAGE_THEME_STYLE = 'resources/shared/theme.css';
 /** 界面组件库的控件、表格、对话框与滚动条样式。 */
-const UI_COMPONENT_STYLES = ['ui-controls.css', 'ui-table.css', 'ui-dialog.css', 'ui-scrollbar.css'].map((name) => `${UI_KIT_DIR}/${name}`);
+const UI_COMPONENT_STYLES = ['ui-controls.css', 'ui-file-picker.css', 'ui-table.css', 'ui-dialog.css', 'ui-scrollbar.css'].map((name) => `${UI_KIT_DIR}/${name}`);
 
 /** 通信桥与界面组件库的脚本，按依赖顺序排列。 */
 const UI_LIBRARY_SCRIPTS = [
@@ -36,6 +36,7 @@ const UI_LIBRARY_SCRIPTS = [
     'ui-input-controls.js',
     'ui-select.js',
     'ui-choice-controls.js',
+    'ui-file-picker.js',
     'ui-field.js',
     'ui-table.js',
     'ui-dialog.js'
@@ -62,8 +63,23 @@ function createEditorPageResources(pageStyles: readonly string[], pageScripts: r
 /** 项目列表页：新建与编辑表单在页内弹出，因此一并加载表单引擎。 */
 export const PROJECT_LIST_PAGE_RESOURCES: PageResources = createEditorPageResources(
   ['form/form.css', 'project-list/project-list.css'],
-  ['form/form-runtime.js', 'project-list/project-list.js']
+  ['form/form-runtime.js', 'shared/page-format.js', 'project-list/project-list.js']
 );
+
+/** 项目详情页：编辑项目、新建作品表单在页内弹出，因此一并加载表单引擎。 */
+export const PROJECT_DETAIL_PAGE_RESOURCES: PageResources = createEditorPageResources(
+  ['form/form.css', 'project-detail/project-detail.css'],
+  ['form/form-runtime.js', 'shared/page-format.js', 'project-detail/project-detail.js']
+);
+
+/** 阶段产出页：重新生成表单在页内弹出，因此一并加载表单引擎。 */
+export const STAGE_PAGE_RESOURCES: PageResources = createEditorPageResources(
+  ['form/form.css', 'stage/stage.css'],
+  ['form/form-runtime.js', 'shared/page-format.js', 'stage/stage.js']
+);
+
+/** 模型设置页：设置即时保存，没有弹出表单。 */
+export const SETTINGS_PAGE_RESOURCES: PageResources = createEditorPageResources(['settings/settings.css'], ['settings/settings.js']);
 
 /** 侧栏页面：有自己的布局，不加载编辑器区的基础样式。 */
 export const SIDEBAR_PAGE_RESOURCES: PageResources = {
