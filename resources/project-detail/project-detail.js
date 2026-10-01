@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：project-detail.js
-// 说明：项目详情页脚本：显示项目摘要与作品表格，按素材来源新建作品、在弹出层中查看创意阶段产出、带名称确认的删除作品。
+// 说明：项目详情页脚本：标题栏显示项目名称与素材来源筛选，其下为项目摘要与作品表格；支持按素材来源新建作品、在弹出层中查看创意阶段产出、带名称确认的删除作品。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-09-30
@@ -16,7 +16,6 @@
   const REQUEST_DELETE_WORK = 'detail.deleteWork';
   const EVENT_CHANGED = 'detail.changed';
   const EVENT_REQUEST = 'detail.request';
-  const FORM_PROJECT_EDIT = 'project.edit';
   const FORM_WORK_CREATE = 'work.create';
 
   const GENERIC_ERROR_TEXT = '操作失败，请重试。';
@@ -43,6 +42,7 @@
   let pendingStageWorkId = null;
   let filterSource = FILTER_ALL;
   let refreshTimer = 0;
+  let titleElement = null;
   let summaryElement = null;
   let messageElement = null;
   let worksElement = null;
@@ -196,9 +196,11 @@
     return aiUi.h('div', { class: 'detail-state' }, aiUi.h('p', { class: 'description', text }), button && button.element);
   }
 
-  /** 项目摘要：名称、描述、视觉风格、默认画幅与分辨率，以及编辑按钮。 */
+  /** 标题栏的项目名称，以及其下的描述、视觉风格、默认画幅与分辨率。 */
   function renderSummary() {
     summaryElement.textContent = '';
+    titleElement.textContent = project ? project.name : '';
+    titleElement.title = project ? project.name : '';
     if (!project) return;
     const chips = [
       ['视觉风格', project.visualStyle],
@@ -209,16 +211,6 @@
     // 直接使用 DOM 的 append 时 null 会变成文字“null”，先去掉空项。
     summaryElement.append(
       ...[
-        aiUi.h(
-          'div',
-          { class: 'detail-summary__head' },
-          aiUi.h('h1', { text: project.name }),
-          aiUi.button({
-            kind: 'edit',
-            ariaLabel: `编辑项目：${project.name}`,
-            onClick: () => void showForm({ form: FORM_PROJECT_EDIT, params: { id: project.id } })
-          }).element
-        ),
         project.description ? aiUi.h('p', { class: 'description', text: project.description }) : null,
         aiUi.h('div', { class: 'detail-chips' }, chips)
       ].filter(Boolean)
@@ -269,8 +261,9 @@
     }
   }
 
-  /** 渲染页面骨架：摘要、新建作品按钮与筛选、操作结果、作品区、资产说明。 */
+  /** 渲染页面骨架：标题栏（项目名称与筛选）、摘要、操作结果、作品区、资产说明。 */
   function renderPage() {
+    titleElement = aiUi.h('h1');
     summaryElement = aiUi.h('section', { class: 'detail-summary' });
 
     filterSelect = aiUi.select({
@@ -283,7 +276,12 @@
         renderWorks();
       }
     });
-    const toolbar = aiUi.h('div', { class: 'detail-toolbar' }, aiUi.h('div', { class: 'detail-toolbar__filter' }, filterSelect.element));
+    const titlebar = aiUi.h(
+      'header',
+      { class: 'detail-titlebar' },
+      titleElement,
+      aiUi.h('div', { class: 'detail-titlebar__filter' }, filterSelect.element)
+    );
 
     messageElement = aiUi.h('p', { class: 'detail-message', hidden: true, attrs: { role: 'status' } });
     worksElement = aiUi.h('div');
@@ -293,7 +291,7 @@
       aiUi.h('h2', { text: '资产' }),
       aiUi.h('p', { class: 'description', text: '角色、场景、道具、特效与音频资产将在后续版本提供。' })
     );
-    root.append(summaryElement, toolbar, messageElement, worksElement, assets);
+    root.append(titlebar, summaryElement, messageElement, worksElement, assets);
   }
 
   renderPage();

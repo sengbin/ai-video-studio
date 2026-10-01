@@ -59,7 +59,7 @@ ui-kit/                        组件库（自绘控件、对话框及其测试�
 | 清单 | 用途 |
 |---|---|
 | `PROJECT_LIST_PAGE_RESOURCES` | 项目列表页（新建、编辑表单在页内弹出，因此一并加载表单引擎 `form/form-runtime.js`） |
-| `PROJECT_DETAIL_PAGE_RESOURCES` | 项目详情页（编辑项目、新建作品表单和创意产出层在页内弹出，因此一并加载 `stage/stage.js`） |
+| `PROJECT_DETAIL_PAGE_RESOURCES` | 项目详情页（新建作品表单和创意产出层在页内弹出，因此一并加载 `stage/stage.js`） |
 | `SETTINGS_PAGE_RESOURCES` | 模型设置页（设置即时保存，没有弹出表单） |
 | `SIDEBAR_PAGE_RESOURCES` | 侧栏页面（不加载 `theme.css`，避免影响自己的布局） |
 

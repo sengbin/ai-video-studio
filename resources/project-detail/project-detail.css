@@ -1,7 +1,7 @@
 /*
  * ------------------------------------------------------------------------
  * 名称：project-detail.css
- * 说明：项目详情页样式：项目摘要、新建作品工具栏、操作结果提示、空状态与资产说明。
+ * 说明：项目详情页样式：标题栏、项目摘要、操作结果提示、空状态与资产说明。
  * 作者：Lion
  * 邮箱：chengbin@3578.cn
  * 日期：2026-09-30
@@ -9,24 +9,33 @@
  * ------------------------------------------------------------------------
  */
 
-.detail-summary {
-  margin: 0 0 16px;
-}
-
-.detail-summary__head {
+/* 标题栏：名称在左，筛选下拉在右，底部分割线与正文分开 */
+.detail-titlebar {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin: 0 0 6px;
+  margin: 0 0 12px;
+  padding: 0 0 10px;
+  border-bottom: 1px solid var(--divider);
 }
 
-.detail-summary__head h1 {
+.detail-titlebar h1 {
+  flex: 1 1 auto;
   margin: 0;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.detail-titlebar__filter {
+  flex: 0 1 180px;
+  min-width: 140px;
+}
+
+.detail-summary {
+  margin: 0 0 16px;
 }
 
 .detail-chips {
@@ -36,19 +45,8 @@
   margin: 8px 0 0;
 }
 
-/* 筛选下拉靠右 */
-.detail-toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  margin: 0 0 12px;
-}
-
-.detail-toolbar__filter {
-  flex: 0 1 180px;
-  min-width: 140px;
-  margin-left: auto;
+.detail-summary .description + .detail-chips {
+  margin-top: 8px;
 }
 
 .detail-message {

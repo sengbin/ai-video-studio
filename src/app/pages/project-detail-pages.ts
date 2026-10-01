@@ -4,12 +4,11 @@
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-09-30
-// 备注：请求处理在 project-detail-handlers.ts；页面内弹出编辑项目、新建作品表单和作品的创意产出层，因此同时注册项目与创意两组表单，并把阶段变化推送给页面。
+// 备注：请求处理在 project-detail-handlers.ts；页面内弹出新建作品表单和作品的创意产出层，因此注册作品与创意表单，并把阶段变化推送给页面；项目信息在项目列表页修改。
 // ------------------------------------------------------------------------
 
 import { FormCatalog } from '../forms/form-definition';
 import { registerFormHandlers } from '../forms/form-handlers';
-import { createProjectFormCatalog } from '../forms/project-form';
 import { createWorkFormCatalog } from '../forms/work-form';
 import { MessageRouter } from '../messaging/message-router';
 import { PROJECT_DETAIL_PAGE_RESOURCES } from '../panels/page-resources';
@@ -111,12 +110,12 @@ export class ProjectDetailPages {
     });
   }
 
-  /** 页面内可弹出的表单：编辑项目、新建作品与重新生成；生成开始后通知页面弹出该作品的创意产出层。 */
+  /** 页面内可弹出的表单：新建作品与重新生成；生成开始后通知页面弹出该作品的创意产出层。 */
   private createFormCatalog(projectId: number): FormCatalog {
     const { projects, works, stages } = this.services;
     const onStarted = (workId: number): void =>
       this.opened.get(projectId)?.panel?.postEvent(PROJECT_DETAIL_EVENTS.request, { openStage: workId });
-    return new Map([...createProjectFormCatalog(projects), ...createWorkFormCatalog({ projects, works, stages, onStarted })]);
+    return createWorkFormCatalog({ projects, works, stages, onStarted });
   }
 }
 
