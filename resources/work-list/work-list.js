@@ -308,7 +308,7 @@
       render: (work) => aiUi.tableMainCell({ text: work.name, description: KIND_LABELS[work.kind] || '' })
     },
     { title: '所属项目', width: '16%', minWidth: 120, render: (work) => aiUi.chip({ text: work.projectName }) },
-    { title: '素材来源', width: '12%', minWidth: 100, render: (work) => SOURCE_LABELS[work.sourceType] || '' },
+    { title: '素材来源', width: '12%', minWidth: 100, render: (work) => aiUi.chip({ text: SOURCE_LABELS[work.sourceType] || work.sourceType }) },
     { title: '剧本', width: '18%', minWidth: 140, render: (work) => renderStageStatus(work.screenplay) },
     { title: '内容', width: '14%', minWidth: 120, muted: true, nowrap: true, render: (work) => formatContentCounts(work.contentCounts) },
     {
