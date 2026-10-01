@@ -237,7 +237,7 @@
       return;
     }
     if (works.length === 0) {
-      worksElement.append(renderState('这个项目还没有作品，从上方选择素材来源新建一个。'));
+      worksElement.append(renderState('这个项目还没有作品，在侧栏“创作”分区选择素材来源，点“添加”新建一个。'));
       return;
     }
     const visible = filterSource === FILTER_ALL ? works : works.filter((work) => work.sourceType === filterSource);
@@ -273,14 +273,6 @@
   function renderPage() {
     summaryElement = aiUi.h('section', { class: 'detail-summary' });
 
-    const createButtons = SOURCE_TYPES.map((item) =>
-      aiUi.button({
-        text: item.label,
-        kind: 'add',
-        ariaLabel: `新建作品：${item.label}`,
-        onClick: () => openCreateWorkForm(item.value)
-      }).element
-    );
     filterSelect = aiUi.select({
       options: [{ value: FILTER_ALL, label: '全部素材来源' }, ...SOURCE_TYPES],
       value: FILTER_ALL,
@@ -291,13 +283,7 @@
         renderWorks();
       }
     });
-    const toolbar = aiUi.h(
-      'div',
-      { class: 'detail-toolbar' },
-      aiUi.h('span', { class: 'description', text: '新建作品：' }),
-      aiUi.h('div', { class: 'detail-toolbar__buttons' }, createButtons),
-      aiUi.h('div', { class: 'detail-toolbar__filter' }, filterSelect.element)
-    );
+    const toolbar = aiUi.h('div', { class: 'detail-toolbar' }, aiUi.h('div', { class: 'detail-toolbar__filter' }, filterSelect.element));
 
     messageElement = aiUi.h('p', { class: 'detail-message', hidden: true, attrs: { role: 'status' } });
     worksElement = aiUi.h('div');
