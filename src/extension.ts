@@ -10,7 +10,7 @@
 import { mkdirSync } from 'node:fs';
 import * as vscode from 'vscode';
 import { MessageRouter } from './app/messaging/message-router';
-import { ProjectDetailPages } from './app/pages/project-detail-pages';
+import { ProjectDetailOptions } from './app/pages/project-detail-handlers';
 import { ProjectPages } from './app/pages/project-pages';
 import { SettingsPages } from './app/pages/settings-pages';
 import { PanelManager } from './app/panels/panel-manager';
@@ -92,8 +92,7 @@ export function activate(context: vscode.ExtensionContext): void {
   // 页面。
   const panels = new PanelManager(context.extensionUri);
   const services = { projects: projectService, works: workService, stages: stageService };
-  const detailPages = new ProjectDetailPages(services, panels, recentProjects);
-  const projectPages = new ProjectPages(projectService, panels, (projectId) => detailPages.show(projectId));
+  const projectPages = new ProjectPages(services, panels, recentProjects);
   const settingsPages = new SettingsPages(textSettingsService, panels);
 
   // 侧栏：尚未实现的入口不注册动作，点击时由侧栏提示“该功能尚未开放”。
@@ -102,10 +101,10 @@ export function activate(context: vscode.ExtensionContext): void {
     .register('project-list', 'action', () => projectPages.showCreateForm())
     .register('model-settings', 'main', () => settingsPages.show());
   for (const [itemId, sourceType] of CREATION_ENTRIES) {
-    // 主入口：打开最近项目并按素材来源筛选；尾部操作：打开最近项目并弹出该来源的新建作品表单。
+    // 主入口：打开最近项目的详情层并按素材来源筛选；尾部操作：打开最近项目的详情层并弹出该来源的新建作品表单。
     actionRegistry
-      .register(itemId, 'main', () => openRecentProject(recentProjects, projectPages, detailPages, { filterSource: sourceType }))
-      .register(itemId, 'action', () => openRecentProject(recentProjects, projectPages, detailPages, { createSource: sourceType }));
+      .register(itemId, 'main', () => openRecentProject(recentProjects, projectPages, { filterSource: sourceType }))
+      .register(itemId, 'action', () => openRecentProject(recentProjects, projectPages, { createSource: sourceType }));
   }
   const sidebarRouter = new MessageRouter();
   registerSidebarHandlers(sidebarRouter, actionRegistry);
@@ -119,21 +118,20 @@ export function activate(context: vscode.ExtensionContext): void {
 }
 
 /**
- * 打开最近使用的项目详情页；没有最近项目（首次使用或已被删除）时打开项目列表页并提示先选择项目。
- * @param request 详情页需要处理的请求。
+ * 在项目列表页中弹出最近使用的项目详情层；没有最近项目（首次使用或已被删除）时只打开项目列表页并提示先选择项目。
+ * @param options 详情层需要处理的附加要求。
  */
 function openRecentProject(
   recentProjects: RecentProjectStore,
   projectPages: ProjectPages,
-  detailPages: ProjectDetailPages,
-  request: Parameters<ProjectDetailPages['show']>[1]
+  options: ProjectDetailOptions
 ): void {
   const recent = recentProjects.get();
   if (recent === undefined) {
     projectPages.showProjectList(NO_RECENT_PROJECT_NOTICE);
     return;
   }
-  detailPages.show(recent.id, request);
+  projectPages.showProjectDetail(recent.id, options);
 }
 /** 停用扩展；注册的资源由 VS Code 通过 subscriptions 统一释放。 */
 export function deactivate(): void {}

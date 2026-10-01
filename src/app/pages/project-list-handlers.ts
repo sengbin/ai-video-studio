@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：project-list-handlers.ts
-// 说明：项目列表页的请求处理：读取列表、取走待执行动作、删除（先取影响范围，再校验确认名称后删除）。
+// 说明：项目列表页的请求处理：读取列表、取走待执行动作、登记最近打开的项目、删除（先取影响范围，再校验确认名称后删除）。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-09-30
@@ -11,6 +11,7 @@ import { ValidationError } from '../../domain/errors';
 import { readEntityId, readRecord } from '../../domain/rules/field-readers';
 import { MessageRouter } from '../messaging/message-router';
 import { ProjectService } from '../services/project-service';
+import { ProjectDetailRequest } from './project-detail-handlers';
 
 /** 项目列表页使用的请求名称，需与 resources/project-list/project-list.js 一致。 */
 export const PROJECT_LIST_REQUESTS = {
@@ -30,10 +31,11 @@ export const PROJECT_LIST_EVENTS = {
 /** 页面打开或已打开时需要它立即执行的动作：目前只有弹出“新建项目”表单。 */
 export type ProjectListAction = 'create';
 
-/** 页面打开或已打开时需要它处理的请求：可带一个动作，也可带一句提示文字（如“请先选择或创建项目”）。 */
+/** 页面打开或已打开时需要它处理的请求：可带一个动作、一句提示文字（如“请先选择或创建项目”），或要求弹出某个项目的详情层。 */
 export interface ProjectListRequest {
   readonly action?: ProjectListAction;
   readonly notice?: string;
+  readonly detail?: ProjectDetailRequest;
 }
 
 /** 删除确认名称不一致时的提示。 */
@@ -43,8 +45,8 @@ const CONFIRM_NAME_MISMATCH_MESSAGE = '输入的名称与项目名称不一致�
 export interface ProjectListActions {
   /** 取走页面打开前登记的待处理请求（如侧栏点“创建项目”）；没有时返回 undefined，取走后不再返回。 */
   takePendingAction(): ProjectListRequest | undefined;
-  /** 打开项目详情页。 */
-  openProject(projectId: number): void;
+  /** 登记项目被打开（记为最近使用的项目）；详情层由页面自己弹出。 */
+  markOpened(projectId: number): void;
 }
 
 /**
@@ -62,12 +64,12 @@ export function registerProjectListHandlers(
 
   router.register(PROJECT_LIST_REQUESTS.takePendingAction, () => {
     const taken = actions.takePendingAction();
-    return { action: taken?.action, notice: taken?.notice };
+    return { action: taken?.action, notice: taken?.notice, detail: taken?.detail };
   });
 
   router.register(PROJECT_LIST_REQUESTS.open, (payload) => {
     const project = service.getProject(readEntityId(payload, '项目'));
-    actions.openProject(project.id);
+    actions.markOpened(project.id);
     return { opened: true };
   });
 

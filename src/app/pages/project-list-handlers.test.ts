@@ -31,7 +31,7 @@ function createFixture() {
       state.pendingAction = undefined;
       return taken;
     },
-    openProject: (projectId) => state.openedProjectIds.push(projectId)
+    markOpened: (projectId) => state.openedProjectIds.push(projectId)
   });
   const send = (name: string, payload?: unknown) => router.handle({ type: 'request', requestId: 1, name, payload });
   return { database, service, state, send };
@@ -49,27 +49,35 @@ test('读取列表返回项目摘要', async () => {
   }
 });
 
-test('取待处理请求：有则返回并只返回一次（动作、提示文字均可带），没有则为 undefined', async () => {
+test('取待处理请求：有则返回并只返回一次（动作、提示文字、详情层要求均可带），没有则为 undefined', async () => {
   const { database, state, send } = createFixture();
   try {
     const none = await send(PROJECT_LIST_REQUESTS.takePendingAction);
-    assert.deepEqual(none?.ok && none.data, { action: undefined, notice: undefined });
+    assert.deepEqual(none?.ok && none.data, { action: undefined, notice: undefined, detail: undefined });
 
     state.pendingAction = { action: 'create' };
     const first = await send(PROJECT_LIST_REQUESTS.takePendingAction);
-    assert.deepEqual(first?.ok && first.data, { action: 'create', notice: undefined });
+    assert.deepEqual(first?.ok && first.data, { action: 'create', notice: undefined, detail: undefined });
     const second = await send(PROJECT_LIST_REQUESTS.takePendingAction);
-    assert.deepEqual(second?.ok && second.data, { action: undefined, notice: undefined });
+    assert.deepEqual(second?.ok && second.data, { action: undefined, notice: undefined, detail: undefined });
 
     state.pendingAction = { notice: '请先选择或创建项目' };
     const withNotice = await send(PROJECT_LIST_REQUESTS.takePendingAction);
-    assert.deepEqual(withNotice?.ok && withNotice.data, { action: undefined, notice: '请先选择或创建项目' });
+    assert.deepEqual(withNotice?.ok && withNotice.data, { action: undefined, notice: '请先选择或创建项目', detail: undefined });
+
+    state.pendingAction = { detail: { projectId: 3, createSource: 'novel' } };
+    const withDetail = await send(PROJECT_LIST_REQUESTS.takePendingAction);
+    assert.deepEqual(withDetail?.ok && withDetail.data, {
+      action: undefined,
+      notice: undefined,
+      detail: { projectId: 3, createSource: 'novel' }
+    });
   } finally {
     database.close();
   }
 });
 
-test('打开项目：交给宿主打开详情页，项目不存在时返回错误', async () => {
+test('打开项目：登记为最近打开的项目，项目不存在时返回错误', async () => {
   const { database, service, state, send } = createFixture();
   try {
     const project = service.createProject({ name: '甲' });

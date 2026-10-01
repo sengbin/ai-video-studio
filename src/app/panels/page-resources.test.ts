@@ -12,7 +12,6 @@ import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { test } from 'node:test';
 import {
-  PROJECT_DETAIL_PAGE_RESOURCES,
   PROJECT_LIST_PAGE_RESOURCES,
   PageResources,
   SETTINGS_PAGE_RESOURCES,
@@ -25,7 +24,6 @@ const EXTENSION_ROOT = resolve(__dirname, '..', '..', '..');
 const UI_KIT_PREFIX = 'ui-kit/src/';
 const PAGES: ReadonlyArray<readonly [string, PageResources]> = [
   ['项目列表页', PROJECT_LIST_PAGE_RESOURCES],
-  ['项目详情页', PROJECT_DETAIL_PAGE_RESOURCES],
   ['模型设置页', SETTINGS_PAGE_RESOURCES],
   ['侧栏页面', SIDEBAR_PAGE_RESOURCES]
 ];
