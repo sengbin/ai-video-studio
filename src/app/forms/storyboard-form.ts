@@ -36,8 +36,8 @@ export interface StoryboardFormDependencies {
   readonly projects: ProjectService;
   readonly works: WorkService;
   readonly storyboards: StoryboardService;
-  /** 生成已开始后调用，用于打开第一个所选集的阶段产出层。 */
-  readonly onStarted: (workId: number, episodeId: number) => void;
+  /** 生成已开始后调用，参数为已启动的集；用于打开该集（多集时打开各集状态列表）的页面。 */
+  readonly onStarted: (workId: number, episodeIds: readonly number[]) => void;
   /** “选择作品”表单提交后调用，用于打开该作品的生成表单。 */
   readonly onPicked: (workId: number) => void;
 }
@@ -191,8 +191,8 @@ function createStartForm(dependencies: StoryboardFormDependencies, workId: numbe
       } else {
         ids = episodeId === undefined ? [statuses[0].episodeId] : [episodeId];
       }
-      const runs = await storyboards.start(workId, ids, values);
-      onStarted(workId, runs[0].episodeId ?? ids[0]);
+      await storyboards.start(workId, ids, values);
+      onStarted(workId, ids);
     }
   };
 }

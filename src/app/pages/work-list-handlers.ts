@@ -27,13 +27,14 @@ export const WORK_LIST_REQUESTS = {
   storyboardEpisodes: 'works.storyboardEpisodes'
 } as const;
 
-/** 宿主推送给作品列表页的事件名称：changed 要求刷新数据，action 要求执行动作，openStage 的载荷为 { workId, stage, episodeId? }（分镜脚本阶段带集标识），startScreenplay、startStoryboard 的载荷为 { workId }（已选好作品，要求弹出“生成剧本”“生成分镜脚本”表单）。 */
+/** 宿主推送给作品列表页的事件名称：changed 要求刷新数据，action 要求执行动作，openStage 的载荷为 { workId, stage, episodeId? }（分镜脚本阶段带集标识），startScreenplay、startStoryboard 的载荷为 { workId }（已选好作品，要求弹出“生成剧本”“生成分镜脚本”表单），openStoryboardList 的载荷为 { workId }（多集已开始生成，要求弹出各集的分镜脚本状态列表）。 */
 export const WORK_LIST_EVENTS = {
   changed: 'works.changed',
   action: 'works.action',
   openStage: 'works.openStage',
   startScreenplay: 'works.startScreenplay',
-  startStoryboard: 'works.startStoryboard'
+  startStoryboard: 'works.startStoryboard',
+  openStoryboardList: 'works.openStoryboardList'
 } as const;
 
 /** 页面打开或已打开时需要它立即执行的动作：弹出“新建作品”表单（剧本视图中为选择作品并生成剧本）。 */

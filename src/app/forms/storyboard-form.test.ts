@@ -30,13 +30,13 @@ async function createFixture(kind: '单个短视频' | '多集短片', approveSc
   if (approveScreenplay) {
     fixture.stages.approve(screenplay.id);
   }
-  const started: Array<[number, number]> = [];
+  const started: Array<[number, readonly number[]]> = [];
   const picked: number[] = [];
   const catalog = createStoryboardFormCatalog({
     projects: fixture.projects,
     works: fixture.works,
     storyboards: fixture.storyboards,
-    onStarted: (workId, episodeId) => started.push([workId, episodeId]),
+    onStarted: (workId, episodeIds) => started.push([workId, episodeIds]),
     onPicked: (workId) => picked.push(workId)
   });
   const open = (params: unknown, name: string = STORYBOARD_FORM_NAMES.start): FormDefinition => {
@@ -123,7 +123,7 @@ test('提交：为所选集各启动一份并通知页面；至少选一集；�
       audioElements: JSON.stringify(['角色对白', '背景音乐'])
     });
     await runner.whenIdle();
-    assert.deepEqual(started, [[work.id, second.episodeId]]);
+    assert.deepEqual(started, [[work.id, [second.episodeId]]]);
     assert.deepEqual(storyboards.listEpisodeStatuses(work.id).map((status) => status.display), ['none', 'pending']);
 
     const again = open({ workId: work.id });
@@ -152,6 +152,20 @@ test('选择作品：只列剧本已确认的作品，标签为“项目 › 作
     assert.deepEqual(picked, [work.id]);
 
     assert.throws(() => open({ projectId: other.id }, STORYBOARD_FORM_NAMES.pick), ValidationError);
+  } finally {
+    database.close();
+  }
+});
+
+test('提交：默认勾选全部集时，为每一集各启动一份并把所有集通知页面', async () => {
+  const { database, open, work, started, storyboards, runner } = await createFixture('多集短片');
+  try {
+    const form = open({ workId: work.id });
+    await form.submit({ ...form.initialValues });
+    await runner.whenIdle();
+    const ids = storyboards.listEpisodeStatuses(work.id).map((status) => status.episodeId);
+    assert.deepEqual(started, [[work.id, ids]]);
+    assert.deepEqual(storyboards.listEpisodeStatuses(work.id).map((status) => status.display), ['pending', 'pending']);
   } finally {
     database.close();
   }

@@ -20,6 +20,7 @@
   const EVENT_OPEN_STAGE = 'works.openStage';
   const EVENT_START_SCREENPLAY = 'works.startScreenplay';
   const EVENT_START_STORYBOARD = 'works.startStoryboard';
+  const EVENT_OPEN_STORYBOARD_LIST = 'works.openStoryboardList';
   const ACTION_CREATE = 'create';
   const FORM_CREATE = 'work.create';
   const FORM_EDIT = 'work.edit';
@@ -539,6 +540,11 @@
   });
   window.hostBridge.onEvent(EVENT_START_STORYBOARD, (payload) => {
     if (payload) runAfterForm(() => openStoryboardForm(payload.workId));
+  });
+  // 多集开始生成后，弹出各集的状态列表，可看到每集的进度。
+  window.hostBridge.onEvent(EVENT_OPEN_STORYBOARD_LIST, (payload) => {
+    const work = payload && works.find((item) => item.id === payload.workId);
+    if (work) runAfterForm(() => openEpisodeList(work));
   });
   const initialLoad = loadWorks(true);
   // 页面打开前已登记的请求（如侧栏点“添加”），加载完成后主动取走。

@@ -112,7 +112,10 @@ export class WorkListPages {
           projects,
           works,
           storyboards,
-          onStarted: (workId, episodeId) => openStage(workId, 'storyboard_script', episodeId),
+          onStarted: (workId, episodeIds) =>
+            episodeIds.length === 1
+              ? openStage(workId, 'storyboard_script', episodeIds[0])
+              : entry.panel?.postEvent(WORK_LIST_EVENTS.openStoryboardList, { workId }),
           onPicked: (workId) => entry.panel?.postEvent(WORK_LIST_EVENTS.startStoryboard, { workId })
         })
       ])
