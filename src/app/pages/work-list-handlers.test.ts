@@ -13,7 +13,7 @@ import { normalizeWorkCreation } from '../../domain/rules/work-rules';
 import { MessageRouter } from '../messaging/message-router';
 import { createServiceFixture } from '../services/testing/service-fixture';
 import { STAGE_REQUESTS } from './stage-handlers';
-import { WORK_LIST_REQUESTS, WorkListRequest, WorkListRow, registerWorkListHandlers } from './work-list-handlers';
+import { SCREENPLAY_VIEW, WORK_LIST_REQUESTS, WorkListRequest, WorkListRow, registerWorkListHandlers } from './work-list-handlers';
 
 const PARAMS = { chapterMinWords: 100, chapterMaxWords: 200, maxChapters: 3 };
 
@@ -49,8 +49,8 @@ test('读取：返回绑定素材来源下全部项目的作品（含所属项�
     await runner.whenIdle();
     const response = await send(WORK_LIST_REQUESTS.load);
     assert.ok(response?.ok);
-    const data = response.data as { sourceType: string; projects: Array<{ name: string }>; works: WorkListRow[] };
-    assert.equal(data.sourceType, 'text');
+    const data = response.data as { view: string; projects: Array<{ name: string }>; works: WorkListRow[] };
+    assert.equal(data.view, 'text');
     assert.deepEqual(data.projects.map((project) => project.name).sort(), ['项目乙', '项目甲']);
     assert.deepEqual(
       data.works.map((work) => [work.name, work.projectName, work.creative.display]).sort(),
@@ -96,6 +96,38 @@ test('创意产出请求：作品不存在或缺少作品标识时返回错误�
     const forged = await send(STAGE_REQUESTS.approve, { workId: second.id, stage: 'creative', id: run.id });
     assert.ok(forged && !forged.ok, '用其他作品的标识不能操作这个作品的版本');
     assert.equal(stages.getCreativeView(first.id).run.display, 'pending');
+  } finally {
+    database.close();
+  }
+});
+
+test('剧本视图：跨素材来源，只列创意已确认或已有剧本的作品，带集数与实体数', async () => {
+  const fixture = createFixture();
+  const { database, first, second, novel, stages, screenplays, runner } = fixture;
+  try {
+    const router = new MessageRouter();
+    registerWorkListHandlers(router, SCREENPLAY_VIEW, fixture, { takePending: () => undefined });
+    const load = async () => {
+      const response = await router.handle({ type: 'request', requestId: 1, name: WORK_LIST_REQUESTS.load });
+      assert.ok(response?.ok);
+      return response.data as { view: string; works: WorkListRow[] };
+    };
+
+    assert.deepEqual((await load()).works, [], '创意都未确认时没有作品');
+
+    // 只有作品甲确认了创意，其余作品（含小说改编）不出现在剧本视图里。
+    const run = await stages.startCreative(first.id, PARAMS);
+    await runner.whenIdle();
+    stages.approve(run.id);
+    const rows = (await load()).works;
+    assert.deepEqual(rows.map((row) => [row.name, row.canStartScreenplay, row.contentCounts]), [['作品甲', true, null]]);
+
+    await screenplays.start(first.id, { maxEpisodeDurationSeconds: 60 });
+    await runner.whenIdle();
+    const withScreenplay = (await load()).works;
+    assert.deepEqual(withScreenplay[0].contentCounts, { episodes: 1, entities: 2 });
+    assert.equal(withScreenplay[0].screenplay.display, 'pending');
+    assert.ok(!withScreenplay.some((row) => row.id === second.id || row.id === novel.id));
   } finally {
     database.close();
   }

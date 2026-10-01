@@ -15,6 +15,8 @@ export interface WorkRepository {
   listByProject(projectId: number): Work[];
   /** 列出所有项目中指定素材来源的作品，按创建时间倒序。 */
   listBySource(sourceType: WorkSourceType): Work[];
+  /** 列出所有项目、所有素材来源的作品，按创建时间倒序。 */
+  listAll(): Work[];
   /** 按标识查找作品；不存在返回 undefined。 */
   findById(id: number): Work | undefined;
   /** 在项目内按名称精确查找作品；不存在返回 undefined。 */

@@ -109,6 +109,10 @@ export function activate(context: vscode.ExtensionContext): void {
       .register(itemId, 'main', () => workListPages.show(sourceType))
       .register(itemId, 'action', () => workListPages.show(sourceType, { action: 'create' }));
   }
+  // 剧本：主入口打开跨素材来源的剧本列表；添加打开列表并弹出“选择作品”。
+  actionRegistry
+    .register('screenplay', 'main', () => workListPages.show('screenplay'))
+    .register('screenplay', 'action', () => workListPages.show('screenplay', { action: 'create' }));
   const sidebarRouter = new MessageRouter();
   registerSidebarHandlers(sidebarRouter, actionRegistry);
 

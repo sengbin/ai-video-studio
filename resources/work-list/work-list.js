@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：work-list.js
-// 说明：作品列表页脚本：列出某种素材来源下所有项目的作品，按项目与名称关键字筛选，在页内弹出页面中新建、编辑作品、生成剧本，弹出创意与剧本产出层，带名称确认地删除作品。
+// 说明：作品列表页脚本：列出某种素材来源下所有项目的作品（或跨来源的剧本视图），按项目与名称关键字筛选，在页内弹出页面中新建、编辑作品、生成剧本，弹出创意与剧本产出层，带名称确认地删除作品。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-01
@@ -17,36 +17,52 @@
   const EVENT_CHANGED = 'works.changed';
   const EVENT_ACTION = 'works.action';
   const EVENT_OPEN_STAGE = 'works.openStage';
+  const EVENT_START_SCREENPLAY = 'works.startScreenplay';
   const ACTION_CREATE = 'create';
   const FORM_CREATE = 'work.create';
   const FORM_EDIT = 'work.edit';
   const FORM_START_SCREENPLAY = 'screenplay.start';
+  const FORM_PICK_SCREENPLAY = 'screenplay.pick';
   const STAGE_CREATIVE = 'creative';
   const STAGE_SCREENPLAY = 'screenplay';
+  const VIEW_SCREENPLAY = 'screenplay';
 
   const GENERIC_ERROR_TEXT = '操作失败，请重试。';
   const FILTER_ALL = 'all';
   const REFRESH_DELAY_MS = 150;
   const KIND_LABELS = { single: '单个短视频', series: '多集短片' };
+  const SOURCE_LABELS = { text: '文字灵感', image: '图片灵感', novel: '小说原文' };
+  /** 剧本视图的状态筛选：值为剧本阶段的展示状态，none 表示还没开始。 */
+  const STATUS_FILTER_OPTIONS = [
+    { value: FILTER_ALL, label: '全部状态' },
+    { value: 'none', label: '未开始' },
+    { value: 'running', label: '生成中' },
+    { value: 'pending', label: '待确认' },
+    { value: 'approved', label: '已确认' },
+    { value: 'failed', label: '失败' },
+    { value: 'canceled', label: '已取消' }
+  ];
 
   const { formatRelativeTime, stageStatusLabel, stageStatusClass } = window.pageFormat;
 
   const root = document.getElementById('app');
-  /** 页面绑定的素材来源，首次加载成功后由宿主告知。 */
-  let sourceType = '';
+  /** 页面绑定的视图（素材来源或剧本），首次加载成功后由宿主告知。 */
+  let view = '';
   let projects = [];
   let works = [];
   let loadError = '';
   let isLoading = true;
   let isFormOpen = false;
-  /** 表单还开着时收到的「弹出产出层」请求（{ workId, stage }），表单关闭后再打开。 */
-  let pendingStage = null;
+  /** 表单还开着时收到的「稍后执行」请求（如弹出产出层、打开下一个表单），表单关闭后执行。 */
+  let afterFormClosed = null;
   let filterProjectId = FILTER_ALL;
+  let filterStatus = FILTER_ALL;
   let keyword = '';
   let refreshTimer = 0;
   /** 项目下拉当前对应的项目清单标记，清单变化时才重建下拉；为 null 表示还没有渲染过。 */
   let projectOptionsKey = null;
   let projectSlot = null;
+  let statusSlot = null;
   let contentElement = null;
   let messageElement = null;
 
@@ -88,6 +104,23 @@
     projectSlot.append(select.element);
   }
 
+  /** 状态下拉：只在剧本视图显示，知道视图后建一次。 */
+  function renderStatusFilter() {
+    if (view !== VIEW_SCREENPLAY || statusSlot.childElementCount > 0) return;
+    const select = aiUi.select({
+      options: STATUS_FILTER_OPTIONS,
+      value: filterStatus,
+      allowEmpty: false,
+      ariaLabel: '按剧本状态筛选',
+      onChange: (value) => {
+        filterStatus = value;
+        renderContent();
+      }
+    });
+    statusSlot.append(select.element);
+    statusSlot.hidden = false;
+  }
+
   /** 加载作品并刷新界面；showLoading 为 false 时保留现有内容（后台刷新）。 */
   async function loadWorks(showLoading) {
     if (showLoading) {
@@ -97,7 +130,7 @@
     loadError = '';
     try {
       const data = await window.hostBridge.request(REQUEST_LOAD);
-      sourceType = data.sourceType;
+      view = data.view;
       projects = data.projects;
       works = data.works;
       // 作品被删除（或随所属项目一起删除）后，它的产出层没有意义，自动关闭。
@@ -107,6 +140,7 @@
     }
     isLoading = false;
     renderProjectFilter();
+    renderStatusFilter();
     renderContent();
   }
 
@@ -124,25 +158,28 @@
       await aiForm.open(options);
     } finally {
       isFormOpen = false;
-      if (pendingStage !== null) {
-        const { workId, stage } = pendingStage;
-        pendingStage = null;
-        aiStage.open(workId, stage);
-      }
+      const next = afterFormClosed;
+      afterFormClosed = null;
+      if (next) next();
     }
   }
 
-  /** 弹出作品某个阶段的产出层；表单还开着时等它关闭后再弹出，避免两个弹出页同时出现。 */
-  function openStage(workId, stage) {
-    if (isFormOpen) pendingStage = { workId, stage };
-    else aiStage.open(workId, stage);
+  /** 执行一个动作；表单还开着时等它关闭后再执行，避免两个弹出页同时出现。 */
+  function runAfterForm(action) {
+    if (isFormOpen) afterFormClosed = action;
+    else action();
   }
 
-  /** 弹出“新建作品”表单；筛选了某个项目时把它作为所属项目的默认值。 */
+  /** 弹出作品某个阶段的产出层。 */
+  function openStage(workId, stage) {
+    runAfterForm(() => aiStage.open(workId, stage));
+  }
+
+  /** 弹出“新建作品”表单（剧本视图中为“选择作品”）；筛选了某个项目时把它作为默认值或限定范围。 */
   function openCreateForm() {
-    const params = { sourceType };
+    const params = view === VIEW_SCREENPLAY ? {} : { sourceType: view };
     if (filterProjectId !== FILTER_ALL) params.projectId = Number(filterProjectId);
-    void showForm({ form: FORM_CREATE, params });
+    void showForm({ form: view === VIEW_SCREENPLAY ? FORM_PICK_SCREENPLAY : FORM_CREATE, params });
   }
 
   /** 弹出“编辑作品”表单。 */
@@ -172,11 +209,11 @@
     if (result) showMessage(`已删除作品“${result.name}”。`, false);
   }
 
-  /** 处理宿主带来的请求：弹出“新建作品”表单；页面还没加载完时先等一次加载，才知道素材来源。 */
+  /** 处理宿主带来的请求：弹出“新建作品”或“选择作品”表单；页面还没加载完时先等一次加载，才知道视图。 */
   async function handleRequest(request) {
     if (!request || request.action !== ACTION_CREATE) return;
-    if (!sourceType) await initialLoad;
-    if (sourceType) openCreateForm();
+    if (!view) await initialLoad;
+    if (view) openCreateForm();
   }
 
   /** 阶段状态单元格：状态文字加版本号，生成中附带进度，上游已变更时加标记。 */
@@ -211,7 +248,7 @@
     }).element;
   }
 
-  /** 作品表格的列。 */
+  /** 作品表格的列（素材来源视图）。 */
   const WORK_COLUMNS = [
     {
       title: '作品名称',
@@ -258,6 +295,34 @@
     }
   ];
 
+  /** 集数与实体数；还没有抽取结果时显示破折号。 */
+  function formatContentCounts(counts) {
+    return counts ? `${counts.episodes} 集 · ${counts.entities} 个实体` : '—';
+  }
+
+  /** 作品表格的列（剧本视图）：跨素材来源，只有剧本相关的操作。 */
+  const SCREENPLAY_COLUMNS = [
+    {
+      title: '作品名称',
+      width: '26%',
+      minWidth: 180,
+      render: (work) => aiUi.tableMainCell({ text: work.name, description: KIND_LABELS[work.kind] || '' })
+    },
+    { title: '所属项目', width: '16%', minWidth: 120, render: (work) => aiUi.chip({ text: work.projectName }) },
+    { title: '素材来源', width: '12%', minWidth: 100, render: (work) => SOURCE_LABELS[work.sourceType] || '' },
+    { title: '剧本', width: '18%', minWidth: 140, render: (work) => renderStageStatus(work.screenplay) },
+    { title: '内容', width: '14%', minWidth: 120, muted: true, nowrap: true, render: (work) => formatContentCounts(work.contentCounts) },
+    {
+      title: '创建时间',
+      width: 110,
+      nowrap: true,
+      muted: true,
+      render: (work) => formatRelativeTime(work.createdAt),
+      tooltip: (work) => new Date(work.createdAt).toLocaleString('zh-CN')
+    },
+    { title: '操作', type: 'actions', render: (work) => [renderScreenplayButton(work)] }
+  ];
+
   /** 空状态和错误状态。 */
   function renderState(text, button) {
     return aiUi.h('div', { class: 'works-state' }, aiUi.h('p', { class: 'description', text }), button && button.element);
@@ -275,17 +340,24 @@
       return;
     }
     if (works.length === 0) {
-      contentElement.append(renderState('还没有作品。', aiUi.button({ text: '新建作品', kind: 'add', onClick: openCreateForm })));
+      contentElement.append(
+        view === VIEW_SCREENPLAY
+          ? renderState('还没有可生成剧本的作品。请先在“创作”列表中新建作品并确认创意。')
+          : renderState('还没有作品。', aiUi.button({ text: '新建作品', kind: 'add', onClick: openCreateForm }))
+      );
       return;
     }
     const text = keyword.trim().toLowerCase();
     const visible = works.filter(
-      (work) => (filterProjectId === FILTER_ALL || String(work.projectId) === filterProjectId) && work.name.toLowerCase().includes(text)
+      (work) =>
+        (filterProjectId === FILTER_ALL || String(work.projectId) === filterProjectId) &&
+        (filterStatus === FILTER_ALL || work.screenplay.display === filterStatus) &&
+        work.name.toLowerCase().includes(text)
     );
     contentElement.append(
       visible.length === 0
         ? renderState('没有匹配的作品。')
-        : aiUi.table({ columns: WORK_COLUMNS, rows: visible, ariaLabel: '作品' }).element
+        : aiUi.table({ columns: view === VIEW_SCREENPLAY ? SCREENPLAY_COLUMNS : WORK_COLUMNS, rows: visible, ariaLabel: '作品' }).element
     );
   }
 
@@ -301,7 +373,14 @@
       }
     });
     projectSlot = aiUi.h('div', { class: 'works-header__project' });
-    const header = aiUi.h('div', { class: 'works-header' }, aiUi.h('div', { class: 'works-header__search' }, search.element), projectSlot);
+    statusSlot = aiUi.h('div', { class: 'works-header__project', hidden: true });
+    const header = aiUi.h(
+      'div',
+      { class: 'works-header' },
+      aiUi.h('div', { class: 'works-header__search' }, search.element),
+      projectSlot,
+      statusSlot
+    );
 
     messageElement = aiUi.h('p', { class: 'works-message', hidden: true, attrs: { role: 'status' } });
     contentElement = aiUi.h('div');
@@ -314,6 +393,10 @@
   window.hostBridge.onEvent(EVENT_ACTION, (request) => void handleRequest(request));
   window.hostBridge.onEvent(EVENT_OPEN_STAGE, (payload) => {
     if (payload) openStage(payload.workId, payload.stage);
+  });
+  // “选择作品”表单提交后，表单关闭再打开该作品的“生成剧本”表单。
+  window.hostBridge.onEvent(EVENT_START_SCREENPLAY, (payload) => {
+    if (payload) runAfterForm(() => void showForm({ form: FORM_START_SCREENPLAY, params: { workId: payload.workId } }));
   });
   const initialLoad = loadWorks(true);
   // 页面打开前已登记的请求（如侧栏点“添加”），加载完成后主动取走。

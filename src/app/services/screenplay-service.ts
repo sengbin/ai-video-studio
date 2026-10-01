@@ -144,6 +144,23 @@ export class ScreenplayService {
   }
 
   /**
+   * 统计最新剧本版本的集数与实体数，用于作品列表；合并后按作品的集和实体统计，否则按抽取结果统计。
+   * @returns 数量；没有生成成功的剧本或还没有抽取结果时为 null。
+   */
+  getContentCounts(workId: number): { readonly episodes: number; readonly entities: number } | null {
+    const { runs, screenplays } = this.dependencies;
+    const [latest] = runs.listVersions(screenplayTarget(workId));
+    if (latest === undefined || latest.status !== 'succeeded') {
+      return null;
+    }
+    if (latest.appliedAt !== null) {
+      return { episodes: screenplays.listEpisodes(workId).length, entities: screenplays.listEntities(workId).length };
+    }
+    const structure = screenplays.find(latest.id)?.structure;
+    return structure === null || structure === undefined ? null : { episodes: structure.episodes.length, entities: structure.entities.length };
+  }
+
+  /**
    * 整理剧本阶段产出页的视图。
    * @param workId 作品标识。
    * @param runId 要查看的版本；缺省为最新版本。

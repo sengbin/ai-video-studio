@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：screenplay-form.test.ts
-// 说明：剧本表单（F4）的自动化测试：字段随作品形态变化、创意未确认时不能打开、提交启动生成、重新生成的初始值、输入不合法。
+// 说明：剧本表单（F4）的自动化测试：字段随作品形态变化、创意未确认时不能打开、提交启动生成、重新生成的初始值、输入不合法、选择作品。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
@@ -27,17 +27,20 @@ async function createFixture(kind: '单个短视频' | '多集短片', approveCr
     fixture.stages.approve(creative.id);
   }
   const started: number[] = [];
+  const picked: number[] = [];
   const catalog = createScreenplayFormCatalog({
+    projects: fixture.projects,
     works: fixture.works,
     screenplays: fixture.screenplays,
-    onStarted: (workId) => started.push(workId)
+    onStarted: (workId) => started.push(workId),
+    onPicked: (workId) => picked.push(workId)
   });
-  const open = (params: unknown): FormDefinition => {
-    const factory = catalog.get(SCREENPLAY_FORM_NAMES.start);
+  const open = (params: unknown, name: string = SCREENPLAY_FORM_NAMES.start): FormDefinition => {
+    const factory = catalog.get(name);
     assert.ok(factory);
     return factory(params);
   };
-  return { ...fixture, work, started, open };
+  return { ...fixture, work, started, picked, open };
 }
 
 test('字段：多集作品有集数上限，单个短视频没有；新建时没有初始值', async () => {
@@ -82,6 +85,30 @@ test('提交：启动生成并通知页面；输入不合法时返回字段错�
     assert.equal(screenplays.getView(work.id).run.display, 'pending');
 
     assert.deepEqual(open({ workId: work.id }).initialValues, { maxEpisodeDurationSeconds: '90', maxEpisodes: '3', extra: '悬疑' });
+  } finally {
+    database.close();
+  }
+});
+
+test('选择作品：只列创意已确认的作品，标签为“项目 › 作品”；只有一个时预选；提交后通知所选作品', async () => {
+  const { database, open, work, picked, projects, works } = await createFixture('单个短视频');
+  try {
+    // 另一个项目里创意未确认的作品不会出现。
+    const other = projects.createProject({ name: '项目乙' });
+    works.createWork(other.id, normalizeWorkCreation({ workName: '未确认作品', kind: '单个短视频' }, 'text'));
+
+    const form = open({}, SCREENPLAY_FORM_NAMES.pick);
+    const field = form.schema.fields[0];
+    assert.deepEqual(field.options, ['项目甲 › 作品甲']);
+    assert.deepEqual(form.initialValues, { work: '项目甲 › 作品甲' });
+
+    assert.throws(() => form.submit({ work: '' }), (error) => error instanceof ValidationError && error.fieldErrors.work !== undefined);
+    assert.deepEqual(picked, []);
+    await form.submit({ work: '项目甲 › 作品甲' });
+    assert.deepEqual(picked, [work.id]);
+
+    // 限定项目：该项目下没有可选作品时不能打开。
+    assert.throws(() => open({ projectId: other.id }, SCREENPLAY_FORM_NAMES.pick), (error) => error instanceof ValidationError && /没有可生成剧本的作品/.test(error.message));
   } finally {
     database.close();
   }

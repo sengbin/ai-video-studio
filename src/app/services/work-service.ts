@@ -75,6 +75,11 @@ export class WorkService {
     return this.works.listBySource(sourceType).map((work) => this.toListItem(work));
   }
 
+  /** 列出所有项目、所有素材来源的作品及其阶段状态。 */
+  listAllWorks(): WorkListItem[] {
+    return this.works.listAll().map((work) => this.toListItem(work));
+  }
+
   /** 按标识查找作品；不存在返回 undefined。 */
   findWork(id: number): Work | undefined {
     return this.works.findById(id);

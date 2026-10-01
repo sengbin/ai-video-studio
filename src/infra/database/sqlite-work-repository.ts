@@ -42,6 +42,11 @@ export class SqliteWorkRepository implements WorkRepository {
     return rows.map(toWork);
   }
 
+  listAll(): Work[] {
+    const rows = this.database.prepare('SELECT * FROM works ORDER BY created_at DESC, id DESC').all() as unknown as WorkRow[];
+    return rows.map(toWork);
+  }
+
   findById(id: number): Work | undefined {
     const row = this.database.prepare('SELECT * FROM works WHERE id = ?').get(id) as unknown as WorkRow | undefined;
     return row === undefined ? undefined : toWork(row);

@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：work-list-pages.ts
-// 说明：作品列表页（P3）的入口：每种素材来源一个面板，列出所有项目中该来源的作品；新建、编辑、重新生成、生成剧本表单和阶段产出层都在页内弹出。
+// 说明：作品列表页（P3）的入口：每种素材来源一个面板，列出所有项目中该来源的作品；另有一个跨来源的“剧本”面板；新建、编辑、重新生成、生成剧本表单和阶段产出层都在页内弹出。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-01
@@ -8,7 +8,6 @@
 // ------------------------------------------------------------------------
 
 import { StageKind } from '../../domain/models/stage-run';
-import { WorkSourceType } from '../../domain/models/work';
 import { registerFormHandlers } from '../forms/form-handlers';
 import { createScreenplayFormCatalog } from '../forms/screenplay-form';
 import { createWorkFormCatalog } from '../forms/work-form';
@@ -20,15 +19,16 @@ import { ScreenplayService } from '../services/screenplay-service';
 import { StageService } from '../services/stage-service';
 import { WorkService } from '../services/work-service';
 import { STAGE_EVENTS } from './stage-handlers';
-import { WORK_LIST_EVENTS, WorkListRequest, registerWorkListHandlers } from './work-list-handlers';
+import { WORK_LIST_EVENTS, WorkListRequest, WorkListView, registerWorkListHandlers } from './work-list-handlers';
 
 const WORK_LIST_VIEW_TYPE = 'aiVideoStudio.workList';
 
-/** 各素材来源的页面标题，与侧栏“创作”分区的条目名称一致。 */
-const WORK_LIST_TITLES: Readonly<Record<WorkSourceType, string>> = {
+/** 各视图的页面标题，与侧栏“创作”“脚本”分区的条目名称一致。 */
+const WORK_LIST_TITLES: Readonly<Record<WorkListView, string>> = {
   text: '文字灵感',
   image: '图片灵感',
-  novel: '小说改编'
+  novel: '小说改编',
+  screenplay: '剧本'
 };
 
 /** 已打开的作品列表页。 */
@@ -41,7 +41,7 @@ interface OpenedWorkList {
 
 /** 作品列表页的入口集合。 */
 export class WorkListPages {
-  private readonly opened = new Map<WorkSourceType, OpenedWorkList>();
+  private readonly opened = new Map<WorkListView, OpenedWorkList>();
 
   /**
    * @param services 项目、作品、阶段与剧本服务。
@@ -58,13 +58,13 @@ export class WorkListPages {
   ) {}
 
   /**
-   * 打开或聚焦某种素材来源的作品列表页。
-   * @param sourceType 素材来源。
+   * 打开或聚焦某个视图的作品列表页。
+   * @param view 素材来源，或剧本视图。
    * @param request 需要页面处理的请求，如弹出新建作品表单。
    */
-  show(sourceType: WorkSourceType, request?: WorkListRequest): void {
-    const key = panelKey(sourceType);
-    const existing = this.opened.get(sourceType);
+  show(view: WorkListView, request?: WorkListRequest): void {
+    const key = panelKey(view);
+    const existing = this.opened.get(view);
     if (existing !== undefined && this.panels.reveal(key)) {
       if (request !== undefined) {
         existing.panel?.postEvent(WORK_LIST_EVENTS.action, request);
@@ -75,7 +75,7 @@ export class WorkListPages {
     const { projects, works, stages, screenplays } = this.services;
     const entry: OpenedWorkList = { panel: undefined, pending: request };
     const router = new MessageRouter();
-    registerWorkListHandlers(router, sourceType, this.services, {
+    registerWorkListHandlers(router, view, this.services, {
       takePending: () => {
         const taken = entry.pending;
         entry.pending = undefined;
@@ -87,20 +87,26 @@ export class WorkListPages {
       router,
       new Map([
         ...createWorkFormCatalog({ projects, works, stages, onStarted: (workId) => openStage(workId, 'creative') }),
-        ...createScreenplayFormCatalog({ works, screenplays, onStarted: (workId) => openStage(workId, 'screenplay') })
+        ...createScreenplayFormCatalog({
+          projects,
+          works,
+          screenplays,
+          onStarted: (workId) => openStage(workId, 'screenplay'),
+          onPicked: (workId) => entry.panel?.postEvent(WORK_LIST_EVENTS.startScreenplay, { workId })
+        })
       ])
     );
 
     const panel = this.panels.open({
       key,
       viewType: WORK_LIST_VIEW_TYPE,
-      title: WORK_LIST_TITLES[sourceType],
+      title: WORK_LIST_TITLES[view],
       styles: WORK_LIST_PAGE_RESOURCES.styles,
       scripts: WORK_LIST_PAGE_RESOURCES.scripts,
       router
     });
     entry.panel = panel;
-    this.opened.set(sourceType, entry);
+    this.opened.set(view, entry);
 
     const notifyChanged = () => panel.postEvent(WORK_LIST_EVENTS.changed);
     const unsubscribes = [
@@ -114,12 +120,12 @@ export class WorkListPages {
     ];
     panel.onDidClose(() => {
       unsubscribes.forEach((unsubscribe) => unsubscribe());
-      this.opened.delete(sourceType);
+      this.opened.delete(view);
     });
   }
 }
 
 /** 作品列表页的面板键。 */
-function panelKey(sourceType: WorkSourceType): string {
-  return `work-list:${sourceType}`;
+function panelKey(view: WorkListView): string {
+  return `work-list:${view}`;
 }
