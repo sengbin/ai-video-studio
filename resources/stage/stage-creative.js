@@ -16,6 +16,8 @@
   const SAVED_TEXT = '已保存';
   const SAVE_STATE_DIRTY = 'dirty';
   const SAVE_STATE_SAVED = 'saved';
+  // 正文按内容增高，最多长到这个行数再滚动（与阶段页的编辑区高度相当）。
+  const BODY_MAX_ROWS = 20;
 
   /**
    * 创建创意阶段的内容。
@@ -152,7 +154,7 @@
       };
       const canEdit = view.actions.canEdit;
       const title = aiUi.textInput({ value: chapter.title, ariaLabel: '章节标题', disabled: !canEdit, onChange: markDirty });
-      const content = aiUi.textArea({ value: chapter.content, ariaLabel: '章节正文', disabled: !canEdit, onChange: markDirty });
+      const content = aiUi.textArea({ value: chapter.content, ariaLabel: '章节正文', maxRows: BODY_MAX_ROWS, disabled: !canEdit, onChange: markDirty });
       const reason = readonlyReason(view);
       const saveButton = aiUi.button({ text: SAVE_TEXT, variant: 'primary', disabled: true, onClick: () => void saveChapter() });
       /** 保存按钮只在有修改时可点，保存后显示“已保存”，再次修改后恢复。 */

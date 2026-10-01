@@ -184,6 +184,8 @@ const search = aiUi.textInput({ type: 'search', placeholder: '搜索项目名称
 
 **自适应高度**：传 `maxRows` 时高度按内容自动调整，至少 `minRows` 行（默认 1），最多 `maxRows` 行，内容再多出现滚动条；只有一行文字时就是一行高。此时不显示调整把手，也不受 78px 最小高度限制。创建时还没有挂到页面、量不出换行，所以挂上后和宽度变化时（`ResizeObserver`）会重新计算，设置值和输入时也会重新计算。适合字段很多、多数内容很短的编辑表单（如实体的设定字段）：`aiUi.textArea({ minRows: 1, maxRows: 3 })`。
 
+**本项目的用法**：所有页面的多行文本都用自适应高度，最大行数按页面的高度设定：表单引擎中的多行字段默认 4 行（字段描述可用 `maxRows` 覆盖，如“创作主题或灵感”为 8 行）；阶段页的实体设定字段 3 行，集梗概 4 行，章节正文、剧本包正文、本集剧本正文 20 行。新增多行文本时也要按所在页面的高度设定最大行数，不再使用固定高度。
+
 ### 5.4 下拉列表 `aiUi.select`
 
 ```js
@@ -519,6 +521,7 @@ const page = aiUi.openPage({
 | `options` | 选项，`select`、`radio`、`checkboxes` 使用 |
 | `allowCustom` | 下拉是否提供“其他（手动输入）” |
 | `placeholder` | 输入框占位示例 |
+| `maxRows` | 多行文本按内容增高的最大行数，不填默认 4；仅 `textarea` 使用 |
 | `checkUnique` | 失去焦点时向宿主检查唯一性 |
 | `accept`、`multiple`、`maxFiles`、`maxFileBytes` | `file` 使用，含义见 5.12；必填时至少需要选择一个文件 |
 

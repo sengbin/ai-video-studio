@@ -27,6 +27,8 @@
   const DISCARD_CONFIRM_TEXT = '放弃修改';
   const DISCARD_CANCEL_TEXT = '继续编辑';
   const CHOOSE_ONE_CONTROLS = ['select', 'radio'];
+  // 多行文本的默认最大行数：内容只有一行时就是一行高，最多长到这个行数再滚动。
+  const DEFAULT_TEXTAREA_MAX_ROWS = 4;
 
   /** 解析多选值文本为数组；无法解析时按空数组。 */
   function parseList(text) {
@@ -43,7 +45,15 @@
     const options = fieldSchema.options || [];
     switch (fieldSchema.control) {
       case 'textarea':
-        return { kind: 'text', control: aiUi.textArea({ value: initialText, placeholder: fieldSchema.placeholder }) };
+        return {
+          kind: 'text',
+          control: aiUi.textArea({
+            value: initialText,
+            placeholder: fieldSchema.placeholder,
+            minRows: 1,
+            maxRows: fieldSchema.maxRows || DEFAULT_TEXTAREA_MAX_ROWS
+          })
+        };
       case 'select':
         return {
           kind: 'text',

@@ -27,6 +27,8 @@ export interface FormFieldSchema {
   readonly allowCustom?: boolean;
   /** 输入框的占位示例文字。 */
   readonly placeholder?: string;
+  /** 多行文本按内容增高的最大行数，超过后出现滚动条；不填用表单引擎的默认值；仅 textarea 使用。 */
+  readonly maxRows?: number;
   /** 失去焦点时是否向宿主检查唯一性。 */
   readonly checkUnique?: boolean;
   /** 文件允许的扩展名（小写、含点）；仅 file 使用。 */

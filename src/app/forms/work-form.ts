@@ -69,6 +69,8 @@ const PROJECT_FIELD_KEY = 'projectName';
 const NO_PROJECT_MESSAGE = '还没有项目，请先在“所有项目”中创建项目。';
 const PROJECT_REQUIRED_MESSAGE = '请选择所属项目。';
 const KIND_LOCKED_NOTE = '；剧本已确认，作品形态不能再修改';
+/** 创作主题或灵感是主要输入，多行文本最多长到 8 行。 */
+const IDEA_MAX_ROWS = 8;
 
 /** 读取入口传来的素材来源，必须是三种之一。 */
 function readSourceType(value: unknown): WorkSourceType {
@@ -170,7 +172,8 @@ function createParamFields(sourceType: WorkSourceType): FormFieldSchema[] {
       description: `一句话或一段文字都可以，最多 ${CREATIVE_IDEA_MAX_LENGTH} 字；不填则依据题材、基调和补充要求创作`,
       control: 'textarea',
       required: false,
-      maxLength: CREATIVE_IDEA_MAX_LENGTH
+      maxLength: CREATIVE_IDEA_MAX_LENGTH,
+      maxRows: IDEA_MAX_ROWS
     });
   }
   fields.push(

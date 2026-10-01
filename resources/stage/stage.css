@@ -126,17 +126,7 @@
 }
 
 .stage-editor .ui-textarea__field {
-  min-height: 300px;
   font-size: 12px;
-}
-
-/* 集、实体的字段较多，正文框矮一些 */
-.stage-editor--fields .ui-textarea__field {
-  min-height: 78px;
-}
-
-.stage-editor--fields .stage-editor__content .ui-textarea__field {
-  min-height: 220px;
 }
 
 .stage-editor__actions {

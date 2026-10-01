@@ -19,6 +19,8 @@
   const SAVED_TEXT = '已保存';
   const SAVE_STATE_DIRTY = 'dirty';
   const SAVE_STATE_SAVED = 'saved';
+  // 正文按内容增高，最多长到这个行数再滚动（与阶段页的编辑区高度相当）。
+  const BODY_MAX_ROWS = 20;
   const TYPE_TEXT = 'text';
   const TYPE_EPISODE = 'episode';
   const TYPE_ENTITY = 'entity';
@@ -122,7 +124,7 @@
 
     /** 剧本包正文编辑：标题与梗概只读显示，正文可改。 */
     function buildTextEditor(view, canEdit, markDirty) {
-      const fullText = aiUi.textArea({ value: view.screenplay.fullText, ariaLabel: '剧本包正文', disabled: !canEdit, onChange: markDirty });
+      const fullText = aiUi.textArea({ value: view.screenplay.fullText, ariaLabel: '剧本包正文', maxRows: BODY_MAX_ROWS, disabled: !canEdit, onChange: markDirty });
       return {
         fields: [
           aiUi.h('p', { class: 'description', text: `标题：${view.screenplay.title}` }),
@@ -139,13 +141,13 @@
     /** 集编辑：标题、梗概、目标时长、本集剧本正文。 */
     function buildEpisodeEditor(view, episode, canEdit, markDirty) {
       const title = aiUi.textInput({ value: episode.title, disabled: !canEdit, onChange: markDirty });
-      const synopsis = aiUi.textArea({ value: episode.synopsis, rows: 3, disabled: !canEdit, onChange: markDirty });
+      const synopsis = aiUi.textArea({ value: episode.synopsis, maxRows: 4, disabled: !canEdit, onChange: markDirty });
       const duration = aiUi.textInput({
         value: episode.targetDurationSeconds === null ? '' : String(episode.targetDurationSeconds),
         disabled: !canEdit,
         onChange: markDirty
       });
-      const text = aiUi.textArea({ value: episode.screenplayText, disabled: !canEdit, onChange: markDirty });
+      const text = aiUi.textArea({ value: episode.screenplayText, maxRows: BODY_MAX_ROWS, disabled: !canEdit, onChange: markDirty });
       return {
         fields: [
           field('集标题', title),
