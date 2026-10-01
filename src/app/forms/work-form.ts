@@ -1,15 +1,16 @@
 // ------------------------------------------------------------------------
 // 名称：work-form.ts
-// 说明：创意阶段表单（F3）的定义：新建作品并开始生成，或对已有作品重新生成创意；字段随素材来源变化。
+// 说明：作品相关表单的定义：创意阶段表单（F3）新建作品并开始生成、对已有作品重新生成创意，以及编辑作品的名称与形态；字段随素材来源变化。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-09-30
-// 备注：素材来源与所属项目由入口决定，不在表单中选择；提交时先校验全部字段，创建作品后再启动生成，启动失败会撤销刚创建的作品，让用户可以直接重试。
+// 备注：素材来源由入口决定，所属项目在新建表单里选择（入口可传默认项目）；提交时先校验全部字段，创建作品后再启动生成，启动失败会撤销刚创建的作品，让用户可以直接重试。
 // ------------------------------------------------------------------------
 
 import { FORM_LEVEL_ERROR_KEY, ValidationError } from '../../domain/errors';
 import { CreativeParams } from '../../domain/models/creative';
 import { GENRE_OPTIONS, TONE_OPTIONS } from '../../domain/models/option-sets';
+import { ProjectSummary } from '../../domain/models/project';
 import { WorkSourceType } from '../../domain/models/work';
 import { readEntityId, readRecord } from '../../domain/rules/field-readers';
 import {
@@ -42,10 +43,11 @@ import { DUPLICATE_WORK_NAME_MESSAGE, WorkService } from '../services/work-servi
 import { FormCatalog, FormDefinition, FormValues } from './form-definition';
 import { FormFieldSchema } from './form-schema';
 
-/** 创意表单在表单目录中的名称，页面据此请求打开。 */
+/** 作品表单在表单目录中的名称，页面据此请求打开。 */
 export const WORK_FORM_NAMES = {
   create: 'work.create',
-  regenerate: 'work.regenerate'
+  regenerate: 'work.regenerate',
+  edit: 'work.edit'
 } as const;
 
 /** 创意表单依赖的服务与回调。 */
@@ -60,7 +62,13 @@ export interface WorkFormDependencies {
 const SOURCE_TYPES: readonly WorkSourceType[] = ['text', 'image', 'novel'];
 const SUBMIT_LABEL_CREATE = '创建并生成';
 const SUBMIT_LABEL_REGENERATE = '开始生成';
+const SUBMIT_LABEL_EDIT = '保存';
 const LABEL_SINGLE_KIND = WORK_KIND_LABELS.single;
+/** 新建表单中“所属项目”字段的键；项目名称全局唯一，字段值就是项目名称。 */
+const PROJECT_FIELD_KEY = 'projectName';
+const NO_PROJECT_MESSAGE = '还没有项目，请先在“全部项目”中创建项目。';
+const PROJECT_REQUIRED_MESSAGE = '请选择所属项目。';
+const KIND_LOCKED_NOTE = '；剧本已确认，作品形态不能再修改';
 
 /** 读取入口传来的素材来源，必须是三种之一。 */
 function readSourceType(value: unknown): WorkSourceType {
@@ -70,27 +78,54 @@ function readSourceType(value: unknown): WorkSourceType {
   return value as WorkSourceType;
 }
 
-/** 作品名称、形态与素材文件字段，只在新建作品时出现。 */
-function createWorkFields(sourceType: WorkSourceType): FormFieldSchema[] {
+/** 按项目名称找到所选项目；没有选择或项目已不存在时报字段错误。 */
+function readProject(projects: readonly ProjectSummary[], name: string | undefined): ProjectSummary {
+  const project = projects.find((item) => item.name === name);
+  if (project === undefined) {
+    throw new ValidationError({ [PROJECT_FIELD_KEY]: PROJECT_REQUIRED_MESSAGE });
+  }
+  return project;
+}
+
+/** 作品名称字段；只有所属项目已确定时才能在失去焦点时检查重名。 */
+function createNameField(checkUnique: boolean, note = ''): FormFieldSchema {
+  return {
+    key: 'workName',
+    label: '作品名称',
+    description: `作品在项目内的唯一名称，最多 ${WORK_NAME_MAX_LENGTH} 字${note}`,
+    control: 'text',
+    required: true,
+    maxLength: WORK_NAME_MAX_LENGTH,
+    placeholder: '例如：雨夜来客',
+    checkUnique
+  };
+}
+
+/** 作品形态字段。 */
+function createKindField(): FormFieldSchema {
+  return {
+    key: 'kind',
+    label: '作品形态',
+    description: '单个短视频只有 1 集；多集短片在确认剧本后按剧情拆分为多集，剧本确认后不能再修改',
+    control: 'radio',
+    required: true,
+    options: Object.values(WORK_KIND_LABELS)
+  };
+}
+
+/** 所属项目、作品名称、形态与素材文件字段，只在新建作品时出现。 */
+function createWorkFields(sourceType: WorkSourceType, projectNames: readonly string[]): FormFieldSchema[] {
   const fields: FormFieldSchema[] = [
     {
-      key: 'workName',
-      label: '作品名称',
-      description: `作品在项目内的唯一名称，最多 ${WORK_NAME_MAX_LENGTH} 字`,
-      control: 'text',
+      key: PROJECT_FIELD_KEY,
+      label: '所属项目',
+      description: '作品所属的项目，创建后不能更改',
+      control: 'select',
       required: true,
-      maxLength: WORK_NAME_MAX_LENGTH,
-      placeholder: '例如：雨夜来客',
-      checkUnique: true
+      options: projectNames
     },
-    {
-      key: 'kind',
-      label: '作品形态',
-      description: '单个短视频只有 1 集；多集短片在确认剧本后按剧情拆分为多集',
-      control: 'radio',
-      required: true,
-      options: Object.values(WORK_KIND_LABELS)
-    }
+    createNameField(false),
+    createKindField()
   ];
   if (sourceType === 'image') {
     fields.push({
@@ -249,23 +284,30 @@ function collectFieldErrors(checks: ReadonlyArray<() => void>): void {
 /**
  * 创建“新建作品并生成”表单的定义。
  * @param dependencies 服务与回调。
- * @param projectId 所属项目。
+ * @param projects 可选的全部项目。
+ * @param defaultProjectName 默认选中的项目名称；没有默认时为空串。
  * @param sourceType 素材来源。
  */
-function createNewWorkForm(dependencies: WorkFormDependencies, projectId: number, sourceType: WorkSourceType): FormDefinition {
+function createNewWorkForm(
+  dependencies: WorkFormDependencies,
+  projects: readonly ProjectSummary[],
+  defaultProjectName: string,
+  sourceType: WorkSourceType
+): FormDefinition {
   const { works, stages, onStarted } = dependencies;
   return {
     schema: {
       title: `新建作品（${SOURCE_TYPE_LABELS[sourceType]}）`,
       submitLabel: SUBMIT_LABEL_CREATE,
-      fields: [...createWorkFields(sourceType), ...createParamFields(sourceType)]
+      fields: [...createWorkFields(sourceType, projects.map((project) => project.name)), ...createParamFields(sourceType)]
     },
-    initialValues: { kind: LABEL_SINGLE_KIND, ...DEFAULT_PARAM_VALUES },
-    checkField: (key, value) =>
-      key === 'workName' && !works.isWorkNameAvailable(projectId, value) ? DUPLICATE_WORK_NAME_MESSAGE : undefined,
+    initialValues: { [PROJECT_FIELD_KEY]: defaultProjectName, kind: LABEL_SINGLE_KIND, ...DEFAULT_PARAM_VALUES },
     submit: async (values) => {
-      const parsed: { creation?: NormalizedWorkCreation; params?: CreativeParams } = {};
+      const parsed: { project?: ProjectSummary; creation?: NormalizedWorkCreation; params?: CreativeParams } = {};
       collectFieldErrors([
+        () => {
+          parsed.project = readProject(projects, values[PROJECT_FIELD_KEY]);
+        },
         () => {
           parsed.creation = normalizeWorkCreation(values, sourceType);
         },
@@ -273,12 +315,12 @@ function createNewWorkForm(dependencies: WorkFormDependencies, projectId: number
           parsed.params = normalizeCreativeParams(values);
         }
       ]);
-      const { creation, params } = parsed;
-      if (creation === undefined || params === undefined) {
+      const { project, creation, params } = parsed;
+      if (project === undefined || creation === undefined || params === undefined) {
         return;
       }
 
-      const work = works.createWork(projectId, creation);
+      const work = works.createWork(project.id, creation);
       try {
         await stages.startCreative(work.id, params);
       } catch (error) {
@@ -315,7 +357,31 @@ function createRegenerateForm(dependencies: WorkFormDependencies, workId: number
 }
 
 /**
- * 创建创意表单目录：新建的参数为 `{ projectId, sourceType }`，重新生成的参数为 `{ workId }`。
+ * 创建“编辑作品”表单的定义：只改名称和形态（剧本确认后形态锁定），所属项目和素材不能改。
+ * @param dependencies 服务与回调。
+ * @param workId 作品标识。
+ */
+function createEditWorkForm(dependencies: WorkFormDependencies, workId: number): FormDefinition {
+  const { works } = dependencies;
+  const work = works.getWork(workId);
+  const canChangeKind = works.canChangeKind(workId);
+  return {
+    schema: {
+      title: `编辑作品：${work.name}`,
+      submitLabel: SUBMIT_LABEL_EDIT,
+      fields: canChangeKind ? [createNameField(true), createKindField()] : [createNameField(true, KIND_LOCKED_NOTE)]
+    },
+    initialValues: { workName: work.name, kind: WORK_KIND_LABELS[work.kind] },
+    checkField: (key, value) =>
+      key === 'workName' && !works.isWorkNameAvailable(work.projectId, value, work.id) ? DUPLICATE_WORK_NAME_MESSAGE : undefined,
+    submit: (values) => {
+      works.updateWork(work.id, values);
+    }
+  };
+}
+
+/**
+ * 创建作品表单目录：新建的参数为 `{ sourceType, projectId? }`（projectId 为默认选中的项目），重新生成和编辑的参数为 `{ workId }`。
  * @param dependencies 服务与回调。
  */
 export function createWorkFormCatalog(dependencies: WorkFormDependencies): FormCatalog {
@@ -324,13 +390,21 @@ export function createWorkFormCatalog(dependencies: WorkFormDependencies): FormC
       WORK_FORM_NAMES.create,
       (params) => {
         const source = readRecord(params);
-        const project = dependencies.projects.getProject(readEntityId({ id: source.projectId }, '项目'));
-        return createNewWorkForm(dependencies, project.id, readSourceType(source.sourceType));
+        const sourceType = readSourceType(source.sourceType);
+        const projects = dependencies.projects.listProjects();
+        if (projects.length === 0) {
+          throw new ValidationError({ [FORM_LEVEL_ERROR_KEY]: NO_PROJECT_MESSAGE });
+        }
+        // 默认项目：入口指定的项目；没有指定且只有一个项目时选它；否则让用户选。
+        const preferred = projects.find((project) => project.id === source.projectId);
+        const defaultProject = preferred ?? (projects.length === 1 ? projects[0] : undefined);
+        return createNewWorkForm(dependencies, projects, defaultProject?.name ?? '', sourceType);
       }
     ],
     [
       WORK_FORM_NAMES.regenerate,
       (params) => createRegenerateForm(dependencies, readEntityId({ id: readRecord(params).workId }, '作品'))
-    ]
+    ],
+    [WORK_FORM_NAMES.edit, (params) => createEditWorkForm(dependencies, readEntityId({ id: readRecord(params).workId }, '作品'))]
   ]);
 }

@@ -60,16 +60,16 @@ function createEditorPageResources(pageStyles: readonly string[], pageScripts: r
   };
 }
 
-/** 项目列表页：项目表单、项目详情层、新建作品表单和创意产出层都在页内弹出，因此一并加载表单引擎、产出层和详情层（详情层依赖产出层，顺序不能错）。 */
+/** 项目列表页：新建与编辑表单在页内弹出，因此一并加载表单引擎。 */
 export const PROJECT_LIST_PAGE_RESOURCES: PageResources = createEditorPageResources(
-  ['form/form.css', 'stage/stage.css', 'project-detail/project-detail.css', 'project-list/project-list.css'],
-  [
-    'form/form-runtime.js',
-    'shared/page-format.js',
-    'stage/stage.js',
-    'project-detail/project-detail.js',
-    'project-list/project-list.js'
-  ]
+  ['form/form.css', 'project-list/project-list.css'],
+  ['form/form-runtime.js', 'shared/page-format.js', 'project-list/project-list.js']
+);
+
+/** 作品列表页：新建、编辑、重新生成表单和创意产出层都在页内弹出，因此一并加载表单引擎与产出层。 */
+export const WORK_LIST_PAGE_RESOURCES: PageResources = createEditorPageResources(
+  ['form/form.css', 'stage/stage.css', 'work-list/work-list.css'],
+  ['form/form-runtime.js', 'shared/page-format.js', 'stage/stage.js', 'work-list/work-list.js']
 );
 
 /** 模型设置页：设置即时保存，没有弹出表单。 */

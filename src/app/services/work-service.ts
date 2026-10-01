@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：work-service.ts
-// 说明：作品应用服务：列出项目下的作品及其创意阶段状态、检查名称唯一、创建与删除作品，变化后通知订阅者。
+// 说明：作品应用服务：列出项目或某种素材来源下的作品及其创意阶段状态、检查名称唯一、创建、修改与删除作品，变化后通知订阅者。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-09-30
@@ -13,7 +13,7 @@ import { Work, WorkKind, WorkSourceType } from '../../domain/models/work';
 import { StageRunRepository } from '../../domain/ports/stage-run-repository';
 import { WorkRepository } from '../../domain/ports/work-repository';
 import { toDisplayStatus } from '../../domain/rules/stage-review-rules';
-import { NormalizedWorkCreation } from '../../domain/rules/work-rules';
+import { NormalizedWorkCreation, normalizeWorkUpdate } from '../../domain/rules/work-rules';
 import { ChangeNotifier } from './change-notifier';
 
 /** 作品名称重复时的错误提示。 */
@@ -62,15 +62,12 @@ export class WorkService {
 
   /** 列出项目下的作品及其创意阶段状态。 */
   listWorks(projectId: number): WorkListItem[] {
-    return this.works.listByProject(projectId).map((work) => ({
-      id: work.id,
-      projectId: work.projectId,
-      name: work.name,
-      kind: work.kind,
-      sourceType: work.sourceType,
-      createdAt: work.createdAt,
-      creative: this.describeCreative(work.id)
-    }));
+    return this.works.listByProject(projectId).map((work) => this.toListItem(work));
+  }
+
+  /** 列出所有项目中指定素材来源的作品及其创意阶段状态。 */
+  listWorksBySource(sourceType: WorkSourceType): WorkListItem[] {
+    return this.works.listBySource(sourceType).map((work) => this.toListItem(work));
   }
 
   /** 按标识查找作品；不存在返回 undefined。 */
@@ -90,9 +87,18 @@ export class WorkService {
     return work;
   }
 
-  /** 判断作品名称在项目内是否可用，用于表单在字段失去焦点时检查重名。 */
-  isWorkNameAvailable(projectId: number, name: string): boolean {
-    return this.works.findByName(projectId, name.trim()) === undefined;
+  /**
+   * 判断作品名称在项目内是否可用，用于表单在字段失去焦点时检查重名。
+   * @param excludeWorkId 修改作品时排除自身。
+   */
+  isWorkNameAvailable(projectId: number, name: string, excludeWorkId?: number): boolean {
+    const existing = this.works.findByName(projectId, name.trim());
+    return existing === undefined || existing.id === excludeWorkId;
+  }
+
+  /** 作品形态是否还能修改：剧本一旦确认过，集就已经按剧情确定，形态不再能改。 */
+  canChangeKind(workId: number): boolean {
+    return this.runs.listVersions({ workId, stage: 'screenplay', episodeId: null }).every((run) => run.approvedAt === null);
   }
 
   /**
@@ -110,6 +116,28 @@ export class WorkService {
   }
 
   /**
+   * 修改作品名称，在形态还能修改时一并修改形态。
+   * @param id 作品标识。
+   * @param rawInput 表单提交的原始内容。
+   * @throws ValidationError 内容不合法。
+   * @throws ConflictError 项目内名称重复。
+   * @throws NotFoundError 作品不存在。
+   */
+  updateWork(id: number, rawInput: unknown): Work {
+    const work = this.getWork(id);
+    const update = normalizeWorkUpdate(rawInput, work.kind, this.canChangeKind(id));
+    if (!this.isWorkNameAvailable(work.projectId, update.name, id)) {
+      throw new ConflictError('workName', DUPLICATE_WORK_NAME_MESSAGE);
+    }
+    const updated = this.works.update(id, update, this.now().toISOString());
+    if (updated === undefined) {
+      throw new NotFoundError(`作品 ${id} 不存在。`);
+    }
+    this.changeNotifier.notify(work.projectId);
+    return updated;
+  }
+
+  /**
    * 删除作品及其下全部内容。
    * @throws NotFoundError 作品不存在。
    */
@@ -117,6 +145,19 @@ export class WorkService {
     const work = this.getWork(id);
     this.works.remove(id);
     this.changeNotifier.notify(work.projectId);
+  }
+
+  /** 作品转列表行：附带创意阶段的状态摘要。 */
+  private toListItem(work: Work): WorkListItem {
+    return {
+      id: work.id,
+      projectId: work.projectId,
+      name: work.name,
+      kind: work.kind,
+      sourceType: work.sourceType,
+      createdAt: work.createdAt,
+      creative: this.describeCreative(work.id)
+    };
   }
 
   /** 创意阶段的状态摘要：取最新版本的状态。 */

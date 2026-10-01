@@ -16,7 +16,8 @@ import {
   PageResources,
   SETTINGS_PAGE_RESOURCES,
   SIDEBAR_PAGE_RESOURCES,
-  WEBVIEW_ROOT_PATHS
+  WEBVIEW_ROOT_PATHS,
+  WORK_LIST_PAGE_RESOURCES
 } from './page-resources';
 
 /** 编译产物位于 out/app/panels，扩展根目录在其上三级。 */
@@ -24,6 +25,7 @@ const EXTENSION_ROOT = resolve(__dirname, '..', '..', '..');
 const UI_KIT_PREFIX = 'ui-kit/src/';
 const PAGES: ReadonlyArray<readonly [string, PageResources]> = [
   ['项目列表页', PROJECT_LIST_PAGE_RESOURCES],
+  ['作品列表页', WORK_LIST_PAGE_RESOURCES],
   ['模型设置页', SETTINGS_PAGE_RESOURCES],
   ['侧栏页面', SIDEBAR_PAGE_RESOURCES]
 ];

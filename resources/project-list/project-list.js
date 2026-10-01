@@ -1,10 +1,10 @@
 // ------------------------------------------------------------------------
 // 名称：project-list.js
-// 说明：项目列表页脚本：用界面组件库渲染项目表格，处理搜索、在页内弹出页面中新建与编辑、弹出项目详情层、带名称确认的删除。
+// 说明：项目列表页脚本：用界面组件库渲染项目表格，处理搜索、在页内弹出页面中新建与编辑、带名称确认的删除。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-09-30
-// 备注：请求与事件名称与 src/app/pages/project-list-handlers.ts、src/app/forms/project-form.ts 一致；依赖 form/form-runtime.js（aiForm）、project-detail/project-detail.js（aiProjectDetail）与 shared/page-format.js（pageFormat）。
+// 备注：请求与事件名称与 src/app/pages/project-list-handlers.ts、src/app/forms/project-form.ts 一致；依赖 form/form-runtime.js（aiForm）与 shared/page-format.js（pageFormat）。
 // ------------------------------------------------------------------------
 
 'use strict';
@@ -14,7 +14,6 @@
   const REQUEST_TAKE_PENDING_ACTION = 'projects.takePendingAction';
   const REQUEST_PREPARE_DELETE = 'projects.prepareDelete';
   const REQUEST_DELETE = 'projects.delete';
-  const REQUEST_OPEN = 'projects.open';
   const EVENT_CHANGED = 'projects.changed';
   const EVENT_ACTION = 'projects.action';
   const ACTION_CREATE = 'create';
@@ -43,19 +42,9 @@
     messageElement.hidden = text === '';
   }
 
-  /** 显示中性提示（如侧栏引导用户先选择项目），不带成功或失败的颜色。 */
-  function showNotice(text) {
-    messageElement.textContent = text;
-    messageElement.className = 'list-message description';
-    messageElement.hidden = text === '';
-  }
-
-  /** 处理宿主带来的请求：先显示提示，再执行动作，最后弹出项目详情层。 */
+  /** 处理宿主带来的请求：目前只有弹出“新建项目”表单。 */
   function handleRequest(request) {
-    if (!request) return;
-    if (request.notice) showNotice(request.notice);
-    if (request.action === ACTION_CREATE) openCreateForm();
-    if (request.detail) aiProjectDetail.open(request.detail.projectId, request.detail);
+    if (request && request.action === ACTION_CREATE) openCreateForm();
   }
 
   /** 发起请求，失败时在操作结果区显示原因；成功返回响应数据，失败返回 undefined。 */
@@ -76,8 +65,6 @@
     renderContent();
     try {
       projects = await window.hostBridge.request(REQUEST_LIST);
-      // 项目被删除后，它的详情层没有意义，自动关闭。
-      aiProjectDetail.closeMissing(projects.map((project) => project.id));
     } catch (error) {
       loadError = (error && error.message) || '项目列表加载失败。';
     }
@@ -104,11 +91,6 @@
   /** 在页内弹出“编辑项目”表单。 */
   function openEditForm(project) {
     void showForm({ form: FORM_EDIT, params: { id: project.id } });
-  }
-
-  /** 登记最近打开的项目后，在页内弹出它的详情层。 */
-  async function openDetail(project) {
-    if (await runAction(REQUEST_OPEN, { id: project.id })) aiProjectDetail.open(project.id);
   }
 
   /** 删除项目：先取影响范围，再用页内删除对话框要求输入项目名称，最后请求删除。 */
@@ -158,12 +140,6 @@
       title: '操作',
       type: 'actions',
       render: (project) => [
-        aiUi.button({
-          text: '打开',
-          compact: true,
-          ariaLabel: `打开：${project.name}`,
-          onClick: () => void openDetail(project)
-        }).element,
         aiUi.button({
           kind: 'edit',
           compact: true,

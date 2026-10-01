@@ -1,16 +1,15 @@
 // ------------------------------------------------------------------------
 // 名称：text-settings-service.test.ts
-// 说明：文本生成设置服务与最近项目记录的自动化测试：设置视图、修改校验、失效记录清除。
+// 说明：文本生成设置服务的自动化测试：设置视图、修改校验。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-09-30
-// 备注：使用内存中的设置存储、模型清单与键值状态，不依赖 VS Code。
+// 备注：使用内存中的设置存储与模型清单，不依赖 VS Code。
 // ------------------------------------------------------------------------
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { ValidationError } from '../../domain/errors';
-import { Project } from '../../domain/models/project';
 import { TextGenerationSettingsStore, TextModelCatalog, TextModelFamilies } from '../../domain/ports/text-generation-settings-store';
 import {
   SEGMENT_CHARS_MAX,
@@ -18,7 +17,6 @@ import {
   TextGenerationSettings,
   TextGenerationSettingsPatch
 } from '../../domain/rules/text-generation-settings';
-import { KeyValueState, RECENT_PROJECT_STATE_KEY, RecentProjectStore } from './recent-project-store';
 import { MODEL_MISSING_HINT, TextSettingsService } from './text-settings-service';
 
 /** 内存中的设置存储。 */
@@ -98,38 +96,4 @@ test('保存设置：不合法的值被拒绝且不写入', async () => {
   await rejected({});
   await rejected(null);
   assert.equal(store.writes.length, 0);
-});
-
-/** 内存中的键值状态。 */
-class MemoryState implements KeyValueState {
-  readonly values = new Map<string, unknown>();
-
-  get<T>(key: string): T | undefined {
-    return this.values.get(key) as T | undefined;
-  }
-
-  async update(key: string, value: unknown): Promise<void> {
-    if (value === undefined) {
-      this.values.delete(key);
-    } else {
-      this.values.set(key, value);
-    }
-  }
-}
-
-test('最近项目：记录后可读取；项目被删除后视为没有并清除记录', () => {
-  const state = new MemoryState();
-  const projects = new Map<number, Project>([[1, { id: 1, name: '甲' } as Project]]);
-  const store = new RecentProjectStore(state, (id) => projects.get(id));
-
-  assert.equal(store.get(), undefined);
-  store.set(1);
-  assert.equal(store.get()?.name, '甲');
-
-  projects.delete(1);
-  assert.equal(store.get(), undefined);
-  assert.equal(state.values.has(RECENT_PROJECT_STATE_KEY), false);
-
-  state.values.set(RECENT_PROJECT_STATE_KEY, '不是数字');
-  assert.equal(store.get(), undefined);
 });

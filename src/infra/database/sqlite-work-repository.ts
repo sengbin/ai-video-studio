@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：sqlite-work-repository.ts
-// 说明：作品仓库的 SQLite 实现：查询作品，并在一个事务内创建作品、第 1 集与素材文件。
+// 说明：作品仓库的 SQLite 实现：查询作品，在一个事务内创建作品、第 1 集与素材文件，修改作品名称与形态。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-09-30
@@ -8,7 +8,7 @@
 // ------------------------------------------------------------------------
 
 import type { DatabaseSync } from 'node:sqlite';
-import { NewWorkSource, Work, WorkInput, WorkKind, WorkSourceType } from '../../domain/models/work';
+import { NewWorkSource, Work, WorkInput, WorkKind, WorkSourceType, WorkUpdate } from '../../domain/models/work';
 import { WorkRepository } from '../../domain/ports/work-repository';
 import { runInTransaction } from './transaction';
 
@@ -31,6 +31,14 @@ export class SqliteWorkRepository implements WorkRepository {
     const rows = this.database
       .prepare('SELECT * FROM works WHERE project_id = ? ORDER BY created_at DESC, id DESC')
       .all(projectId) as unknown as WorkRow[];
+    return rows.map(toWork);
+  }
+
+  listBySource(sourceType: WorkSourceType): Work[] {
+    // 旧数据没有素材来源，按文字灵感处理。
+    const rows = this.database
+      .prepare("SELECT * FROM works WHERE source_type = ? OR (? = 'text' AND source_type IS NULL) ORDER BY created_at DESC, id DESC")
+      .all(sourceType, sourceType) as unknown as WorkRow[];
     return rows.map(toWork);
   }
 
@@ -72,6 +80,32 @@ export class SqliteWorkRepository implements WorkRepository {
         throw new Error(`作品 ${workId} 写入后读取失败。`);
       }
       return created;
+    });
+  }
+
+  update(id: number, input: WorkUpdate, timestamp: string): Work | undefined {
+    return runInTransaction(this.database, () => {
+      const current = this.findById(id);
+      if (current === undefined) {
+        return undefined;
+      }
+      this.database.prepare('UPDATE works SET name = ?, kind = ?, updated_at = ? WHERE id = ?').run(input.name, input.kind, timestamp, id);
+
+      if (input.kind !== current.kind) {
+        if (input.kind === 'single') {
+          this.database
+            .prepare('INSERT INTO episodes (work_id, seq, title, created_at, updated_at) VALUES (?, 1, ?, ?, ?)')
+            .run(id, input.name, timestamp, timestamp);
+        } else {
+          this.database.prepare('DELETE FROM episodes WHERE work_id = ? AND seq = 1').run(id);
+        }
+      } else if (input.kind === 'single' && input.name !== current.name) {
+        // 只改还跟着作品名的集标题，用户自己改过的标题保持不变。
+        this.database
+          .prepare('UPDATE episodes SET title = ?, updated_at = ? WHERE work_id = ? AND seq = 1 AND title = ?')
+          .run(input.name, timestamp, id, current.name);
+      }
+      return this.findById(id);
     });
   }
 

@@ -10,13 +10,12 @@
 import { mkdirSync } from 'node:fs';
 import * as vscode from 'vscode';
 import { MessageRouter } from './app/messaging/message-router';
-import { ProjectDetailOptions } from './app/pages/project-detail-handlers';
 import { ProjectPages } from './app/pages/project-pages';
 import { SettingsPages } from './app/pages/settings-pages';
+import { WorkListPages } from './app/pages/work-list-pages';
 import { PanelManager } from './app/panels/panel-manager';
 import { ChangeNotifier } from './app/services/change-notifier';
 import { ProjectService } from './app/services/project-service';
-import { RecentProjectStore } from './app/services/recent-project-store';
 import { StageChange, StageService } from './app/services/stage-service';
 import { TextSettingsService } from './app/services/text-settings-service';
 import { WorkService } from './app/services/work-service';
@@ -39,9 +38,6 @@ import { SIDEBAR_VIEW_ID, SidebarViewProvider } from './sidebar/sidebar-view-pro
 
 /** 数据库文件名，位于扩展的全局存储目录。 */
 const DATABASE_FILE_NAME = 'ai-video-studio.sqlite';
-
-/** 侧栏创作入口找不到最近使用的项目时，项目列表页顶部的提示。 */
-const NO_RECENT_PROJECT_NOTICE = '请先选择或创建项目';
 
 /** 侧栏创作入口与素材来源的对应关系。 */
 const CREATION_ENTRIES: ReadonlyArray<readonly [string, WorkSourceType]> = [
@@ -87,12 +83,12 @@ export function activate(context: vscode.ExtensionContext): void {
   runner.recoverInterrupted();
   const stageService = new StageService({ works: workService, runs, chapters, runner, changes: stageChanges });
   const textSettingsService = new TextSettingsService(settingsStore, new CopilotModelCatalog());
-  const recentProjects = new RecentProjectStore(context.globalState, (id) => projectService.findProject(id));
 
   // 页面。
   const panels = new PanelManager(context.extensionUri);
   const services = { projects: projectService, works: workService, stages: stageService };
-  const projectPages = new ProjectPages(services, panels, recentProjects);
+  const projectPages = new ProjectPages(projectService, panels);
+  const workListPages = new WorkListPages(services, panels);
   const settingsPages = new SettingsPages(textSettingsService, panels);
 
   // 侧栏：尚未实现的入口不注册动作，点击时由侧栏提示“该功能尚未开放”。
@@ -101,10 +97,10 @@ export function activate(context: vscode.ExtensionContext): void {
     .register('project-list', 'action', () => projectPages.showCreateForm())
     .register('model-settings', 'main', () => settingsPages.show());
   for (const [itemId, sourceType] of CREATION_ENTRIES) {
-    // 主入口：打开最近项目的详情层并按素材来源筛选；尾部操作：打开最近项目的详情层并弹出该来源的新建作品表单。
+    // 主入口：打开该素材来源的作品列表页；尾部操作：打开列表页并弹出新建作品表单。
     actionRegistry
-      .register(itemId, 'main', () => openRecentProject(recentProjects, projectPages, { filterSource: sourceType }))
-      .register(itemId, 'action', () => openRecentProject(recentProjects, projectPages, { createSource: sourceType }));
+      .register(itemId, 'main', () => workListPages.show(sourceType))
+      .register(itemId, 'action', () => workListPages.show(sourceType, { action: 'create' }));
   }
   const sidebarRouter = new MessageRouter();
   registerSidebarHandlers(sidebarRouter, actionRegistry);
@@ -117,22 +113,6 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 }
 
-/**
- * 在项目列表页中弹出最近使用的项目详情层；没有最近项目（首次使用或已被删除）时只打开项目列表页并提示先选择项目。
- * @param options 详情层需要处理的附加要求。
- */
-function openRecentProject(
-  recentProjects: RecentProjectStore,
-  projectPages: ProjectPages,
-  options: ProjectDetailOptions
-): void {
-  const recent = recentProjects.get();
-  if (recent === undefined) {
-    projectPages.showProjectList(NO_RECENT_PROJECT_NOTICE);
-    return;
-  }
-  projectPages.showProjectDetail(recent.id, options);
-}
 /** 停用扩展；注册的资源由 VS Code 通过 subscriptions 统一释放。 */
 export function deactivate(): void {}
 

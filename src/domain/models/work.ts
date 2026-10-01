@@ -23,6 +23,12 @@ export interface WorkInput {
   readonly sourceType: WorkSourceType;
 }
 
+/** 修改作品时提交的内容，已经过规范化；素材来源创建后不能修改。 */
+export interface WorkUpdate {
+  readonly name: string;
+  readonly kind: WorkKind;
+}
+
 /** 作品。 */
 export interface Work extends WorkInput {
   readonly id: number;

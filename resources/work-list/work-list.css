@@ -1,0 +1,42 @@
+/*
+ * ------------------------------------------------------------------------
+ * 名称：work-list.css
+ * 说明：作品列表页样式：顶部搜索框与项目筛选、操作结果提示和空状态；作品表格使用界面组件库的 aiUi.table。
+ * 作者：Lion
+ * 邮箱：chengbin@3578.cn
+ * 日期：2026-10-01
+ * 备注：颜色统一使用主题变量；表格样式见 ui-kit/src/ui-table.css。
+ * ------------------------------------------------------------------------
+ */
+
+/* 顶部一行：搜索框与项目下拉靠右，窄宽度时换行 */
+.works-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin: 0 0 12px;
+}
+
+.works-header__search {
+  flex: 0 1 280px;
+  min-width: 140px;
+}
+
+.works-header__project {
+  flex: 0 1 200px;
+  min-width: 140px;
+}
+
+.works-message {
+  margin: 8px 0;
+}
+
+.works-state {
+  padding: 16px 0;
+}
+
+.works-state .ui-button {
+  margin-top: 8px;
+}

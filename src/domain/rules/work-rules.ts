@@ -7,7 +7,7 @@
 // 备注：文件由表单以 JSON 文本传输（[{ name, mimeType, size, data }]，data 为 Base64），界面的限制只是体验层，这里按内容再次校验：图片按文件头判断真实格式，小说必须是合法的 UTF-8。
 // ------------------------------------------------------------------------
 
-import { NewWorkSource, WorkInput, WorkKind, WorkSourceType } from '../models/work';
+import { NewWorkSource, WorkInput, WorkKind, WorkSourceType, WorkUpdate } from '../models/work';
 import { FieldErrors, assertNoFieldErrors, readRecord, readText } from './field-readers';
 
 export const WORK_NAME_MAX_LENGTH = 60;
@@ -73,6 +73,22 @@ export function normalizeWorkCreation(rawInput: unknown, sourceType: WorkSourceT
 
   assertNoFieldErrors(errors);
   return { input: { name, kind, sourceType }, sources };
+}
+
+/**
+ * 校验并规范化修改作品时的名称与形态。
+ * @param rawInput 表单提交的原始内容。
+ * @param currentKind 作品现有的形态；不允许修改形态时原样保留。
+ * @param canChangeKind 是否允许修改形态；为 false 时忽略提交内容中的形态。
+ * @throws ValidationError 存在不合法的字段。
+ */
+export function normalizeWorkUpdate(rawInput: unknown, currentKind: WorkKind, canChangeKind: boolean): WorkUpdate {
+  const source = readRecord(rawInput);
+  const errors: FieldErrors = {};
+  const name = readText(source, { key: 'workName', label: '作品名称', required: true, maxLength: WORK_NAME_MAX_LENGTH }, errors);
+  const kind = canChangeKind ? readWorkKind(source.kind, errors) : currentKind;
+  assertNoFieldErrors(errors);
+  return { name, kind };
 }
 
 /** 读取作品形态：接受界面名称或内部键。 */

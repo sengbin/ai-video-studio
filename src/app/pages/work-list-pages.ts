@@ -1,0 +1,111 @@
+// ------------------------------------------------------------------------
+// 名称：work-list-pages.ts
+// 说明：作品列表页（P3）的入口：每种素材来源一个面板，列出所有项目中该来源的作品；新建、编辑、重新生成表单和创意产出层都在页内弹出。
+// 作者：Lion
+// 邮箱：chengbin@3578.cn
+// 日期：2026-10-01
+// 备注：请求处理在 work-list-handlers.ts 与 form-handlers.ts；把作品、项目与阶段的变化推送给页面。
+// ------------------------------------------------------------------------
+
+import { WorkSourceType } from '../../domain/models/work';
+import { registerFormHandlers } from '../forms/form-handlers';
+import { createWorkFormCatalog } from '../forms/work-form';
+import { MessageRouter } from '../messaging/message-router';
+import { WORK_LIST_PAGE_RESOURCES } from '../panels/page-resources';
+import { OpenedPanel, PanelManager } from '../panels/panel-manager';
+import { ProjectService } from '../services/project-service';
+import { StageService } from '../services/stage-service';
+import { WorkService } from '../services/work-service';
+import { STAGE_EVENTS } from './stage-handlers';
+import { WORK_LIST_EVENTS, WorkListRequest, registerWorkListHandlers } from './work-list-handlers';
+
+const WORK_LIST_VIEW_TYPE = 'aiVideoStudio.workList';
+
+/** 各素材来源的页面标题，与侧栏“创作”分区的条目名称一致。 */
+const WORK_LIST_TITLES: Readonly<Record<WorkSourceType, string>> = {
+  text: '文字灵感',
+  image: '图片灵感',
+  novel: '小说改编'
+};
+
+/** 已打开的作品列表页。 */
+interface OpenedWorkList {
+  /** 面板句柄；面板创建完成前为 undefined。 */
+  panel: OpenedPanel | undefined;
+  /** 页面尚未加载完成时登记的请求，页面加载后主动取走。 */
+  pending: WorkListRequest | undefined;
+}
+
+/** 作品列表页的入口集合。 */
+export class WorkListPages {
+  private readonly opened = new Map<WorkSourceType, OpenedWorkList>();
+
+  /**
+   * @param services 项目、作品与阶段服务。
+   * @param panels 面板管理器。
+   */
+  constructor(
+    private readonly services: { readonly projects: ProjectService; readonly works: WorkService; readonly stages: StageService },
+    private readonly panels: PanelManager
+  ) {}
+
+  /**
+   * 打开或聚焦某种素材来源的作品列表页。
+   * @param sourceType 素材来源。
+   * @param request 需要页面处理的请求，如弹出新建作品表单。
+   */
+  show(sourceType: WorkSourceType, request?: WorkListRequest): void {
+    const key = panelKey(sourceType);
+    const existing = this.opened.get(sourceType);
+    if (existing !== undefined && this.panels.reveal(key)) {
+      if (request !== undefined) {
+        existing.panel?.postEvent(WORK_LIST_EVENTS.action, request);
+      }
+      return;
+    }
+
+    const { projects, works, stages } = this.services;
+    const entry: OpenedWorkList = { panel: undefined, pending: request };
+    const router = new MessageRouter();
+    registerWorkListHandlers(router, sourceType, this.services, {
+      takePending: () => {
+        const taken = entry.pending;
+        entry.pending = undefined;
+        return taken;
+      }
+    });
+    const onStarted = (workId: number): void => entry.panel?.postEvent(WORK_LIST_EVENTS.openStage, { workId });
+    registerFormHandlers(router, createWorkFormCatalog({ projects, works, stages, onStarted }));
+
+    const panel = this.panels.open({
+      key,
+      viewType: WORK_LIST_VIEW_TYPE,
+      title: WORK_LIST_TITLES[sourceType],
+      styles: WORK_LIST_PAGE_RESOURCES.styles,
+      scripts: WORK_LIST_PAGE_RESOURCES.scripts,
+      router
+    });
+    entry.panel = panel;
+    this.opened.set(sourceType, entry);
+
+    const notifyChanged = () => panel.postEvent(WORK_LIST_EVENTS.changed);
+    const unsubscribes = [
+      // 项目改名或删除（连同作品）也会影响列表。
+      projects.onDidChangeProjects(notifyChanged),
+      works.onDidChangeWorks(notifyChanged),
+      stages.onDidChange((change) => {
+        notifyChanged();
+        panel.postEvent(STAGE_EVENTS.changed, { workId: change.workId, runId: change.runId });
+      })
+    ];
+    panel.onDidClose(() => {
+      unsubscribes.forEach((unsubscribe) => unsubscribe());
+      this.opened.delete(sourceType);
+    });
+  }
+}
+
+/** 作品列表页的面板键。 */
+function panelKey(sourceType: WorkSourceType): string {
+  return `work-list:${sourceType}`;
+}
