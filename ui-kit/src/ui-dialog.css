@@ -10,7 +10,7 @@
  */
 
 :root {
-  --dialog-titlebar-height: 32px;
+  --dialog-titlebar-height: 28px;
   --dialog-resize-grip: 14px;
   --dialog-resize-edge: 6px;
 }
