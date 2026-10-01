@@ -152,6 +152,15 @@
   resize: none;
 }
 
+/* 按内容自适应高度的多行文本（传了 maxRows）：高度由脚本计算，去掉最小高度和调整把手；选择器写三个类是为压过页面样式里的最小高度 */
+.ui-textarea.ui-textarea--auto .ui-textarea__field {
+  min-height: 0;
+}
+
+.ui-textarea--auto .ui-textarea__grip {
+  display: none;
+}
+
 /* 自绘的高度调整把手：右下角一条短横线，鼠标为上下调整光标 */
 .ui-textarea {
   position: relative;

@@ -175,12 +175,12 @@
       const kind = view.entityKinds.find((candidate) => candidate.kind === entity.kind);
       const name = aiUi.textInput({ value: entity.name, disabled: !canEdit, onChange: markDirty });
       const aliases = aiUi.textInput({ value: entity.aliases.join('，'), disabled: !canEdit, onChange: markDirty });
-      const description = aiUi.textArea({ value: entity.description, rows: 3, disabled: !canEdit, onChange: markDirty });
+      const description = aiUi.textArea({ value: entity.description, minRows: 1, maxRows: 3, disabled: !canEdit, onChange: markDirty });
       const active = aiUi.switchControl({ label: '启用', checked: entity.isActive, disabled: !canEdit, onChange: markDirty });
       const attributes = new Map(
         kind.attributes.map((attribute) => [
           attribute.key,
-          aiUi.textArea({ value: entity.attributes[attribute.key] || '', rows: 2, disabled: !canEdit, onChange: markDirty })
+          aiUi.textArea({ value: entity.attributes[attribute.key] || '', minRows: 1, maxRows: 3, disabled: !canEdit, onChange: markDirty })
         ])
       );
       return {

@@ -180,7 +180,9 @@ const search = aiUi.textInput({ type: 'search', placeholder: '搜索项目名称
 
 ### 5.3 多行文本 `aiUi.textArea`
 
-选项：`id`、`value`、`placeholder`、`rows`、`ariaLabel`、`disabled`、`onChange`。右下角有自绘的拖动把手（一条短横线，鼠标悬停变深），只能纵向调整高度，最小高度 78px；不使用浏览器原生的 `resize` 手柄（样式中设为 `resize: none`）。拖动由 `aiUi.trackPointer` 实现，与对话框拖动、调整大小共用。
+选项：`id`、`value`、`placeholder`、`rows`、`minRows`、`maxRows`、`ariaLabel`、`disabled`、`onChange`。右下角有自绘的拖动把手（一条短横线，鼠标悬停变深），只能纵向调整高度，最小高度 78px；不使用浏览器原生的 `resize` 手柄（样式中设为 `resize: none`）。拖动由 `aiUi.trackPointer` 实现，与对话框拖动、调整大小共用。
+
+**自适应高度**：传 `maxRows` 时高度按内容自动调整，至少 `minRows` 行（默认 1），最多 `maxRows` 行，内容再多出现滚动条；只有一行文字时就是一行高。此时不显示调整把手，也不受 78px 最小高度限制。创建时还没有挂到页面、量不出换行，所以挂上后和宽度变化时（`ResizeObserver`）会重新计算，设置值和输入时也会重新计算。适合字段很多、多数内容很短的编辑表单（如实体的设定字段）：`aiUi.textArea({ minRows: 1, maxRows: 3 })`。
 
 ### 5.4 下拉列表 `aiUi.select`
 

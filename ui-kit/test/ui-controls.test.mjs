@@ -177,6 +177,37 @@ test('多行文本：拖动右下角自绘把手调整高度，禁用时不可�
   assert.equal(field.style.height, '110px', '禁用后不响应');
 });
 
+test('多行文本自适应高度：按内容在最少与最多行数之间取高，超过上限出现滚动条，没有调整把手', () => {
+  const { ui, doc } = setup();
+  const control = ui.textArea({ minRows: 1, maxRows: 3, value: '一行' });
+  doc.body.append(control.element);
+  const field = control.focusTarget;
+  assert.ok(control.element.classList.contains('ui-textarea--auto'));
+  field.style.lineHeight = '16px';
+  field.style.padding = '6px 8px';
+
+  /** 模拟内容占用的高度（含上下内边距），jsdom 没有排版。 */
+  const setContentHeight = (height) => Object.defineProperty(field, 'scrollHeight', { configurable: true, value: height });
+
+  setContentHeight(28);
+  control.setValue('一行');
+  assert.equal(field.style.height, '28px', '一行内容：高度为 1 行加内边距');
+  assert.equal(field.style.overflowY, 'hidden');
+
+  setContentHeight(28 + 16);
+  control.setValue('两行');
+  assert.equal(field.style.height, '44px', '两行内容：高度随内容增加');
+
+  setContentHeight(28 + 16 * 5);
+  control.setValue('五行');
+  assert.equal(field.style.height, '60px', '超过 3 行：高度封顶为 3 行加内边距');
+  assert.equal(field.style.overflowY, 'auto', '超过上限后出现滚动条');
+
+  setContentHeight(28 + 16);
+  typeText(env, field, '输入后重新计算');
+  assert.equal(field.style.height, '44px');
+});
+
 test('下拉列表：点击展开、选择选项并通知变化', () => {
   const { ui, doc } = setup();
   const seen = [];
