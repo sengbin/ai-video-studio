@@ -143,15 +143,14 @@
   /** 加载设置并渲染页面；失败时显示原因和“重试”。 */
   async function load() {
     root.textContent = '';
-    root.append(aiUi.h('h1', { text: '模型设置' }), aiUi.h('p', { class: 'description', text: '加载中…' }));
+    root.append(aiUi.h('p', { class: 'description', text: '加载中…' }));
     try {
       const view = await window.hostBridge.request(REQUEST_LOAD);
       root.textContent = '';
-      root.append(aiUi.h('h1', { text: '模型设置' }), renderTextSettings(view), renderOtherModels());
+      root.append(renderTextSettings(view), renderOtherModels());
     } catch (error) {
       root.textContent = '';
       root.append(
-        aiUi.h('h1', { text: '模型设置' }),
         aiUi.h('p', { class: 'status-error', text: (error && error.message) || '设置加载失败。' }),
         aiUi.button({ text: '重试', onClick: () => void load() }).element
       );

@@ -16,6 +16,7 @@ import { registerSettingsHandlers } from './settings-handlers';
 const SETTINGS_PANEL_KEY = 'settings';
 const SETTINGS_VIEW_TYPE = 'aiVideoStudio.settings';
 const SETTINGS_TITLE = '模型设置';
+const SETTINGS_DESCRIPTION = '选择生成文字内容的 Copilot 模型和小说分段方式，修改后立即保存。';
 
 /** 设置页的入口。 */
 export class SettingsPages {
@@ -35,6 +36,7 @@ export class SettingsPages {
       key: SETTINGS_PANEL_KEY,
       viewType: SETTINGS_VIEW_TYPE,
       title: SETTINGS_TITLE,
+      description: SETTINGS_DESCRIPTION,
       styles: SETTINGS_PAGE_RESOURCES.styles,
       scripts: SETTINGS_PAGE_RESOURCES.scripts,
       router

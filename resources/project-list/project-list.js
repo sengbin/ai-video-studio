@@ -200,11 +200,12 @@
         renderContent();
       }
     });
-    const header = aiUi.h('div', { class: 'list-header' }, aiUi.h('div', { class: 'list-search' }, search.element));
+    const toolbar = document.getElementById('page-toolbar');
+    toolbar.append(aiUi.h('div', { class: 'list-search' }, search.element));
 
     messageElement = aiUi.h('p', { class: 'list-message', hidden: true, attrs: { role: 'status' } });
     contentElement = aiUi.h('div');
-    root.append(header, messageElement, contentElement);
+    root.append(messageElement, contentElement);
   }
 
   renderPage();

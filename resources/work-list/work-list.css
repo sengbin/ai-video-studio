@@ -9,24 +9,19 @@
  * ------------------------------------------------------------------------
  */
 
-/* 顶部一行：搜索框与项目下拉靠右，窄宽度时换行 */
-.works-header {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-  margin: 0 0 12px;
+/* 搜索框与筛选下拉放在标题栏右侧的工具栏里，状态下拉比项目下拉窄 */
+.works-search {
+  flex: 0 0 auto;
+  width: 240px;
 }
 
-.works-header__search {
-  flex: 0 1 280px;
-  min-width: 140px;
+.works-filter {
+  flex: 0 0 auto;
+  width: 160px;
 }
 
-.works-header__project {
-  flex: 0 1 200px;
-  min-width: 140px;
+.works-filter--status {
+  width: 110px;
 }
 
 .works-message {

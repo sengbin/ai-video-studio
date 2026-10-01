@@ -18,6 +18,7 @@ import { PROJECT_LIST_EVENTS, ProjectListRequest, registerProjectListHandlers } 
 const PROJECT_LIST_PANEL_KEY = 'project-list';
 const PROJECT_LIST_VIEW_TYPE = 'aiVideoStudio.projectList';
 const PROJECT_LIST_TITLE = '所有项目';
+const PROJECT_LIST_DESCRIPTION = '浏览、搜索、创建、修改和删除项目。';
 
 /** 项目相关页面的入口集合。 */
 export class ProjectPages {
@@ -71,6 +72,7 @@ export class ProjectPages {
       key: PROJECT_LIST_PANEL_KEY,
       viewType: PROJECT_LIST_VIEW_TYPE,
       title: PROJECT_LIST_TITLE,
+      description: PROJECT_LIST_DESCRIPTION,
       styles: PROJECT_LIST_PAGE_RESOURCES.styles,
       scripts: PROJECT_LIST_PAGE_RESOURCES.scripts,
       router

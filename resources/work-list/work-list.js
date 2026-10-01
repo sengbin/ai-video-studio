@@ -371,19 +371,15 @@
         renderContent();
       }
     });
-    projectSlot = aiUi.h('div', { class: 'works-header__project' });
-    statusSlot = aiUi.h('div', { class: 'works-header__project', hidden: true });
-    const header = aiUi.h(
-      'div',
-      { class: 'works-header' },
-      aiUi.h('div', { class: 'works-header__search' }, search.element),
-      projectSlot,
-      statusSlot
-    );
+    projectSlot = aiUi.h('div', { class: 'works-filter' });
+    statusSlot = aiUi.h('div', { class: 'works-filter works-filter--status', hidden: true });
+    document
+      .getElementById('page-toolbar')
+      .append(aiUi.h('div', { class: 'works-search' }, search.element), projectSlot, statusSlot);
 
     messageElement = aiUi.h('p', { class: 'works-message', hidden: true, attrs: { role: 'status' } });
     contentElement = aiUi.h('div');
-    root.append(header, messageElement, contentElement);
+    root.append(messageElement, contentElement);
     renderProjectFilter();
   }
 

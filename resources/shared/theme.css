@@ -1,7 +1,7 @@
 /*
  * ------------------------------------------------------------------------
  * 名称：theme.css
- * 说明：编辑器区页面的基础样式：页面外观、标题、说明文字和状态文字。
+ * 说明：编辑器区页面的基础样式：页面外观、顶部标题栏、说明文字和状态文字。
  * 作者：Lion
  * 邮箱：chengbin@3578.cn
  * 日期：2026-09-30
@@ -33,10 +33,46 @@ body {
   line-height: 1.45;
 }
 
-h1 {
+/* 页面顶部标题栏：左边是页面名称与下方的描述（都用小字体），右边是页面自己放进 #page-toolbar 的搜索、筛选等控件，窄宽度时工具栏换到下一行；由宿主渲染 */
+.page-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
   margin: 0 0 12px;
-  font-size: 14px;
+}
+
+.page-header__text {
+  flex: 1 1 280px;
+  min-width: 0;
+}
+
+.page-header__title {
+  margin: 0;
+  font-size: 13px;
   font-weight: 600;
+}
+
+.page-header__description {
+  margin: 2px 0 0;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.page-header__toolbar {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+  margin-left: auto;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* 没有工具控件的页面不留空位 */
+.page-header__toolbar:empty {
+  display: none;
 }
 
 /* 说明文字 */

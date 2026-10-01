@@ -19,6 +19,8 @@ export interface PanelOptions {
   readonly key: string;
   readonly viewType: string;
   readonly title: string;
+  /** 页面描述，显示在页面顶部标题栏里。 */
+  readonly description: string;
   /** 样式文件，路径相对扩展根目录，使用 `/` 分隔。 */
   readonly styles: readonly string[];
   /** 脚本文件，路径相对扩展根目录，使用 `/` 分隔。 */
@@ -80,6 +82,7 @@ export class PanelManager {
     const toUri = (relativePath: string): string => toWebviewResourceUri(webview, this.extensionUri, relativePath);
     webview.html = createPageHtml({
       title: options.title,
+      description: options.description,
       cspSource: webview.cspSource,
       styleUris: options.styles.map(toUri),
       scriptUris: options.scripts.map(toUri)

@@ -1,7 +1,7 @@
 /*
  * ------------------------------------------------------------------------
  * 名称：project-list.css
- * 说明：项目列表页样式：顶部搜索框、操作结果提示和空状态；项目表格使用界面组件库的 aiUi.table。
+ * 说明：项目列表页样式：标题栏里的搜索框、操作结果提示和空状态；项目表格使用界面组件库的 aiUi.table。
  * 作者：Lion
  * 邮箱：chengbin@3578.cn
  * 日期：2026-09-30
@@ -9,17 +9,10 @@
  * ------------------------------------------------------------------------
  */
 
-/* 顶部一行只放搜索框，靠右 */
-.list-header {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  margin: 0 0 12px;
-}
-
-.list-header .list-search {
-  flex: 0 1 280px;
-  min-width: 140px;
+/* 搜索框放在标题栏右侧的工具栏里 */
+.list-search {
+  flex: 0 0 auto;
+  width: 240px;
 }
 
 .list-message {

@@ -31,6 +31,14 @@ const WORK_LIST_TITLES: Readonly<Record<WorkListView, string>> = {
   screenplay: '剧本'
 };
 
+/** 各视图的页面描述，显示在页面顶部标题栏里。 */
+const WORK_LIST_DESCRIPTIONS: Readonly<Record<WorkListView, string>> = {
+  text: '所有项目中以文字灵感为素材的作品，可新建作品、查看创意、修改和删除。',
+  image: '所有项目中以灵感图片为素材的作品，可新建作品、查看创意、修改和删除。',
+  novel: '所有项目中以小说原文为素材的作品，可新建作品、查看创意、修改和删除。',
+  screenplay: '创意已确认的作品，可生成、查看和编辑剧本，确认采用后合并集和实体。'
+};
+
 /** 已打开的作品列表页。 */
 interface OpenedWorkList {
   /** 面板句柄；面板创建完成前为 undefined。 */
@@ -101,6 +109,7 @@ export class WorkListPages {
       key,
       viewType: WORK_LIST_VIEW_TYPE,
       title: WORK_LIST_TITLES[view],
+      description: WORK_LIST_DESCRIPTIONS[view],
       styles: WORK_LIST_PAGE_RESOURCES.styles,
       scripts: WORK_LIST_PAGE_RESOURCES.scripts,
       router
