@@ -208,6 +208,30 @@ test('多行文本自适应高度：按内容在最少与最多行数之间取�
   assert.equal(field.style.height, '44px');
 });
 
+test('多行文本自适应高度：脱离页面时更新内容不改变高度，挂回页面后按内容重新计算', async () => {
+  const { ui, doc } = setup();
+  const control = ui.textArea({ minRows: 1, maxRows: 5, value: '多行' });
+  doc.body.append(control.element);
+  const field = control.focusTarget;
+  field.style.lineHeight = '16px';
+  field.style.padding = '6px 8px';
+  const setContentHeight = (height) => Object.defineProperty(field, 'scrollHeight', { configurable: true, value: height });
+
+  setContentHeight(28 + 16 * 2);
+  control.setValue('三行');
+  assert.equal(field.style.height, '60px');
+
+  control.element.remove();
+  setContentHeight(0);
+  control.setValue('三行内容');
+  assert.equal(field.style.height, '60px', '脱离页面时量不出高度，保持原值而不是塌成一行');
+
+  setContentHeight(28 + 16 * 2);
+  doc.body.append(control.element);
+  await new Promise((resolve) => doc.defaultView.requestAnimationFrame(() => resolve()));
+  assert.equal(field.style.height, '60px', '挂回页面后按内容重新计算');
+});
+
 test('下拉列表：点击展开、选择选项并通知变化', () => {
   const { ui, doc } = setup();
   const seen = [];

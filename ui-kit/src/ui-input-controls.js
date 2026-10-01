@@ -87,6 +87,13 @@
     /** 按内容计算高度：在 minRows 与 maxRows 行之间，超过上限时显示滚动条。 */
     function fit() {
       if (!autoSize) return;
+      // 脱离页面时量不出换行，保持原高度，下一帧挂回页面后再计算。
+      if (!textarea.isConnected) {
+        window.requestAnimationFrame(() => {
+          if (textarea.isConnected) fit();
+        });
+        return;
+      }
       textarea.style.height = 'auto';
       const style = window.getComputedStyle(textarea);
       const lineHeight = parseFloat(style.lineHeight) || 16;
