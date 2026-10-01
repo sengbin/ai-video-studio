@@ -22,6 +22,10 @@
   const GENERIC_ERROR_TEXT = '操作失败，请重试。';
   const REFRESH_DELAY_MS = 150;
   const TITLE_SUFFIX = '创意';
+  const SAVE_TEXT = '保存本章';
+  const SAVED_TEXT = '已保存';
+  const SAVE_STATE_DIRTY = 'dirty';
+  const SAVE_STATE_SAVED = 'saved';
   const PAGE_WIDTH = 960;
   const PAGE_HEIGHT = 640;
   const PAGE_MIN_WIDTH = 420;
@@ -218,6 +222,8 @@
       if (result) {
         editorDirty = false;
         await loadView(false);
+        // 重新加载后编辑区可能被重建（如已确认的版本保存后回到待确认），按钮状态要在重建后再设置。
+        if (editorControls) editorControls.setSaveState(SAVE_STATE_SAVED);
         showMessage('已保存。', false);
       }
     }
@@ -381,12 +387,18 @@
       editorDirty = false;
       const markDirty = () => {
         editorDirty = true;
+        setSaveState(SAVE_STATE_DIRTY);
       };
       const canEdit = view.actions.canEdit;
       const title = aiUi.textInput({ value: chapter.title, ariaLabel: '章节标题', disabled: !canEdit, onChange: markDirty });
       const content = aiUi.textArea({ value: chapter.content, ariaLabel: '章节正文', disabled: !canEdit, onChange: markDirty });
       const reason = readonlyReason();
-      const saveButton = aiUi.button({ text: '保存本章', variant: 'primary', onClick: () => void saveChapter() });
+      const saveButton = aiUi.button({ text: SAVE_TEXT, variant: 'primary', disabled: true, onClick: () => void saveChapter() });
+      /** 保存按钮只在有修改时可点，保存后显示“已保存”，再次修改后恢复。 */
+      const setSaveState = (state) => {
+        saveButton.setText(state === SAVE_STATE_SAVED ? SAVED_TEXT : SAVE_TEXT);
+        saveButton.setDisabled(state !== SAVE_STATE_DIRTY);
+      };
 
       const element = aiUi.h(
         'section',
@@ -396,7 +408,7 @@
         reason ? aiUi.h('p', { class: 'description', text: reason }) : null,
         canEdit ? aiUi.h('div', { class: 'stage-editor__actions' }, saveButton.element) : null
       );
-      editorControls = { key, element, title, content };
+      editorControls = { key, element, title, content, setSaveState };
       return element;
     }
 
