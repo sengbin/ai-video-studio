@@ -86,6 +86,12 @@ class MemoryStageRuns implements StageRunRepository {
   markRunning(id: number): StageRun | undefined {
     return this.replace(id, { status: 'running', errorMessage: null, rawOutput: null, finishedAt: null });
   }
+  reopen(id: number): StageRun | undefined {
+    const run = this.findById(id);
+    return run?.status === 'succeeded'
+      ? this.replace(id, { status: 'running', errorMessage: null, rawOutput: null, finishedAt: null, progress: null })
+      : run;
+  }
   updateProgress(id: number, progress: StageProgress): StageRun | undefined {
     // 经过 JSON 往返，模拟写入数据库后重新读取，避免与工作流内的对象共享引用。
     return this.replace(id, { progress: JSON.parse(JSON.stringify(progress)) as StageProgress });
@@ -99,7 +105,8 @@ class MemoryStageRuns implements StageRunRepository {
   markCanceled(id: number, timestamp: string): StageRun | undefined {
     return this.replace(id, { status: 'canceled', finishedAt: timestamp });
   }
-  approve(id: number, patch: ReviewPatch): StageRun | undefined {
+  approve(id: number, patch: ReviewPatch, inTransaction?: () => void): StageRun | undefined {
+    inTransaction?.();
     return this.replace(id, patch);
   }
   applyEdit(id: number, patch: ReviewPatch): StageRun | undefined {

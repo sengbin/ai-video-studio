@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：work-service.ts
-// 说明：作品应用服务：列出项目或某种素材来源下的作品及其创意阶段状态、检查名称唯一、创建、修改与删除作品，变化后通知订阅者。
+// 说明：作品应用服务：列出项目或某种素材来源下的作品及其创意、剧本阶段状态、检查名称唯一、创建、修改与删除作品，变化后通知订阅者。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-09-30
@@ -8,11 +8,11 @@
 // ------------------------------------------------------------------------
 
 import { ConflictError, NotFoundError } from '../../domain/errors';
-import { StageDisplayStatus, StageRun } from '../../domain/models/stage-run';
+import { StageDisplayStatus, StageKind, StageRun } from '../../domain/models/stage-run';
 import { NewWorkSource, Work, WorkKind, WorkSourceType } from '../../domain/models/work';
 import { StageRunRepository } from '../../domain/ports/stage-run-repository';
 import { WorkRepository } from '../../domain/ports/work-repository';
-import { toDisplayStatus } from '../../domain/rules/stage-review-rules';
+import { isStale, toDisplayStatus } from '../../domain/rules/stage-review-rules';
 import { NormalizedWorkCreation, normalizeWorkUpdate } from '../../domain/rules/work-rules';
 import { ChangeNotifier } from './change-notifier';
 
@@ -26,9 +26,11 @@ export interface StageStatusSummary {
   readonly version: number | null;
   /** 生成中的进度文字，如“3 / 12”；没有进度时为 null。 */
   readonly progressText: string | null;
+  /** 上游产出已被修改或不再是已确认版本，本阶段产出可能已过期。 */
+  readonly stale: boolean;
 }
 
-/** 作品列表中的一行：作品及其创意阶段状态。 */
+/** 作品列表中的一行：作品及其创意、剧本阶段状态。 */
 export interface WorkListItem {
   readonly id: number;
   readonly projectId: number;
@@ -37,6 +39,9 @@ export interface WorkListItem {
   readonly sourceType: WorkSourceType;
   readonly createdAt: string;
   readonly creative: StageStatusSummary;
+  readonly screenplay: StageStatusSummary;
+  /** 创意已确认，可以开始生成剧本。 */
+  readonly canStartScreenplay: boolean;
 }
 
 /** 作品应用服务。 */
@@ -152,7 +157,7 @@ export class WorkService {
     this.changeNotifier.notify(work.projectId);
   }
 
-  /** 作品转列表行：附带创意阶段的状态摘要。 */
+  /** 作品转列表行：附带创意与剧本阶段的状态摘要。 */
   private toListItem(work: Work): WorkListItem {
     return {
       id: work.id,
@@ -161,21 +166,25 @@ export class WorkService {
       kind: work.kind,
       sourceType: work.sourceType,
       createdAt: work.createdAt,
-      creative: this.describeCreative(work.id)
+      creative: this.describeStage(work.id, 'creative'),
+      screenplay: this.describeStage(work.id, 'screenplay'),
+      canStartScreenplay: this.runs.findCurrent({ workId: work.id, stage: 'creative', episodeId: null }) !== undefined
     };
   }
 
-  /** 创意阶段的状态摘要：取最新版本的状态。 */
-  private describeCreative(workId: number): StageStatusSummary {
-    const [latest] = this.runs.listVersions({ workId, stage: 'creative', episodeId: null });
+  /** 阶段的状态摘要：取最新版本的状态。 */
+  private describeStage(workId: number, stage: StageKind): StageStatusSummary {
+    const [latest] = this.runs.listVersions({ workId, stage, episodeId: null });
     if (latest === undefined) {
-      return { display: 'none', runId: null, version: null, progressText: null };
+      return { display: 'none', runId: null, version: null, progressText: null, stale: false };
     }
+    const source = latest.sourceRunId === null ? undefined : this.runs.findById(latest.sourceRunId);
     return {
       display: toDisplayStatus(latest),
       runId: latest.id,
       version: latest.version,
-      progressText: formatProgress(latest)
+      progressText: formatProgress(latest),
+      stale: latest.status === 'succeeded' && isStale(latest, source)
     };
   }
 }

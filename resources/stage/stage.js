@@ -1,10 +1,10 @@
 // ------------------------------------------------------------------------
 // 名称：stage.js
-// 说明：创意阶段产出层脚本：在所属页面内以弹出页面显示生成进度与章节，编辑并保存章节，确认采用、取消、重试、重新生成、查看原始输出。
+// 说明：阶段产出层的外壳脚本：在所属页面内以弹出页面显示生成进度，提供版本、确认采用、取消、重试、重新生成、查看原始输出；各阶段自己的内容区由登记的“阶段内容”负责。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
-// 日期：2026-09-30
-// 备注：通过 aiStage.open(workId) 打开，每个作品同时只有一个产出层；请求载荷都带 workId，事件名称与 src/app/pages/stage-handlers.ts、src/app/forms/work-form.ts 一致；依赖 form/form-runtime.js（aiForm）与 shared/page-format.js（pageFormat）。
+// 日期：2026-10-02
+// 备注：通过 aiStage.open(workId, stage) 打开，同一作品的同一阶段只有一个产出层；阶段内容由 stage-creative.js、stage-screenplay.js 通过 aiStage.registerStage 登记；请求载荷都带 workId 与 stage，事件名称与 src/app/pages/stage-handlers.ts 一致；依赖 form/form-runtime.js（aiForm）与 shared/page-format.js（pageFormat）。
 // ------------------------------------------------------------------------
 
 'use strict';
@@ -14,50 +14,59 @@
   const REQUEST_APPROVE = 'stage.approve';
   const REQUEST_CANCEL = 'stage.cancel';
   const REQUEST_RETRY = 'stage.retry';
-  const REQUEST_SAVE_CHAPTER = 'stage.saveChapter';
   const REQUEST_RAW_OUTPUT = 'stage.rawOutput';
   const EVENT_CHANGED = 'stage.changed';
-  const FORM_REGENERATE = 'work.regenerate';
 
   const GENERIC_ERROR_TEXT = '操作失败，请重试。';
   const REFRESH_DELAY_MS = 150;
-  const TITLE_SUFFIX = '创意';
-  const SAVE_TEXT = '保存本章';
-  const SAVED_TEXT = '已保存';
-  const SAVE_STATE_DIRTY = 'dirty';
-  const SAVE_STATE_SAVED = 'saved';
   const PAGE_WIDTH = 960;
   const PAGE_HEIGHT = 640;
   const PAGE_MIN_WIDTH = 420;
   const PAGE_MIN_HEIGHT = 360;
   const SOURCE_LABELS = { text: '文字灵感', image: '灵感图片', novel: '小说原文' };
   const KIND_LABELS = { single: '单个短视频', series: '多集短片' };
+  const STALE_TEXT = '上游产出已修改，本产出可能已过期。不会自动重新生成，请检查后决定是否重新生成。';
 
   const { formatRelativeTime, stageStatusLabel, stageStatusClass } = window.pageFormat;
 
-  /** 已打开的产出层：作品标识 → { handle, refresh }。 */
+  /**
+   * 各阶段登记的“阶段内容”：
+   * { stage, label, regenerateForm, keptNote, discardMessage, approveNote(view), confirmRegenerate?(view), create(context) }，
+   * create 接收 { call, runAction, showMessage, reload, getView, confirmDiscard }，返回 { render(view, container), renderSummary(view), isDirty(), discard() }。
+   */
+  const providers = new Map();
+  /** 已打开的产出层：“阶段:作品标识” → { workId, handle, refresh }。 */
   const openViews = new Map();
 
+  /** 登记一个阶段的内容。 */
+  function registerStage(provider) {
+    providers.set(provider.stage, provider);
+  }
+
+  /** 产出层的键。 */
+  function viewKey(workId, stage) {
+    return `${stage}:${workId}`;
+  }
+
   /**
-   * 为一个作品创建产出层：弹出页面、加载数据并随宿主事件刷新。
+   * 为一个作品的一个阶段创建产出层：弹出页面、加载数据并随宿主事件刷新。
    * @param {number} workId 作品标识。
+   * @param {string} stage 阶段，如 creative、screenplay。
    * @returns 弹出页面的句柄。
    */
-  function createStageView(workId) {
+  function createStageView(workId, stage) {
+    const provider = providers.get(stage);
+    if (!provider) throw new Error(`没有登记阶段：${stage}`);
+
     /** 当前显示的视图；尚未加载成功时为 null。 */
     let view = null;
     /** 用户在版本下拉中固定查看的版本；为 null 时始终显示最新版本。 */
     let pinnedRunId = null;
     let latestRunId = null;
-    let selectedSeq = null;
     let loadError = '';
     let isLoading = true;
     let isFormOpen = false;
     let refreshTimer = 0;
-    /** 编辑器当前对应的“版本:章节”，用来判断切换后是否需要重建。 */
-    let editorKey = '';
-    let editorDirty = false;
-    let editorControls = null;
     let handle = null;
 
     const headerElement = aiUi.h('header', { class: 'stage-header' });
@@ -66,9 +75,9 @@
     const bodyElement = aiUi.h('div', { class: 'stage-body' });
     const root = aiUi.h('div', { class: 'stage-view' }, headerElement, messageElement, progressElement, bodyElement);
 
-    /** 发起带作品标识的请求。 */
+    /** 发起带作品标识与阶段的请求。 */
     function call(name, payload) {
-      return window.hostBridge.request(name, { ...payload, workId });
+      return window.hostBridge.request(name, { ...payload, workId, stage });
     }
 
     /** 在操作结果区显示文字；空串表示清除。 */
@@ -87,18 +96,6 @@
         showMessage((error && error.message) || GENERIC_ERROR_TEXT, true);
         return undefined;
       }
-    }
-
-    /** 有未保存的章节修改时询问是否放弃；没有修改直接返回 true。 */
-    async function confirmDiscardEdits() {
-      if (!editorDirty) return true;
-      return aiUi.confirm({
-        title: '放弃修改',
-        message: '当前章节有未保存的修改，放弃这些修改？',
-        confirmText: '放弃修改',
-        cancelText: '继续编辑',
-        variant: 'danger'
-      });
     }
 
     /** 加载视图；showLoading 为 false 时保留现有内容（后台刷新）。 */
@@ -122,7 +119,7 @@
         if (view && (next.run.id !== view.run.id || next.run.display !== view.run.display)) showMessage('', false);
         view = next;
       } catch (error) {
-        loadError = (error && error.message) || '创意产出加载失败。';
+        loadError = (error && error.message) || `${provider.label}产出加载失败。`;
       }
       isLoading = false;
       render();
@@ -135,11 +132,32 @@
       refreshTimer = window.setTimeout(() => void loadView(false), REFRESH_DELAY_MS);
     }
 
+    const content = provider.create({
+      call,
+      runAction,
+      showMessage,
+      reload: () => loadView(false),
+      getView: () => view,
+      confirmDiscard: () => confirmDiscardEdits()
+    });
+
+    /** 有未保存的修改时询问是否放弃；没有修改直接返回 true。 */
+    async function confirmDiscardEdits() {
+      if (!content.isDirty()) return true;
+      return aiUi.confirm({
+        title: '放弃修改',
+        message: provider.discardMessage,
+        confirmText: '放弃修改',
+        cancelText: '继续编辑',
+        variant: 'danger'
+      });
+    }
+
     /** 确认采用：说明影响后请求宿主。 */
     async function approve() {
       const confirmed = await aiUi.confirm({
         title: '确认采用',
-        message: `确认采用“${view.work.name}”的创意 v${view.run.version}？确认后它将作为后续剧本阶段的依据。`,
+        message: `确认采用“${view.work.name}”的${provider.label} v${view.run.version}？${provider.approveNote(view)}`,
         confirmText: '确认采用'
       });
       if (!confirmed) return;
@@ -160,9 +178,10 @@
     /** 弹出“重新生成”表单，初始值为上次使用的参数。 */
     async function regenerate() {
       if (isFormOpen || !(await confirmDiscardEdits())) return;
+      if (provider.confirmRegenerate && !(await provider.confirmRegenerate(view))) return;
       isFormOpen = true;
       try {
-        await aiForm.open({ form: FORM_REGENERATE, params: { workId: view.work.id } });
+        await aiForm.open({ form: provider.regenerateForm, params: { workId: view.work.id } });
       } finally {
         isFormOpen = false;
       }
@@ -187,45 +206,9 @@
         renderHeader();
         return;
       }
-      editorDirty = false;
+      content.discard();
       pinnedRunId = runId === latestRunId ? null : runId;
       await loadView(false);
-    }
-
-    /** 选择章节；有未保存的修改时先确认。 */
-    async function selectChapter(seq) {
-      if (seq === selectedSeq) return;
-      if (!(await confirmDiscardEdits())) return;
-      editorDirty = false;
-      selectedSeq = seq;
-      renderBody();
-    }
-
-    /** 保存当前章节；已确认的版本被编辑时先提示会回到待确认。 */
-    async function saveChapter() {
-      const { title, content } = editorControls;
-      if (view.actions.editNeedsConfirm) {
-        const confirmed = await aiUi.confirm({
-          title: '保存修改',
-          message: '该版本已确认采用。保存后将回到待确认，需要重新确认。',
-          confirmText: '保存',
-          cancelText: '取消'
-        });
-        if (!confirmed) return;
-      }
-      const result = await runAction(REQUEST_SAVE_CHAPTER, {
-        id: view.run.id,
-        seq: selectedSeq,
-        title: title.getValue(),
-        content: content.getValue()
-      });
-      if (result) {
-        editorDirty = false;
-        await loadView(false);
-        // 重新加载后编辑区可能被重建（如已确认的版本保存后回到待确认），按钮状态要在重建后再设置。
-        if (editorControls) editorControls.setSaveState(SAVE_STATE_SAVED);
-        showMessage('已保存。', false);
-      }
     }
 
     /** 状态文字：颜色之外始终带文字。 */
@@ -240,7 +223,7 @@
       headerElement.textContent = '';
       if (!view) return;
       const { work, run, actions, versions } = view;
-      if (handle) handle.setTitle(`${work.name} › ${TITLE_SUFFIX}`);
+      if (handle) handle.setTitle(`${work.name} › ${provider.label}`);
 
       const versionSelect = aiUi.select({
         options: versions.map((item) => ({
@@ -280,7 +263,7 @@
       );
     }
 
-    /** 状态提示与进度条：生成中显示进度；失败、已取消显示原因。 */
+    /** 状态提示与进度条：生成中显示进度；失败、已取消显示原因；生成结束后显示上游变更提示与阶段自己的汇总。 */
     function renderProgress() {
       progressElement.textContent = '';
       if (!view) return;
@@ -293,126 +276,23 @@
           aiUi.h('progress', { class: 'stage-progress', attrs: { max: String(total), value: String(done), 'aria-label': '生成进度' } }),
           aiUi.h('p', { class: 'description', text })
         );
-      } else if (run.display === 'failed') {
+        return;
+      }
+      if (run.display === 'failed') {
         progressElement.append(
-          aiUi.h('p', { class: 'status-error', text: `生成失败：${run.errorMessage || '未知原因'}。已完成的章节已保留，可点“重试”继续。` })
+          aiUi.h('p', { class: 'status-error', text: `生成失败：${run.errorMessage || '未知原因'}。${provider.keptNote}，可点“重试”继续。` })
         );
       } else if (run.display === 'canceled') {
-        progressElement.append(aiUi.h('p', { class: 'description', text: '已取消生成，已完成的章节已保留，可点“重试”继续。' }));
-      } else {
-        const summary = renderWordSummary();
+        progressElement.append(aiUi.h('p', { class: 'description', text: `已取消生成，${provider.keptNote}，可点“重试”继续。` }));
+      }
+      if (view.stale) progressElement.append(aiUi.h('p', { class: 'status-warning', text: STALE_TEXT }));
+      if (run.display !== 'failed' && run.display !== 'canceled') {
+        const summary = content.renderSummary(view);
         if (summary) progressElement.append(summary);
       }
     }
 
-    /** 生成结束后的字数汇总：设定的大约范围与实际字数；不在范围内时说明原因。 */
-    function renderWordSummary() {
-      const { params, chapters, totalWords } = view;
-      if (!params || chapters.length === 0) return null;
-      const range = `每章约 ${params.chapterMinWords} 到 ${params.chapterMaxWords} 字`;
-      const outOfRange = chapters.filter((chapter) => chapter.wordHint);
-      if (outOfRange.length === 0) {
-        return aiUi.h('p', {
-          class: 'description',
-          text: `字数：设定${range}，实际共 ${chapters.length} 章 ${totalWords} 字，各章均在范围内。`
-        });
-      }
-      const listed = outOfRange.slice(0, 5).map((chapter) => `第 ${chapter.seq} 章 ${chapter.wordCount} 字`).join('、');
-      const more = outOfRange.length > 5 ? `（共 ${outOfRange.length} 章）` : '';
-      return aiUi.h('p', {
-        class: 'status-warning',
-        text:
-          `字数提示：设定${range}，实际有 ${outOfRange.length} 章不在该范围：${listed}${more}。` +
-          '原因：Copilot 会根据内容的实际情况决定篇幅，不一定严格遵守设定字数。生成结果已全部保留，可直接编辑调整。'
-      });
-    }
-
-    /** 章节字数提示：与设定的大约范围比较，给出文字说明。 */
-    function wordHintText(chapter) {
-      if (!view.params) return '';
-      const { chapterMinWords, chapterMaxWords } = view.params;
-      if (chapter.wordHint === 'short') return `比设定的约 ${chapterMinWords} 字少 ${chapterMinWords - chapter.wordCount} 字`;
-      if (chapter.wordHint === 'long') return `比设定的约 ${chapterMaxWords} 字多 ${chapter.wordCount - chapterMaxWords} 字`;
-      return '';
-    }
-
-    /** 章节列表：标题、字数与字数提示；当前章节高亮。 */
-    function renderChapterList() {
-      const { chapters, totalWords } = view;
-      const items = chapters.map((chapter) => {
-        const hint = wordHintText(chapter);
-        const isSelected = chapter.seq === selectedSeq;
-        return aiUi.h(
-          'button',
-          {
-            class: isSelected ? 'stage-chapter is-selected' : 'stage-chapter',
-            attrs: { type: 'button', 'aria-current': isSelected ? 'true' : undefined },
-            on: { click: () => void selectChapter(chapter.seq) }
-          },
-          aiUi.h('span', { class: 'stage-chapter__title', text: `${chapter.seq}. ${chapter.title}` }),
-          aiUi.h('span', { class: 'stage-chapter__meta', text: `${chapter.wordCount} 字` }),
-          hint ? aiUi.h('span', { class: 'stage-chapter__hint status-warning', text: hint }) : null
-        );
-      });
-      return aiUi.h(
-        'aside',
-        { class: 'stage-chapters' },
-        aiUi.h('p', { class: 'description', text: `共 ${chapters.length} 章，共 ${totalWords} 字` }),
-        chapters.length === 0 ? aiUi.h('p', { class: 'description', text: '章节生成后会陆续显示在这里。' }) : null,
-        items
-      );
-    }
-
-    /** 不能编辑时的原因。 */
-    function readonlyReason() {
-      const { run, actions } = view;
-      if (actions.canEdit) return '';
-      if (run.display === 'running') return '生成中，暂不能编辑。';
-      if (run.display === 'failed' || run.display === 'canceled') return '生成尚未成功，暂不能编辑。';
-      return '历史版本只读；如需修改，请切换到最新版本。';
-    }
-
-    /** 章节编辑区：切换章节时重建；同一章节有未保存的修改时保留输入。 */
-    function renderEditor(chapter) {
-      const key = `${view.run.id}:${chapter.seq}:${view.actions.canEdit}:${view.actions.editNeedsConfirm}`;
-      if (editorControls && editorKey === key) {
-        if (!editorDirty) {
-          editorControls.title.setValue(chapter.title);
-          editorControls.content.setValue(chapter.content);
-        }
-        return editorControls.element;
-      }
-
-      editorKey = key;
-      editorDirty = false;
-      const markDirty = () => {
-        editorDirty = true;
-        setSaveState(SAVE_STATE_DIRTY);
-      };
-      const canEdit = view.actions.canEdit;
-      const title = aiUi.textInput({ value: chapter.title, ariaLabel: '章节标题', disabled: !canEdit, onChange: markDirty });
-      const content = aiUi.textArea({ value: chapter.content, ariaLabel: '章节正文', disabled: !canEdit, onChange: markDirty });
-      const reason = readonlyReason();
-      const saveButton = aiUi.button({ text: SAVE_TEXT, variant: 'primary', disabled: true, onClick: () => void saveChapter() });
-      /** 保存按钮只在有修改时可点，保存后显示“已保存”，再次修改后恢复。 */
-      const setSaveState = (state) => {
-        saveButton.setText(state === SAVE_STATE_SAVED ? SAVED_TEXT : SAVE_TEXT);
-        saveButton.setDisabled(state !== SAVE_STATE_DIRTY);
-      };
-
-      const element = aiUi.h(
-        'section',
-        { class: 'stage-editor' },
-        aiUi.h('div', { class: 'stage-editor__title' }, title.element),
-        aiUi.h('div', { class: 'stage-editor__content' }, content.element),
-        reason ? aiUi.h('p', { class: 'description', text: reason }) : null,
-        canEdit ? aiUi.h('div', { class: 'stage-editor__actions' }, saveButton.element) : null
-      );
-      editorControls = { key, element, title, content, setSaveState };
-      return element;
-    }
-
-    /** 主体：章节列表与编辑区。 */
+    /** 主体：加载中与错误由外壳显示，其余交给阶段内容。 */
     function renderBody() {
       bodyElement.textContent = '';
       if (isLoading) {
@@ -426,27 +306,7 @@
         );
         return;
       }
-      if (!view) return;
-
-      const { chapters } = view;
-      if (chapters.length === 0) {
-        editorControls = null;
-        editorKey = '';
-        bodyElement.append(renderChapterList());
-        return;
-      }
-      if (!chapters.some((chapter) => chapter.seq === selectedSeq)) selectedSeq = chapters[0].seq;
-      const chapter = chapters.find((item) => item.seq === selectedSeq);
-      const wordHint = wordHintText(chapter);
-      bodyElement.append(
-        renderChapterList(),
-        aiUi.h(
-          'div',
-          { class: 'stage-detail' },
-          aiUi.h('p', { class: 'description', text: `本章 ${chapter.wordCount} 字${wordHint ? `（${wordHint}）` : ''}` }),
-          renderEditor(chapter)
-        )
-      );
+      if (view) content.render(view, bodyElement);
     }
 
     function render() {
@@ -456,7 +316,7 @@
     }
 
     handle = aiUi.openPage({
-      title: TITLE_SUFFIX,
+      title: provider.label,
       content: root,
       width: PAGE_WIDTH,
       height: PAGE_HEIGHT,
@@ -464,40 +324,44 @@
       minHeight: PAGE_MIN_HEIGHT,
       beforeClose: () => confirmDiscardEdits()
     });
-    openViews.set(workId, { handle, refresh: scheduleRefresh });
+    const key = viewKey(workId, stage);
+    openViews.set(key, { workId, handle, refresh: scheduleRefresh });
     void handle.closed.then(() => {
       window.clearTimeout(refreshTimer);
-      openViews.delete(workId);
+      openViews.delete(key);
     });
     void loadView(true);
     return handle;
   }
 
   /**
-   * 打开作品的创意产出层；已经打开时聚焦已有的。
+   * 打开作品某个阶段的产出层；已经打开时聚焦已有的。
    * @param {number} workId 作品标识。
+   * @param {string} stage 阶段，缺省为创意。
    * @returns 弹出页面的句柄。
    */
-  function open(workId) {
-    const existing = openViews.get(workId);
+  function open(workId, stage = 'creative') {
+    const existing = openViews.get(viewKey(workId, stage));
     if (existing) {
       existing.handle.element.focus();
       return existing.handle;
     }
-    return createStageView(workId);
+    return createStageView(workId, stage);
   }
 
   /** 关闭作品已不存在的产出层（作品被删除，或随所属项目一起删除）。 */
   function closeMissing(existingWorkIds) {
-    for (const [workId, entry] of openViews) {
-      if (!existingWorkIds.includes(workId)) entry.handle.close('api');
+    for (const entry of openViews.values()) {
+      if (!existingWorkIds.includes(entry.workId)) entry.handle.close('api');
     }
   }
 
+  // 一个作品任一阶段变化，都可能影响它的其他阶段（如上游变更提示），所以该作品的产出层一并刷新。
   window.hostBridge.onEvent(EVENT_CHANGED, (payload) => {
-    const entry = openViews.get(payload && payload.workId);
-    if (entry) entry.refresh();
+    for (const entry of openViews.values()) {
+      if (payload && entry.workId === payload.workId) entry.refresh();
+    }
   });
 
-  window.aiStage = { open, closeMissing };
+  window.aiStage = { open, closeMissing, registerStage };
 })();

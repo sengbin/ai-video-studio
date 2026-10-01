@@ -1,7 +1,7 @@
 /*
  * ------------------------------------------------------------------------
  * 名称：stage.css
- * 说明：创意阶段产出层样式：顶部状态栏、进度条、章节列表与章节编辑区（显示在弹出页面内）。
+ * 说明：阶段产出层样式：顶部状态栏、进度条、左侧列表（章节、集、实体）与右侧编辑区（显示在弹出页面内）。
  * 作者：Lion
  * 邮箱：chengbin@3578.cn
  * 日期：2026-09-30
@@ -49,7 +49,7 @@
   margin: 0 0 4px;
 }
 
-/* 左侧章节列表、右侧编辑区；窄宽度时上下排列 */
+/* 左侧列表、右侧编辑区；窄宽度时上下排列 */
 .stage-body {
   display: flex;
   flex-wrap: wrap;
@@ -57,7 +57,7 @@
   margin: 16px 0 0;
 }
 
-.stage-chapters {
+.stage-list {
   flex: 0 0 240px;
   display: flex;
   flex-direction: column;
@@ -67,7 +67,7 @@
   overflow-y: auto;
 }
 
-.stage-chapter {
+.stage-item {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
@@ -82,21 +82,21 @@
   cursor: pointer;
 }
 
-.stage-chapter:hover {
+.stage-item:hover {
   background: var(--option-hover-bg);
 }
 
-.stage-chapter:focus-visible {
+.stage-item:focus-visible {
   outline: 1px solid var(--focus-border);
   outline-offset: 1px;
 }
 
-.stage-chapter.is-selected {
+.stage-item.is-selected {
   background: var(--option-selected-bg);
   border-color: var(--focus-border);
 }
 
-.stage-chapter__title {
+.stage-item__title {
   flex: 1 1 100%;
   min-width: 0;
   overflow: hidden;
@@ -104,9 +104,15 @@
   white-space: nowrap;
 }
 
-.stage-chapter__meta,
-.stage-chapter__hint {
+.stage-item__meta,
+.stage-item__hint {
   font-size: 11px;
+}
+
+/* 列表中的分组标题 */
+.stage-list__heading {
+  margin: 8px 0 0;
+  font-weight: 600;
 }
 
 .stage-detail {
@@ -122,6 +128,15 @@
 .stage-editor .ui-textarea__field {
   min-height: 300px;
   font-size: 12px;
+}
+
+/* 集、实体的字段较多，正文框矮一些 */
+.stage-editor--fields .ui-textarea__field {
+  min-height: 78px;
+}
+
+.stage-editor--fields .stage-editor__content .ui-textarea__field {
+  min-height: 220px;
 }
 
 .stage-editor__actions {

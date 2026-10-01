@@ -7,20 +7,19 @@
 // 备注：进度（分段要点、图片描述、大纲）保存在阶段记录的 progress.detail 中；章节保存在章节表，重试时跳过已完成的部分。
 // ------------------------------------------------------------------------
 
-import { FORM_LEVEL_ERROR_KEY, TextGenerationError, ValidationError } from '../../domain/errors';
+import { FORM_LEVEL_ERROR_KEY, ValidationError } from '../../domain/errors';
 import { ChapterOutlineItem, CreativeParams } from '../../domain/models/creative';
 import { StageProgress } from '../../domain/models/stage-run';
 import { ChapterRepository } from '../../domain/ports/chapter-repository';
 import { CreativeSourceReader } from '../../domain/ports/creative-source-reader';
-import { ImageInput, OutputTool } from '../../domain/ports/text-generation-port';
 import { normalizeCreativeParams, parseChapter, parseOutline, parseSummary } from '../../domain/rules/creative-rules';
 import { FieldErrors, assertNoFieldErrors, readOptionalChoice, readRecord } from '../../domain/rules/field-readers';
 import { NovelSegment, NovelSplitSettings, splitNovel } from '../../domain/rules/novel-splitter';
 import { PromptTemplates } from '../../domain/ports/prompt-templates';
+import { AskOptions, askModel } from './ask-model';
 import { SUBMIT_CHAPTER_TOOL, SUBMIT_SUMMARY_TOOL, createOutlineTool } from './output-tools/creative-output-tools';
-import { renderTemplate, wrapMaterial } from './prompt-templates';
+import { wrapMaterial } from './prompt-templates';
 import { StageContext, StageWorkflow } from './stage-workflow';
-import { generateStructured } from './structured-generation';
 
 /** 素材来源：文字灵感、灵感图片、小说原文。 */
 export type CreativeSourceType = 'text' | 'image' | 'novel';
@@ -70,8 +69,6 @@ const SOURCE_KIND_LABELS: Readonly<Record<CreativeSourceType, string>> = {
 };
 const NO_IDEA_TEXT = '（没有提供具体灵感，请依据题材、基调和补充要求创作。）';
 const NOT_APPLICABLE = '（无）';
-/** 单次请求的输入 token 不得超过模型上限的这个比例，给输出和系统段留余量。 */
-const INPUT_BUDGET_RATIO = 0.8;
 const PREVIOUS_ENDING_CHARS = 300;
 
 /** 保存在阶段记录 progress.detail 中的创意进度，用于中断后继续。 */
@@ -86,20 +83,11 @@ interface CreativeProgressDetail {
 interface Environment {
   readonly context: StageContext;
   readonly input: CreativeRunInput;
-  readonly system: string;
   readonly state: CreativeProgressDetail;
   readonly segments: readonly NovelSegment[];
   readonly savedChapters: Map<number, { title: string; content: string }>;
   report(step: string): void;
-  ask<T>(template: string, variables: Record<string, string>, parse: (json: unknown) => T, options?: AskOptions): Promise<T>;
-}
-
-interface AskOptions {
-  readonly images?: readonly ImageInput[];
-  /** 输入超出模型上限时给用户的建议。 */
-  readonly overflowHint: string;
-  /** 用于强制结构化输出的工具。 */
-  readonly tool: OutputTool;
+  ask<T>(template: string, variables: Record<string, string>, parse: (json: unknown) => T, options: AskOptions): Promise<T>;
 }
 
 /** 从阶段记录的进度中读取创意进度，缺失或格式不对时视为从头开始。 */
@@ -185,7 +173,6 @@ export class CreativeWorkflow implements StageWorkflow {
     segments: readonly NovelSegment[]
   ): Environment {
     const { prompts, chapters } = this.dependencies;
-    const system = prompts.get('system');
     const savedChapters = new Map(chapters.list(context.run.id).map((chapter) => [chapter.seq, chapter]));
 
     const report = (step: string): void => {
@@ -200,26 +187,10 @@ export class CreativeWorkflow implements StageWorkflow {
       });
     };
 
-    const ask = async <T>(
-      template: string,
-      variables: Record<string, string>,
-      parse: (json: unknown) => T,
-      options: AskOptions
-    ): Promise<T> => {
-      if (context.signal.aborted) {
-        throw new TextGenerationError('canceled', '已取消。');
-      }
-      const user = renderTemplate(prompts.get(template), variables);
-      const tokens = await context.text.countTokens(`${system}\n${user}`);
-      if (tokens > context.model.maxInputTokens * INPUT_BUDGET_RATIO) {
-        throw new TextGenerationError('failed', `本次请求约 ${tokens} 个 token，超出模型输入上限。${options.overflowHint}`);
-      }
-      return generateStructured(context.text, { system, user, images: options.images, tool: options.tool }, parse, {
-        signal: context.signal
-      });
-    };
+    const ask = <T>(template: string, variables: Record<string, string>, parse: (json: unknown) => T, options: AskOptions): Promise<T> =>
+      askModel(context, prompts, template, variables, parse, options);
 
-    return { context, input, system, state, segments, savedChapters, report, ask };
+    return { context, input, state, segments, savedChapters, report, ask };
   }
 
   /** 读取并切分小说原文。 */

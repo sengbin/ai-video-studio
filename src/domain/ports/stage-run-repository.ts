@@ -24,6 +24,8 @@ export interface StageRunRepository {
   create(input: NewStageRun, timestamp: string): StageRun;
   /** 为失败或已取消的记录重新开始生成：状态回到运行中，清除错误与结束时间，保留已完成的产出与进度。 */
   markRunning(id: number): StageRun | undefined;
+  /** 为生成成功的记录重新执行其中一步（如重新抽取）：状态回到运行中，清除进度，保留确认状态与已有产出。 */
+  reopen(id: number): StageRun | undefined;
   /** 更新进度；记录不存在时返回 undefined。 */
   updateProgress(id: number, progress: StageProgress): StageRun | undefined;
   /** 标记生成成功，状态为待确认。 */
@@ -36,8 +38,9 @@ export interface StageRunRepository {
   /**
    * 确认采用：在同一事务内把同一目标原来的当前版本置为历史，再写入确认状态。
    * @param patch 由确认规则计算出的状态（含确认时间）。
+   * @param inTransaction 在同一事务内、写入确认状态前执行的操作（如剧本阶段合并集和实体）；它抛出异常则整体回滚。
    */
-  approve(id: number, patch: ReviewPatch): StageRun | undefined;
+  approve(id: number, patch: ReviewPatch, inTransaction?: () => void): StageRun | undefined;
   /** 写入编辑后的确认状态（回到待确认、修订号加 1）。 */
   applyEdit(id: number, patch: ReviewPatch): StageRun | undefined;
 

@@ -1,19 +1,22 @@
 // ------------------------------------------------------------------------
 // 名称：work-list-pages.ts
-// 说明：作品列表页（P3）的入口：每种素材来源一个面板，列出所有项目中该来源的作品；新建、编辑、重新生成表单和创意产出层都在页内弹出。
+// 说明：作品列表页（P3）的入口：每种素材来源一个面板，列出所有项目中该来源的作品；新建、编辑、重新生成、生成剧本表单和阶段产出层都在页内弹出。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-01
 // 备注：请求处理在 work-list-handlers.ts 与 form-handlers.ts；把作品、项目与阶段的变化推送给页面。
 // ------------------------------------------------------------------------
 
+import { StageKind } from '../../domain/models/stage-run';
 import { WorkSourceType } from '../../domain/models/work';
 import { registerFormHandlers } from '../forms/form-handlers';
+import { createScreenplayFormCatalog } from '../forms/screenplay-form';
 import { createWorkFormCatalog } from '../forms/work-form';
 import { MessageRouter } from '../messaging/message-router';
 import { WORK_LIST_PAGE_RESOURCES } from '../panels/page-resources';
 import { OpenedPanel, PanelManager } from '../panels/panel-manager';
 import { ProjectService } from '../services/project-service';
+import { ScreenplayService } from '../services/screenplay-service';
 import { StageService } from '../services/stage-service';
 import { WorkService } from '../services/work-service';
 import { STAGE_EVENTS } from './stage-handlers';
@@ -41,11 +44,16 @@ export class WorkListPages {
   private readonly opened = new Map<WorkSourceType, OpenedWorkList>();
 
   /**
-   * @param services 项目、作品与阶段服务。
+   * @param services 项目、作品、阶段与剧本服务。
    * @param panels 面板管理器。
    */
   constructor(
-    private readonly services: { readonly projects: ProjectService; readonly works: WorkService; readonly stages: StageService },
+    private readonly services: {
+      readonly projects: ProjectService;
+      readonly works: WorkService;
+      readonly stages: StageService;
+      readonly screenplays: ScreenplayService;
+    },
     private readonly panels: PanelManager
   ) {}
 
@@ -64,7 +72,7 @@ export class WorkListPages {
       return;
     }
 
-    const { projects, works, stages } = this.services;
+    const { projects, works, stages, screenplays } = this.services;
     const entry: OpenedWorkList = { panel: undefined, pending: request };
     const router = new MessageRouter();
     registerWorkListHandlers(router, sourceType, this.services, {
@@ -74,8 +82,14 @@ export class WorkListPages {
         return taken;
       }
     });
-    const onStarted = (workId: number): void => entry.panel?.postEvent(WORK_LIST_EVENTS.openStage, { workId });
-    registerFormHandlers(router, createWorkFormCatalog({ projects, works, stages, onStarted }));
+    const openStage = (workId: number, stage: StageKind): void => entry.panel?.postEvent(WORK_LIST_EVENTS.openStage, { workId, stage });
+    registerFormHandlers(
+      router,
+      new Map([
+        ...createWorkFormCatalog({ projects, works, stages, onStarted: (workId) => openStage(workId, 'creative') }),
+        ...createScreenplayFormCatalog({ works, screenplays, onStarted: (workId) => openStage(workId, 'screenplay') })
+      ])
+    );
 
     const panel = this.panels.open({
       key,

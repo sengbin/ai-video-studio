@@ -1,10 +1,10 @@
 // ------------------------------------------------------------------------
 // 名称：stage-service.ts
-// 说明：阶段应用服务：启动创意生成、取消、重试、确认采用、保存人工编辑的章节，并整理阶段产出页需要的视图数据。
+// 说明：阶段应用服务：启动创意生成、取消、重试、确认采用、保存人工编辑的章节，并整理创意阶段产出页需要的视图数据；剧本阶段的专属操作见 screenplay-service.ts。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-09-30
-// 备注：状态流转规则来自 stage-review-rules.ts，本服务只负责组合读写与通知；目前只有创意阶段，剧本与分镜脚本按同样方式扩展。
+// 备注：状态流转规则来自 stage-review-rules.ts，本服务只负责组合读写与通知；取消、重试、确认采用、编辑的通用流程对各阶段共用。
 // ------------------------------------------------------------------------
 
 import { FORM_LEVEL_ERROR_KEY, NotFoundError, ValidationError } from '../../domain/errors';
@@ -12,6 +12,7 @@ import { ChapterDraft, CreativeParams } from '../../domain/models/creative';
 import { StageDisplayStatus, StageKind, StageRun, StageTarget } from '../../domain/models/stage-run';
 import { WorkKind, WorkSourceType } from '../../domain/models/work';
 import { ChapterRepository } from '../../domain/ports/chapter-repository';
+import { ScreenplayRepository } from '../../domain/ports/screenplay-repository';
 import { StageRunRepository } from '../../domain/ports/stage-run-repository';
 import { countWords, normalizeChapterEdit } from '../../domain/rules/creative-rules';
 import {
@@ -100,6 +101,8 @@ export interface StageServiceDependencies {
   readonly works: WorkService;
   readonly runs: StageRunRepository;
   readonly chapters: ChapterRepository;
+  /** 剧本的抽取结果在确认采用时合并到集和实体。 */
+  readonly screenplays: ScreenplayRepository;
   readonly runner: StageRunner;
   /** 阶段数据变化的通知器，与执行器共用，页面据此刷新。 */
   readonly changes: ChangeNotifier<StageChange>;
@@ -203,12 +206,14 @@ export class StageService {
   }
 
   /**
-   * 取消作品创意阶段正在进行的生成；没有则什么都不做。删除作品前调用。
+   * 取消作品各阶段正在进行的生成；没有则什么都不做。删除作品前调用。
    */
   cancelRunningForWork(workId: number): void {
-    const running = this.dependencies.runs.findRunning(creativeTarget(workId));
-    if (running !== undefined) {
-      this.dependencies.runner.cancel(running.id);
+    for (const stage of ['creative', 'screenplay'] as const) {
+      const running = this.dependencies.runs.findRunning({ workId, stage, episodeId: null });
+      if (running !== undefined) {
+        this.dependencies.runner.cancel(running.id);
+      }
     }
   }
 
@@ -223,13 +228,16 @@ export class StageService {
   }
 
   /**
-   * 确认采用：该版本成为当前版本，原来的当前版本变为历史。
+   * 确认采用：该版本成为当前版本，原来的当前版本变为历史。剧本尚未合并时，在同一事务内把抽取结果合并到集和实体。
    * @throws NotFoundError 记录不存在。
    * @throws ValidationError 记录不是生成成功且待确认。
    */
   approve(runId: number): void {
     const run = this.requireRun(runId);
-    const approved = this.dependencies.runs.approve(run.id, createApprovalPatch(run, this.timestamp()));
+    const timestamp = this.timestamp();
+    const patch = createApprovalPatch(run, timestamp);
+    const merge = run.stage === 'screenplay' && run.appliedAt === null ? () => this.dependencies.screenplays.merge(run.id, timestamp) : undefined;
+    const approved = this.dependencies.runs.approve(run.id, patch, merge);
     this.publish(approved ?? run);
   }
 
@@ -239,25 +247,48 @@ export class StageService {
    * @throws ValidationError 内容不合法、不是最新版本或生成尚未成功。
    */
   saveChapter(runId: number, rawChapter: unknown): void {
-    const { runs, chapters } = this.dependencies;
+    const { chapters } = this.dependencies;
+    this.editLatest(runId, (run) => {
+      const chapter = normalizeChapterEdit(rawChapter);
+      if (!chapters.list(run.id).some((saved) => saved.seq === chapter.seq)) {
+        throw new NotFoundError(`第 ${chapter.seq} 章不存在。`);
+      }
+      chapters.save(run.id, chapter, this.timestamp());
+    });
+  }
+
+  /**
+   * 编辑最新版本的产出：校验通过后执行写入，再让该版本回到待确认（修订号加 1）并通知界面。
+   * @param write 校验内容并写入产出；抛出异常则不改变确认状态。
+   * @throws NotFoundError 记录不存在。
+   * @throws ValidationError 不是最新版本或生成尚未成功。
+   */
+  editLatest(runId: number, write: (run: StageRun) => void): void {
+    const { runs } = this.dependencies;
     const run = this.requireRun(runId);
     const [latest] = runs.listVersions(run);
     if (latest === undefined || latest.id !== run.id) {
       throw new ValidationError({ [FORM_LEVEL_ERROR_KEY]: NOT_LATEST_MESSAGE });
     }
     const patch = createEditPatch(run);
-    const chapter = normalizeChapterEdit(rawChapter);
-    if (!chapters.list(run.id).some((saved) => saved.seq === chapter.seq)) {
-      throw new NotFoundError(`第 ${chapter.seq} 章不存在。`);
-    }
-
-    chapters.save(run.id, chapter, this.timestamp());
+    write(run);
     const edited = runs.applyEdit(run.id, patch);
     this.publish(edited ?? run);
   }
 
+  /**
+   * 确认记录属于指定作品和阶段，防止页面用别的作品的记录标识操作。
+   * @throws NotFoundError 记录不存在或不属于该作品和阶段。
+   */
+  assertRunBelongs(runId: number, workId: number, stage: StageKind): void {
+    const run = this.dependencies.runs.findById(runId);
+    if (run === undefined || run.workId !== workId || run.stage !== stage) {
+      throw new NotFoundError('版本不存在。');
+    }
+  }
+
   /** 读取记录，不存在时抛出 NotFoundError。 */
-  private requireRun(runId: number): StageRun {
+  requireRun(runId: number): StageRun {
     const run = this.dependencies.runs.findById(runId);
     if (run === undefined) {
       throw new NotFoundError('阶段记录不存在。');
@@ -267,6 +298,11 @@ export class StageService {
 
   private publish(run: StageRun): void {
     this.dependencies.changes.notify({ workId: run.workId, runId: run.id, stage: run.stage });
+  }
+
+  /** 通知界面记录已变化，供阶段专属的服务在自己写入产出后调用。 */
+  notifyChanged(run: StageRun): void {
+    this.publish(run);
   }
 
   private timestamp(): string {
@@ -285,11 +321,13 @@ function readParams(run: StageRun): CreativeParams | null {
   return typeof params === 'object' && params !== null ? (params as CreativeParams) : null;
 }
 
-function toVersionItem(run: StageRun): StageVersionItem {
+/** 版本下拉列表中的一项。 */
+export function toVersionItem(run: StageRun): StageVersionItem {
   return { id: run.id, version: run.version, display: toDisplayStatus(run), isCurrent: run.isCurrent, createdAt: run.createdAt };
 }
 
-function toRunView(run: StageRun): StageRunView {
+/** 阶段产出页展示的记录概况。 */
+export function toRunView(run: StageRun): StageRunView {
   return {
     id: run.id,
     version: run.version,

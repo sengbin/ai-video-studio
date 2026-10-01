@@ -110,6 +110,38 @@ export class StageRunner {
   }
 
   /**
+   * 对生成成功的记录重新执行未保存产出的步骤（如重新抽取）：状态回到运行中，不产生新版本。
+   * @param beforeLaunch 确认可以执行后、重新开始前调用，用于清除要重做的产出。
+   * @throws NotFoundError 记录不存在。
+   * @throws ValidationError 记录不是生成成功，或同一目标正在生成。
+   * @throws TextGenerationError 没有可用的文本模型。
+   */
+  async reextract(runId: number, beforeLaunch: () => void): Promise<StageRun> {
+    const { runs, text } = this.dependencies;
+    const existing = runs.findById(runId);
+    if (existing === undefined) {
+      throw new NotFoundError('阶段记录不存在。');
+    }
+    if (existing.status !== 'succeeded') {
+      throw new ValidationError({ [FORM_LEVEL_ERROR_KEY]: '生成成功后才能重新抽取。' });
+    }
+    const workflow = this.workflowFor(existing.stage);
+    const model = await text.resolveModel();
+
+    if (runs.findRunning(existing) !== undefined) {
+      throw new ValidationError({ [FORM_LEVEL_ERROR_KEY]: '该阶段正在生成，请等待完成或先取消。' });
+    }
+    beforeLaunch();
+    const reopened = runs.reopen(runId);
+    if (reopened === undefined) {
+      throw new NotFoundError('阶段记录不存在。');
+    }
+    this.publish(reopened);
+    this.launch(reopened, workflow, model);
+    return reopened;
+  }
+
+  /**
    * 取消正在生成的记录。
    * @returns 是否找到了正在执行的生成。
    */

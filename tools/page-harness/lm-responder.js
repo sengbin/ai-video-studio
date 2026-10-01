@@ -59,6 +59,31 @@ function createResponder() {
       const seq = Number(chapter[1]);
       return JSON.stringify({ title: `第${seq}章 示例`, content: makeContent(readMinWords(text), seq) });
     }
+    if (text.includes('# 任务：撰写剧本包')) {
+      return JSON.stringify({
+        title: '雨夜来客',
+        overview: '题材：悬疑。灯塔守夜人在雨夜收到神秘信号，顺着信号找到多年前失踪的人。',
+        fullText: '第一集 信号\n场景一 灯塔内 夜\n守夜人点亮灯塔，翻开值班日志。\n老陈：今晚会下雨。\n\n第二集 海面\n场景二 海边 夜\n老陈划船出海，寻找信号来源。'
+      });
+    }
+    if (text.includes('# 任务：从剧本中抽取集和实体')) {
+      const single = text.includes('这是单个短视频，只有 1 集。');
+      const maxEpisodes = Number(/最多 (\d+) 集/.exec(text)?.[1] ?? 2);
+      const episodes = single
+        ? [{ synopsis: '守夜人在雨夜顺着信号出海。', targetDurationSeconds: 45 }]
+        : [
+            { title: '信号', synopsis: '守夜人收到神秘信号。', screenplayText: '场景一 灯塔内 夜\n守夜人点亮灯塔，翻开值班日志。', targetDurationSeconds: 45 },
+            { title: '海面', synopsis: '老陈出海寻找信号。', screenplayText: '场景二 海边 夜\n老陈划船出海，寻找信号来源。', targetDurationSeconds: 45 }
+          ].slice(0, maxEpisodes);
+      return JSON.stringify({
+        episodes,
+        entities: [
+          { kind: 'character', name: '老陈', aliases: ['守夜人'], description: '守了三十年灯塔的老人。', attributes: { identity: '灯塔守夜人', voice: '低沉沙哑' } },
+          { kind: 'scene', name: '灯塔', description: '海边的旧灯塔。', attributes: { interior_exterior: '内景', time_light: '夜晚，灯光每转一圈照亮一次浪尖' } },
+          { kind: 'prop', name: '值班日志', description: '记录每晚情况的旧本子。', attributes: { appearance: '深色封皮，边角磨损' } }
+        ]
+      });
+    }
     return JSON.stringify({ refused: '示例应答无法处理该任务。' });
   };
 }

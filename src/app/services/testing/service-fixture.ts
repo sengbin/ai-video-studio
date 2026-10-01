@@ -10,14 +10,17 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { IN_MEMORY_DATABASE_PATH, openDatabase } from '../../../infra/database/database-connection';
 import { SqliteProjectRepository } from '../../../infra/database/sqlite-project-repository';
+import { SqliteScreenplayRepository } from '../../../infra/database/sqlite-screenplay-repository';
 import { SqliteChapterRepository, SqliteStageRunRepository } from '../../../infra/database/sqlite-stage-run-repository';
 import { SqliteWorkRepository } from '../../../infra/database/sqlite-work-repository';
 import { SqliteWorkSourceReader } from '../../../infra/database/sqlite-work-source-reader';
 import { CreativeWorkflow } from '../../stages/creative-workflow';
+import { ScreenplayWorkflow } from '../../stages/screenplay-workflow';
 import { StageRunner } from '../../stages/stage-runner';
 import { FILE_PROMPTS, Responder, ScriptedText, standardResponder } from '../../stages/testing/scripted-text';
 import { ChangeNotifier } from '../change-notifier';
 import { ProjectService } from '../project-service';
+import { ScreenplayService } from '../screenplay-service';
 import { StageChange, StageService } from '../stage-service';
 import { WorkService } from '../work-service';
 
@@ -28,6 +31,7 @@ export interface ServiceFixture {
   readonly projects: ProjectService;
   readonly works: WorkService;
   readonly stages: StageService;
+  readonly screenplays: ScreenplayService;
   readonly runner: StageRunner;
   readonly text: ScriptedText;
   /** 阶段变化通知器，执行器与服务共用。 */
@@ -46,6 +50,7 @@ export function createServiceFixture(responder: Responder = standardResponder): 
   const database = openDatabase(IN_MEMORY_DATABASE_PATH);
   const runs = new SqliteStageRunRepository(database);
   const chapters = new SqliteChapterRepository(database);
+  const screenplayRepository = new SqliteScreenplayRepository(database);
   const projects = new ProjectService(new SqliteProjectRepository(database));
   const works = new WorkService(new SqliteWorkRepository(database), runs);
   const text = new ScriptedText(responder);
@@ -61,11 +66,13 @@ export function createServiceFixture(responder: Responder = standardResponder): 
         sources: new SqliteWorkSourceReader(database),
         prompts: FILE_PROMPTS,
         getSplitSettings: () => ({ mode: 'chapter', maxSegmentChars: 1000 })
-      })
+      }),
+      new ScreenplayWorkflow({ chapters, screenplays: screenplayRepository, prompts: FILE_PROMPTS })
     ],
     notify: (run) => changes.notify({ workId: run.workId, runId: run.id, stage: run.stage })
   });
-  const stages = new StageService({ works, runs, chapters, runner, changes });
+  const stages = new StageService({ works, runs, chapters, screenplays: screenplayRepository, runner, changes });
+  const screenplays = new ScreenplayService({ works, runs, screenplays: screenplayRepository, runner, stages });
   const project = projects.createProject({ name: '项目甲' });
-  return { database, runs, projects, works, stages, runner, text, changes, changed, project };
+  return { database, runs, projects, works, stages, screenplays, runner, text, changes, changed, project };
 }

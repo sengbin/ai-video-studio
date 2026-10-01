@@ -13,8 +13,10 @@ import { join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { CREATIVE_PROMPT_VARIABLES } from './creative-workflow';
 import { listTemplateVariables, renderTemplate, wrapMaterial } from './prompt-templates';
+import { SCREENPLAY_PROMPT_VARIABLES } from './screenplay-workflow';
 
 const PROMPTS_DIRECTORY = join(resolve(__dirname, '..', '..', '..'), 'resources', 'prompts');
+const PROMPT_VARIABLES = { ...CREATIVE_PROMPT_VARIABLES, ...SCREENPLAY_PROMPT_VARIABLES };
 
 test('渲染：替换变量，素材里的 {{…}} 不会被再次解析', () => {
   const rendered = renderTemplate('标题：{{title}}；内容：{{body}}', { title: '灯塔', body: '含有 {{title}} 的文字' });
@@ -38,14 +40,14 @@ test('素材包裹：放入数据段，素材内的结束标记被改为全角�
   assert.ok(wrapped.includes('＜/素材>'));
 });
 
-test('模板文件：每个模板存在，且使用的变量与创意工作流提供的完全一致', () => {
+test('模板文件：每个模板存在，且使用的变量与工作流提供的完全一致', () => {
   const names = readdirSync(PROMPTS_DIRECTORY)
     .filter((file) => file.endsWith('.md'))
     .map((file) => file.slice(0, -'.md'.length))
     .sort();
-  assert.deepEqual(names, Object.keys(CREATIVE_PROMPT_VARIABLES).sort());
+  assert.deepEqual(names, Object.keys(PROMPT_VARIABLES).sort());
 
-  for (const [name, variables] of Object.entries(CREATIVE_PROMPT_VARIABLES)) {
+  for (const [name, variables] of Object.entries(PROMPT_VARIABLES)) {
     const template = readFileSync(join(PROMPTS_DIRECTORY, `${name}.md`), 'utf8');
     assert.deepEqual([...listTemplateVariables(template)].sort(), [...variables].sort(), `${name} 的变量不一致`);
   }

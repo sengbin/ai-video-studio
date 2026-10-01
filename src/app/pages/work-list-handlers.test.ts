@@ -83,17 +83,17 @@ test('创意产出请求：作品不存在或缺少作品标识时返回错误�
     await stages.startCreative(first.id, PARAMS);
     await runner.whenIdle();
 
-    const ok = await send(STAGE_REQUESTS.load, { workId: first.id });
+    const ok = await send(STAGE_REQUESTS.load, { workId: first.id, stage: 'creative' });
     assert.ok(ok?.ok);
     assert.equal((ok.data as { work: { id: number } }).work.id, first.id);
 
-    const missing = await send(STAGE_REQUESTS.load, { workId: 999 });
+    const missing = await send(STAGE_REQUESTS.load, { workId: 999, stage: 'creative' });
     assert.ok(missing && !missing.ok && missing.error.kind === 'not-found');
-    const absent = await send(STAGE_REQUESTS.load, {});
+    const absent = await send(STAGE_REQUESTS.load, { stage: 'creative' });
     assert.ok(absent && !absent.ok && absent.error.kind === 'validation');
 
     const run = stages.getCreativeView(first.id).run;
-    const forged = await send(STAGE_REQUESTS.approve, { workId: second.id, id: run.id });
+    const forged = await send(STAGE_REQUESTS.approve, { workId: second.id, stage: 'creative', id: run.id });
     assert.ok(forged && !forged.ok, '用其他作品的标识不能操作这个作品的版本');
     assert.equal(stages.getCreativeView(first.id).run.display, 'pending');
   } finally {

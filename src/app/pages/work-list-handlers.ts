@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：work-list-handlers.ts
-// 说明：作品列表页（P3）的请求处理：读取某种素材来源下全部项目的作品、取走待执行动作、创意产出（页内弹出层）的请求、带名称确认的作品删除。
+// 说明：作品列表页（P3）的请求处理：读取某种素材来源下全部项目的作品、取走待执行动作、阶段产出（页内弹出层）的请求、带名称确认的作品删除。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-01
@@ -12,6 +12,7 @@ import { WorkSourceType } from '../../domain/models/work';
 import { readEntityId, readRecord } from '../../domain/rules/field-readers';
 import { MessageRouter } from '../messaging/message-router';
 import { ProjectService } from '../services/project-service';
+import { ScreenplayService } from '../services/screenplay-service';
 import { StageService } from '../services/stage-service';
 import { WorkListItem, WorkService } from '../services/work-service';
 import { registerStageHandlers } from './stage-handlers';
@@ -24,7 +25,7 @@ export const WORK_LIST_REQUESTS = {
   delete: 'works.delete'
 } as const;
 
-/** 宿主推送给作品列表页的事件名称：changed 要求刷新数据，action 要求执行动作，openStage 的载荷为 { workId }。 */
+/** 宿主推送给作品列表页的事件名称：changed 要求刷新数据，action 要求执行动作，openStage 的载荷为 { workId, stage }。 */
 export const WORK_LIST_EVENTS = {
   changed: 'works.changed',
   action: 'works.action',
@@ -57,16 +58,21 @@ export interface WorkListActions {
  * 在路由器上注册作品列表页的请求处理函数。
  * @param router 面板的请求路由器。
  * @param sourceType 页面绑定的素材来源。
- * @param services 项目、作品与阶段服务。
+ * @param services 项目、作品、阶段与剧本服务。
  * @param actions 外部提供的能力。
  */
 export function registerWorkListHandlers(
   router: MessageRouter,
   sourceType: WorkSourceType,
-  services: { readonly projects: ProjectService; readonly works: WorkService; readonly stages: StageService },
+  services: {
+    readonly projects: ProjectService;
+    readonly works: WorkService;
+    readonly stages: StageService;
+    readonly screenplays: ScreenplayService;
+  },
   actions: WorkListActions
 ): void {
-  const { projects, works, stages } = services;
+  const { projects, works, stages, screenplays } = services;
 
   router.register(WORK_LIST_REQUESTS.load, () => {
     const summaries = projects.listProjects();
@@ -79,7 +85,11 @@ export function registerWorkListHandlers(
 
   router.register(WORK_LIST_REQUESTS.takePending, () => ({ request: actions.takePending() }));
 
-  registerStageHandlers(router, stages, (payload) => works.getWork(readEntityId({ id: readRecord(payload).workId }, '作品')).id);
+  registerStageHandlers(
+    router,
+    { stages, screenplays },
+    (payload) => works.getWork(readEntityId({ id: readRecord(payload).workId }, '作品')).id
+  );
 
   router.register(WORK_LIST_REQUESTS.prepareDelete, (payload) => ({ name: works.getWork(readEntityId(payload, '作品')).name }));
 

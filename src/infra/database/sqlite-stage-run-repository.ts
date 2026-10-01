@@ -139,6 +139,14 @@ export class SqliteStageRunRepository implements StageRunRepository {
     );
   }
 
+  reopen(id: number): StageRun | undefined {
+    return this.changeStatus(
+      id,
+      "status = 'succeeded'",
+      "status = 'running', error_message = NULL, raw_output = NULL, finished_at = NULL, progress_json = NULL"
+    );
+  }
+
   updateProgress(id: number, progress: StageProgress): StageRun | undefined {
     this.database.prepare('UPDATE stage_runs SET progress_json = ? WHERE id = ?').run(JSON.stringify(progress), id);
     return this.findById(id);
@@ -162,12 +170,13 @@ export class SqliteStageRunRepository implements StageRunRepository {
     return this.changeStatus(id, "status = 'running'", "status = 'canceled', finished_at = ?", [timestamp]);
   }
 
-  approve(id: number, patch: ReviewPatch): StageRun | undefined {
+  approve(id: number, patch: ReviewPatch, inTransaction?: () => void): StageRun | undefined {
     return runInTransaction(this.database, () => {
       const run = this.findById(id);
       if (run === undefined) {
         return undefined;
       }
+      inTransaction?.();
       this.database
         .prepare(`UPDATE stage_runs SET is_current = 0 WHERE ${TARGET_CONDITION} AND is_current = 1 AND id <> ?`)
         .run(run.workId, run.stage, run.episodeId, id);

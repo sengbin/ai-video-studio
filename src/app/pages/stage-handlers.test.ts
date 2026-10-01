@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：stage-handlers.test.ts
-// 说明：创意阶段产出页请求处理的自动化测试：读取视图、确认采用、保存章节、版本归属校验。
+// 说明：阶段产出页请求处理的自动化测试：创意与剧本的读取视图、确认采用、编辑保存、版本归属校验。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-09-30
@@ -23,8 +23,9 @@ function createFixture() {
   const other = fixture.projects.createProject({ name: '项目乙' });
   const foreign = fixture.works.createWork(other.id, normalizeWorkCreation({ workName: '外来作品', kind: '单个短视频' }, 'text'));
   const router = new MessageRouter();
-  registerStageHandlers(router, fixture.stages, () => work.id);
-  const sendStage = (name: string, payload?: unknown) => router.handle({ type: 'request', requestId: 1, name, payload });
+  registerStageHandlers(router, fixture, () => work.id);
+  const sendStage = (name: string, payload: object = {}, stage = 'creative') =>
+    router.handle({ type: 'request', requestId: 1, name, payload: { stage, ...payload } });
   return { ...fixture, work, foreign, sendStage };
 }
 test('产出页：读取视图、确认采用、保存章节、读取版本', async () => {
@@ -77,6 +78,49 @@ test('产出页：不属于本作品的版本被拒绝；没有生成时取消�
     assert.ok(cancel && !cancel.ok && cancel.error.kind === 'validation');
     const raw = await sendStage(STAGE_REQUESTS.rawOutput, { id: latest });
     assert.deepEqual(raw?.ok && raw.data, { text: '' });
+  } finally {
+    database.close();
+  }
+});
+
+test('剧本产出：读取视图、编辑正文、集、实体，重新抽取，确认采用；阶段不符的版本被拒绝', async () => {
+  const { database, sendStage, work, stages, screenplays, runner, runs } = createFixture();
+  try {
+    const creative = await stages.startCreative(work.id, PARAMS);
+    await runner.whenIdle();
+    stages.approve(creative.id);
+    const run = await screenplays.start(work.id, { maxEpisodeDurationSeconds: 60 });
+    await runner.whenIdle();
+
+    const loaded = await sendStage(STAGE_REQUESTS.load, {}, 'screenplay');
+    assert.ok(loaded?.ok);
+    assert.equal((loaded.data as { screenplay: { title: string } }).screenplay.title, '雨夜来客');
+
+    const text = await sendStage(STAGE_REQUESTS.saveScreenplayText, { id: run.id, fullText: '新正文' }, 'screenplay');
+    assert.ok(text?.ok);
+    const episode = await sendStage(
+      STAGE_REQUESTS.saveEpisode,
+      { id: run.id, ref: 0, title: '集', synopsis: '梗概', screenplayText: '正文', targetDurationSeconds: '' },
+      'screenplay'
+    );
+    assert.ok(episode?.ok);
+    const entity = await sendStage(STAGE_REQUESTS.saveEntity, { id: run.id, ref: 0, name: '' }, 'screenplay');
+    assert.ok(entity && !entity.ok && entity.error.fieldErrors?.name);
+
+    const reextract = await sendStage(STAGE_REQUESTS.reextract, { id: run.id }, 'screenplay');
+    assert.ok(reextract?.ok);
+    await runner.whenIdle();
+    assert.equal(screenplays.getView(work.id).episodes.length, 1);
+
+    const approved = await sendStage(STAGE_REQUESTS.approve, { id: run.id }, 'screenplay');
+    assert.ok(approved?.ok);
+    assert.equal(runs.findById(run.id)?.reviewStatus, 'approved');
+
+    // 创意阶段的版本标识不能用在剧本阶段的请求上，未知阶段被拒绝。
+    const wrongStage = await sendStage(STAGE_REQUESTS.approve, { id: creative.id }, 'screenplay');
+    assert.ok(wrongStage && !wrongStage.ok && wrongStage.error.kind === 'not-found');
+    const unknown = await sendStage(STAGE_REQUESTS.load, {}, 'storyboard_script');
+    assert.ok(unknown && !unknown.ok && unknown.error.kind === 'validation');
   } finally {
     database.close();
   }

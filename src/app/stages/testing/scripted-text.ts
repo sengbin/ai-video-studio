@@ -98,5 +98,24 @@ export function standardResponder(request: TextGenerationRequest): unknown {
   if (chapter !== null) {
     return { title: `第${chapter[1]}章`, content: '灯'.repeat(120) };
   }
+  if (user.includes('# 任务：撰写剧本包')) {
+    return { title: '雨夜来客', overview: '灯塔守夜人在雨夜收到神秘信号。', fullText: '场景一 灯塔内 夜\n守夜人点亮灯塔。\n老陈：今晚会下雨。' };
+  }
+  if (user.includes('# 任务：从剧本中抽取集和实体')) {
+    // 多集短片的集需要标题和本集正文，单个短视频不需要，以工具参数的字段区分。
+    const series = JSON.stringify(request.tool.inputSchema).includes('"screenplayText"');
+    return {
+      episodes: series
+        ? [
+            { title: '第一集', synopsis: '开端', screenplayText: '第一集正文', targetDurationSeconds: 30 },
+            { title: '第二集', synopsis: '转折', screenplayText: '第二集正文', targetDurationSeconds: 30 }
+          ]
+        : [{ synopsis: '守夜人的雨夜', targetDurationSeconds: 30 }],
+      entities: [
+        { kind: 'character', name: '守夜人', aliases: ['老陈'], description: '灯塔守夜人', attributes: { identity: '守灯塔三十年', voice: '低沉' } },
+        { kind: 'scene', name: '灯塔', description: '海边灯塔', attributes: { interior_exterior: '内景' } }
+      ]
+    };
+  }
   throw new Error(`未预期的请求：${user.slice(0, 40)}`);
 }

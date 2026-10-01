@@ -16,10 +16,12 @@ import { WorkListPages } from './app/pages/work-list-pages';
 import { PanelManager } from './app/panels/panel-manager';
 import { ChangeNotifier } from './app/services/change-notifier';
 import { ProjectService } from './app/services/project-service';
+import { ScreenplayService } from './app/services/screenplay-service';
 import { StageChange, StageService } from './app/services/stage-service';
 import { TextSettingsService } from './app/services/text-settings-service';
 import { WorkService } from './app/services/work-service';
 import { CreativeWorkflow } from './app/stages/creative-workflow';
+import { ScreenplayWorkflow } from './app/stages/screenplay-workflow';
 import { StageRunner } from './app/stages/stage-runner';
 import { WorkSourceType } from './domain/models/work';
 import { CopilotModelCatalog } from './infra/copilot/copilot-model-catalog';
@@ -27,6 +29,7 @@ import { CopilotTextGeneration } from './infra/copilot/copilot-text-generation';
 import { VsCodeTextGenerationSettings } from './infra/copilot/vscode-text-generation-settings';
 import { openDatabase } from './infra/database/database-connection';
 import { SqliteProjectRepository } from './infra/database/sqlite-project-repository';
+import { SqliteScreenplayRepository } from './infra/database/sqlite-screenplay-repository';
 import { SqliteChapterRepository, SqliteStageRunRepository } from './infra/database/sqlite-stage-run-repository';
 import { SqliteWorkRepository } from './infra/database/sqlite-work-repository';
 import { SqliteWorkSourceReader } from './infra/database/sqlite-work-source-reader';
@@ -60,7 +63,9 @@ export function activate(context: vscode.ExtensionContext): void {
   // 存储与外部服务。
   const runs = new SqliteStageRunRepository(database);
   const chapters = new SqliteChapterRepository(database);
+  const screenplays = new SqliteScreenplayRepository(database);
   const settingsStore = new VsCodeTextGenerationSettings();
+  const prompts = new FilePromptTemplates(vscode.Uri.joinPath(context.extensionUri, 'resources', 'prompts').fsPath);
 
   // 应用服务。
   const projectService = new ProjectService(new SqliteProjectRepository(database));
@@ -73,20 +78,22 @@ export function activate(context: vscode.ExtensionContext): void {
       new CreativeWorkflow({
         chapters,
         sources: new SqliteWorkSourceReader(database),
-        prompts: new FilePromptTemplates(vscode.Uri.joinPath(context.extensionUri, 'resources', 'prompts').fsPath),
+        prompts,
         getSplitSettings: () => settingsStore.getSplitSettings()
-      })
+      }),
+      new ScreenplayWorkflow({ chapters, screenplays, prompts })
     ],
     notify: (run) => stageChanges.notify({ workId: run.workId, runId: run.id, stage: run.stage })
   });
   // 上次退出时还在生成的记录已经无法继续，置为失败，用户可以在产出页点“重试”。
   runner.recoverInterrupted();
-  const stageService = new StageService({ works: workService, runs, chapters, runner, changes: stageChanges });
+  const stageService = new StageService({ works: workService, runs, chapters, screenplays, runner, changes: stageChanges });
+  const screenplayService = new ScreenplayService({ works: workService, runs, screenplays, runner, stages: stageService });
   const textSettingsService = new TextSettingsService(settingsStore, new CopilotModelCatalog());
 
   // 页面。
   const panels = new PanelManager(context.extensionUri);
-  const services = { projects: projectService, works: workService, stages: stageService };
+  const services = { projects: projectService, works: workService, stages: stageService, screenplays: screenplayService };
   const projectPages = new ProjectPages(projectService, panels);
   const workListPages = new WorkListPages(services, panels);
   const settingsPages = new SettingsPages(textSettingsService, panels);

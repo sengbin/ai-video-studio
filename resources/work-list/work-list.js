@@ -1,10 +1,10 @@
 // ------------------------------------------------------------------------
 // 名称：work-list.js
-// 说明：作品列表页脚本：列出某种素材来源下所有项目的作品，按项目与名称关键字筛选，在页内弹出页面中新建、编辑作品，弹出创意产出层，带名称确认地删除作品。
+// 说明：作品列表页脚本：列出某种素材来源下所有项目的作品，按项目与名称关键字筛选，在页内弹出页面中新建、编辑作品、生成剧本，弹出创意与剧本产出层，带名称确认地删除作品。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-01
-// 备注：请求与事件名称与 src/app/pages/work-list-handlers.ts、src/app/forms/work-form.ts 一致；依赖 form/form-runtime.js（aiForm）、stage/stage.js（aiStage）与 shared/page-format.js（pageFormat）。
+// 备注：请求与事件名称与 src/app/pages/work-list-handlers.ts、src/app/forms/work-form.ts、src/app/forms/screenplay-form.ts 一致；依赖 form/form-runtime.js（aiForm）、stage/stage.js（aiStage）与 shared/page-format.js（pageFormat）。
 // ------------------------------------------------------------------------
 
 'use strict';
@@ -20,6 +20,9 @@
   const ACTION_CREATE = 'create';
   const FORM_CREATE = 'work.create';
   const FORM_EDIT = 'work.edit';
+  const FORM_START_SCREENPLAY = 'screenplay.start';
+  const STAGE_CREATIVE = 'creative';
+  const STAGE_SCREENPLAY = 'screenplay';
 
   const GENERIC_ERROR_TEXT = '操作失败，请重试。';
   const FILTER_ALL = 'all';
@@ -36,8 +39,8 @@
   let loadError = '';
   let isLoading = true;
   let isFormOpen = false;
-  /** 表单还开着时收到的「弹出产出层」请求，表单关闭后再打开。 */
-  let pendingStageWorkId = null;
+  /** 表单还开着时收到的「弹出产出层」请求（{ workId, stage }），表单关闭后再打开。 */
+  let pendingStage = null;
   let filterProjectId = FILTER_ALL;
   let keyword = '';
   let refreshTimer = 0;
@@ -121,18 +124,18 @@
       await aiForm.open(options);
     } finally {
       isFormOpen = false;
-      if (pendingStageWorkId !== null) {
-        const workId = pendingStageWorkId;
-        pendingStageWorkId = null;
-        aiStage.open(workId);
+      if (pendingStage !== null) {
+        const { workId, stage } = pendingStage;
+        pendingStage = null;
+        aiStage.open(workId, stage);
       }
     }
   }
 
-  /** 弹出作品的创意产出层；表单还开着时等它关闭后再弹出，避免两个弹出页同时出现。 */
-  function openStage(workId) {
-    if (isFormOpen) pendingStageWorkId = workId;
-    else aiStage.open(workId);
+  /** 弹出作品某个阶段的产出层；表单还开着时等它关闭后再弹出，避免两个弹出页同时出现。 */
+  function openStage(workId, stage) {
+    if (isFormOpen) pendingStage = { workId, stage };
+    else aiStage.open(workId, stage);
   }
 
   /** 弹出“新建作品”表单；筛选了某个项目时把它作为所属项目的默认值。 */
@@ -147,6 +150,11 @@
     void showForm({ form: FORM_EDIT, params: { workId: work.id } });
   }
 
+  /** 弹出“生成剧本”表单；创意已确认才能打开。 */
+  function openScreenplayForm(work) {
+    void showForm({ form: FORM_START_SCREENPLAY, params: { workId: work.id } });
+  }
+
   /** 删除作品：先取名称，再用页内删除对话框要求输入作品名称，最后请求删除。 */
   async function deleteWork(work) {
     const prepared = await runAction(REQUEST_PREPARE_DELETE, { id: work.id });
@@ -154,7 +162,7 @@
 
     const confirmed = await aiUi.confirmDelete({
       title: '删除作品',
-      message: `将删除作品“${prepared.name}”及其素材、创意产出等全部内容，且无法恢复。`,
+      message: `将删除作品“${prepared.name}”及其素材、创意、剧本等全部内容，且无法恢复。`,
       confirmName: prepared.name,
       nameLabel: '作品名称'
     });
@@ -171,28 +179,49 @@
     if (sourceType) openCreateForm();
   }
 
-  /** 创意状态单元格：状态文字加版本号，生成中附带进度。 */
-  function renderCreativeStatus(creative) {
-    if (creative.display === 'none') {
+  /** 阶段状态单元格：状态文字加版本号，生成中附带进度，上游已变更时加标记。 */
+  function renderStageStatus(summary) {
+    if (summary.display === 'none') {
       return aiUi.h('span', { class: stageStatusClass('none'), text: stageStatusLabel('none') });
     }
-    const progress = creative.progressText ? `（${creative.progressText}）` : '';
+    const progress = summary.progressText ? `（${summary.progressText}）` : '';
+    const stale = summary.stale ? '，上游已变更' : '';
     return aiUi.h('span', {
-      class: stageStatusClass(creative.display),
-      text: `v${creative.version} ${stageStatusLabel(creative.display)}${progress}`
+      class: summary.stale ? 'status-warning' : stageStatusClass(summary.display),
+      text: `v${summary.version} ${stageStatusLabel(summary.display)}${progress}${stale}`
     });
+  }
+
+  /** 剧本操作按钮：已有剧本记录时查看；没有时创意已确认才能生成。 */
+  function renderScreenplayButton(work) {
+    if (work.screenplay.runId !== null) {
+      return aiUi.button({
+        text: '查看剧本',
+        compact: true,
+        ariaLabel: `查看剧本：${work.name}`,
+        onClick: () => openStage(work.id, STAGE_SCREENPLAY)
+      }).element;
+    }
+    return aiUi.button({
+      text: '生成剧本',
+      compact: true,
+      disabled: !work.canStartScreenplay,
+      ariaLabel: `生成剧本：${work.name}`,
+      onClick: () => openScreenplayForm(work)
+    }).element;
   }
 
   /** 作品表格的列。 */
   const WORK_COLUMNS = [
     {
       title: '作品名称',
-      width: '30%',
+      width: '26%',
       minWidth: 180,
       render: (work) => aiUi.tableMainCell({ text: work.name, description: KIND_LABELS[work.kind] || '' })
     },
-    { title: '所属项目', width: '20%', minWidth: 120, render: (work) => aiUi.chip({ text: work.projectName }) },
-    { title: '创意', width: '18%', minWidth: 120, render: (work) => renderCreativeStatus(work.creative) },
+    { title: '所属项目', width: '16%', minWidth: 120, render: (work) => aiUi.chip({ text: work.projectName }) },
+    { title: '创意', width: '16%', minWidth: 120, render: (work) => renderStageStatus(work.creative) },
+    { title: '剧本', width: '16%', minWidth: 120, render: (work) => renderStageStatus(work.screenplay) },
     {
       title: '创建时间',
       width: 110,
@@ -210,8 +239,9 @@
           compact: true,
           disabled: work.creative.runId === null,
           ariaLabel: `查看创意：${work.name}`,
-          onClick: () => openStage(work.id)
+          onClick: () => openStage(work.id, STAGE_CREATIVE)
         }).element,
+        renderScreenplayButton(work),
         aiUi.button({
           kind: 'edit',
           compact: true,
@@ -283,7 +313,7 @@
   window.hostBridge.onEvent(EVENT_CHANGED, scheduleRefresh);
   window.hostBridge.onEvent(EVENT_ACTION, (request) => void handleRequest(request));
   window.hostBridge.onEvent(EVENT_OPEN_STAGE, (payload) => {
-    if (payload) openStage(payload.workId);
+    if (payload) openStage(payload.workId, payload.stage);
   });
   const initialLoad = loadWorks(true);
   // 页面打开前已登记的请求（如侧栏点“添加”），加载完成后主动取走。
