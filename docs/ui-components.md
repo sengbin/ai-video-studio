@@ -314,11 +314,14 @@ const files = images.getValue();   // [{ name, mimeType, size, data }]，data �
 | `multiple`、`maxFiles` | 是否可多选与最多文件数；单选时新选的文件替换旧文件 |
 | `maxFileBytes` | 单个文件大小上限（字节） |
 | `buttonText`、`emptyText`、`ariaLabel`、`disabled`、`onChange` | 按钮文字、未选文件时的提示、无障碍名称、禁用、变化通知 |
+| `preview` | 填 `'image'` 时以缩略图网格显示（不显示文件名，名称只在悬停提示与无障碍名称里），点击缩略图在弹出页面查看原图；只用于图片 |
 
 行为：
 
 - 类型、数量、大小不符或空文件不会加入列表，原因显示在控件下方的提示行（`role="status"`），其余合法文件仍然加入。
-- 多选时每个文件一行，带“上移”“下移”“移除”按钮（列表顺序就是 `getValue()` 的顺序，边界按钮禁用）；单选时只有“移除”。
+- 多选时每个文件一行，带“上移”“下移”“移除”按钮（列表顺序就是 `getValue()` 的顺序，边界按钮禁用）；单选时只有“移除”。图片预览模式下每张图是一张卡片，按钮为“前移”“后移”“移除”。
+- `setValue(files)` 可直接设置已有文件（与 `getValue()` 同样的数组），用于编辑时带出已保存的图片，不触发变化通知；数量上限包含已有文件。
+- 查看原图依赖 `ui-dialog.js`，页面 CSP 需允许 `img-src data:`（`createPageHtml` 已包含）。
 - 文件内容异步读取，读取中显示“读取中…”；提交前用 `whenReady()` 等待读取完成（表单引擎已自动处理）。
 - 前端限制只是体验层，宿主必须按内容重新校验（文件头、编码、大小），见 `src/domain/rules/work-rules.ts`。
 - 控件对象的 `focusTarget` 为选择按钮，`ariaTarget` 为外层 `role="group"`，`labelable` 为 false，因此字段包装用 `aria-labelledby` 关联标签。

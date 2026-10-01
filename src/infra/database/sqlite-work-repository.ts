@@ -8,7 +8,7 @@
 // ------------------------------------------------------------------------
 
 import type { DatabaseSync } from 'node:sqlite';
-import { NewWorkSource, Work, WorkInput, WorkKind, WorkSourceType, WorkUpdate } from '../../domain/models/work';
+import { NewWorkSource, Work, WorkInput, WorkKind, WorkSourceKind, WorkSourceType, WorkUpdate } from '../../domain/models/work';
 import { WorkRepository } from '../../domain/ports/work-repository';
 import { runInTransaction } from './transaction';
 
@@ -67,13 +67,7 @@ export class SqliteWorkRepository implements WorkRepository {
           .run(workId, input.name, timestamp, timestamp);
       }
 
-      const insertSource = this.database.prepare(
-        `INSERT INTO work_sources (work_id, kind, file_name, mime, size_bytes, content, sort_order, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-      );
-      sources.forEach((source, index) => {
-        insertSource.run(workId, source.kind, source.fileName, source.mime, source.content.length, source.content, index, timestamp);
-      });
+      this.insertSources(workId, sources, timestamp);
 
       const created = this.findById(workId);
       if (created === undefined) {
@@ -105,12 +99,35 @@ export class SqliteWorkRepository implements WorkRepository {
           .prepare('UPDATE episodes SET title = ?, updated_at = ? WHERE work_id = ? AND seq = 1 AND title = ?')
           .run(input.name, timestamp, id, current.name);
       }
+
+      if (input.images !== undefined) {
+        this.database.prepare("DELETE FROM work_sources WHERE work_id = ? AND kind = 'image'").run(id);
+        this.insertSources(id, input.images, timestamp);
+      }
       return this.findById(id);
     });
   }
 
+  listSources(workId: number, kind: WorkSourceKind): NewWorkSource[] {
+    const rows = this.database
+      .prepare('SELECT kind, file_name, mime, content FROM work_sources WHERE work_id = ? AND kind = ? ORDER BY sort_order, id')
+      .all(workId, kind) as unknown as Array<{ kind: WorkSourceKind; file_name: string; mime: string; content: Uint8Array }>;
+    return rows.map((row) => ({ kind: row.kind, fileName: row.file_name, mime: row.mime, content: new Uint8Array(row.content) }));
+  }
+
   remove(id: number): boolean {
     return Number(this.database.prepare('DELETE FROM works WHERE id = ?').run(id).changes) > 0;
+  }
+
+  /** 按给定顺序写入素材文件，sort_order 从 0 开始。 */
+  private insertSources(workId: number, sources: readonly NewWorkSource[], timestamp: string): void {
+    const insertSource = this.database.prepare(
+      `INSERT INTO work_sources (work_id, kind, file_name, mime, size_bytes, content, sort_order, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    );
+    sources.forEach((source, index) => {
+      insertSource.run(workId, source.kind, source.fileName, source.mime, source.content.length, source.content, index, timestamp);
+    });
   }
 }
 

@@ -11,7 +11,7 @@ import { FORM_LEVEL_ERROR_KEY, ValidationError } from '../../domain/errors';
 import { CreativeParams } from '../../domain/models/creative';
 import { GENRE_OPTIONS, TONE_OPTIONS } from '../../domain/models/option-sets';
 import { ProjectSummary } from '../../domain/models/project';
-import { WorkSourceType } from '../../domain/models/work';
+import { NewWorkSource, WorkSourceType } from '../../domain/models/work';
 import { readEntityId, readRecord } from '../../domain/rules/field-readers';
 import {
   CREATIVE_CHOICE_MAX_LENGTH,
@@ -113,6 +113,22 @@ function createKindField(): FormFieldSchema {
   };
 }
 
+/** 灵感图片字段：以缩略图预览，点击查看原图；新建与编辑作品共用。 */
+function createImageField(): FormFieldSchema {
+  return {
+    key: IMAGE_FIELD_KEY,
+    label: '灵感图片',
+    description: `至少 1 张，最多 ${IMAGE_MAX_FILES} 张；PNG、JPEG、WebP，每张不超过 ${IMAGE_MAX_BYTES / (1024 * 1024)} MB，点击缩略图查看原图，可调整顺序`,
+    control: 'file',
+    required: true,
+    accept: IMAGE_EXTENSIONS,
+    multiple: true,
+    maxFiles: IMAGE_MAX_FILES,
+    maxFileBytes: IMAGE_MAX_BYTES,
+    preview: 'image'
+  };
+}
+
 /** 所属项目、作品名称、形态与素材文件字段，只在新建作品时出现。 */
 function createWorkFields(sourceType: WorkSourceType, projectNames: readonly string[]): FormFieldSchema[] {
   const fields: FormFieldSchema[] = [
@@ -128,17 +144,7 @@ function createWorkFields(sourceType: WorkSourceType, projectNames: readonly str
     createKindField()
   ];
   if (sourceType === 'image') {
-    fields.push({
-      key: IMAGE_FIELD_KEY,
-      label: '灵感图片',
-      description: `至少 1 张，最多 ${IMAGE_MAX_FILES} 张；PNG、JPEG、WebP，每张不超过 ${IMAGE_MAX_BYTES / (1024 * 1024)} MB，可调整顺序`,
-      control: 'file',
-      required: true,
-      accept: IMAGE_EXTENSIONS,
-      multiple: true,
-      maxFiles: IMAGE_MAX_FILES,
-      maxFileBytes: IMAGE_MAX_BYTES
-    });
+    fields.push(createImageField());
   } else if (sourceType === 'novel') {
     fields.push({
       key: NOVEL_FIELD_KEY,
@@ -239,6 +245,18 @@ function createParamFields(sourceType: WorkSourceType): FormFieldSchema[] {
     maxLength: CREATIVE_EXTRA_MAX_LENGTH
   });
   return fields;
+}
+
+/** 已保存的图片转文件字段的初始值（与界面提交的格式一致：JSON 文本，Base64 内容）。 */
+function imagesToValue(images: readonly NewWorkSource[]): string {
+  return JSON.stringify(
+    images.map((image) => ({
+      name: image.fileName,
+      mimeType: image.mime,
+      size: image.content.length,
+      data: Buffer.from(image.content).toString('base64')
+    }))
+  );
 }
 
 /** 生成参数转表单初始值：数字转为文本，未设置的项为空串。 */
@@ -357,7 +375,7 @@ function createRegenerateForm(dependencies: WorkFormDependencies, workId: number
 }
 
 /**
- * 创建“编辑作品”表单的定义：只改名称和形态（剧本确认后形态锁定），所属项目和素材不能改。
+ * 创建“编辑作品”表单的定义：改名称和形态（剧本确认后形态锁定），灵感图片作品还可以增删、排序图片；所属项目和素材来源不能改。
  * @param dependencies 服务与回调。
  * @param workId 作品标识。
  */
@@ -365,13 +383,22 @@ function createEditWorkForm(dependencies: WorkFormDependencies, workId: number):
   const { works } = dependencies;
   const work = works.getWork(workId);
   const canChangeKind = works.canChangeKind(workId);
+  const hasImages = work.sourceType === 'image';
+  const fields: FormFieldSchema[] = canChangeKind ? [createNameField(true), createKindField()] : [createNameField(true, KIND_LOCKED_NOTE)];
+  if (hasImages) {
+    fields.push(createImageField());
+  }
   return {
     schema: {
       title: `编辑作品：${work.name}`,
       submitLabel: SUBMIT_LABEL_EDIT,
-      fields: canChangeKind ? [createNameField(true), createKindField()] : [createNameField(true, KIND_LOCKED_NOTE)]
+      fields
     },
-    initialValues: { workName: work.name, kind: WORK_KIND_LABELS[work.kind] },
+    initialValues: {
+      workName: work.name,
+      kind: WORK_KIND_LABELS[work.kind],
+      ...(hasImages ? { [IMAGE_FIELD_KEY]: imagesToValue(works.listImageSources(workId)) } : {})
+    },
     checkField: (key, value) =>
       key === 'workName' && !works.isWorkNameAvailable(work.projectId, value, work.id) ? DUPLICATE_WORK_NAME_MESSAGE : undefined,
     submit: (values) => {

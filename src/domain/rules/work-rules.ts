@@ -80,15 +80,22 @@ export function normalizeWorkCreation(rawInput: unknown, sourceType: WorkSourceT
  * @param rawInput 表单提交的原始内容。
  * @param currentKind 作品现有的形态；不允许修改形态时原样保留。
  * @param canChangeKind 是否允许修改形态；为 false 时忽略提交内容中的形态。
+ * @param sourceType 作品的素材来源；灵感图片作品还要校验并返回提交的完整图片列表。
  * @throws ValidationError 存在不合法的字段。
  */
-export function normalizeWorkUpdate(rawInput: unknown, currentKind: WorkKind, canChangeKind: boolean): WorkUpdate {
+export function normalizeWorkUpdate(
+  rawInput: unknown,
+  currentKind: WorkKind,
+  canChangeKind: boolean,
+  sourceType: WorkSourceType = 'text'
+): WorkUpdate {
   const source = readRecord(rawInput);
   const errors: FieldErrors = {};
   const name = readText(source, { key: 'workName', label: '作品名称', required: true, maxLength: WORK_NAME_MAX_LENGTH }, errors);
   const kind = canChangeKind ? readWorkKind(source.kind, errors) : currentKind;
+  const images = sourceType === 'image' ? readImageSources(source[IMAGE_FIELD_KEY], errors) : undefined;
   assertNoFieldErrors(errors);
-  return { name, kind };
+  return images === undefined ? { name, kind } : { name, kind, images };
 }
 
 /** 读取作品形态：接受界面名称或内部键。 */

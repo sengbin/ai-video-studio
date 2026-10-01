@@ -37,6 +37,8 @@ export interface FormFieldSchema {
   readonly maxFiles?: number;
   /** 单个文件大小上限（字节）；仅 file 使用，界面先拦截，宿主会再次校验。 */
   readonly maxFileBytes?: number;
+  /** 文件的预览方式：image 为缩略图网格，点击查看原图；不填则按文件名列表显示；仅 file 使用。 */
+  readonly preview?: 'image';
 }
 
 /** 表单描述。 */

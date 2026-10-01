@@ -36,10 +36,10 @@ const UI_LIBRARY_SCRIPTS = [
     'ui-input-controls.js',
     'ui-select.js',
     'ui-choice-controls.js',
-    'ui-file-picker.js',
     'ui-field.js',
     'ui-table.js',
-    'ui-dialog.js'
+    'ui-dialog.js',
+    'ui-file-picker.js'
   ].map((name) => `${UI_KIT_DIR}/${name}`)
 ];
 

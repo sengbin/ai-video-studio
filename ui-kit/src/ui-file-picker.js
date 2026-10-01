@@ -4,7 +4,7 @@
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-09-30
-// 备注：依赖 ui-core.js、ui-button.js；类型、数量、大小不符的文件不会加入，原因显示在控件下方；用法见 docs/ui-components.md。
+// 备注：依赖 ui-core.js、ui-button.js、ui-dialog.js（查看原图）；类型、数量、大小不符的文件不会加入，原因显示在控件下方；用法见 docs/ui-components.md。
 // ------------------------------------------------------------------------
 
 'use strict';
@@ -14,6 +14,9 @@
 
   const BYTES_PER_MB = 1024 * 1024;
   const READING_TEXT = '读取中…';
+  const VIEWER_WIDTH = 720;
+  const VIEWER_HEIGHT = 520;
+  const VIEWER_MIN_WIDTH = 320;
   const MIME_BY_EXTENSION = {
     '.txt': 'text/plain',
     '.md': 'text/markdown',
@@ -45,12 +48,29 @@
     });
   }
 
+  /** 图片文件的 data 地址，用于缩略图与原图。 */
+  function toDataUrl(item) {
+    return `data:${item.mimeType};base64,${item.data}`;
+  }
+
+  /** 在弹出页面中查看图片原图；过大时在页面内滚动。 */
+  function openViewer(item) {
+    const image = aiUi.h('img', { class: 'ui-file-picker__viewer-image', attrs: { src: toDataUrl(item), alt: item.name } });
+    aiUi.openPage({
+      title: item.name,
+      content: aiUi.h('div', { class: 'ui-file-picker__viewer' }, image),
+      width: VIEWER_WIDTH,
+      height: VIEWER_HEIGHT,
+      minWidth: VIEWER_MIN_WIDTH
+    });
+  }
+
   /**
    * 创建文件选择控件。
    * @param {{ accept?: string[], multiple?: boolean, maxFiles?: number, maxFileBytes?: number, buttonText?: string,
-   *   emptyText?: string, ariaLabel?: string, disabled?: boolean, onChange?: (files: object[]) => void }} [options] 选项：
+   *   emptyText?: string, ariaLabel?: string, disabled?: boolean, preview?: 'image', onChange?: (files: object[]) => void }} [options] 选项：
    *   accept 允许的扩展名（小写，含点，如 ".txt"），为空表示不限；multiple 是否可多选；maxFiles 最多文件数（单选时为 1）；
-   *   maxFileBytes 单个文件大小上限。
+   *   maxFileBytes 单个文件大小上限；preview 为 'image' 时以缩略图网格显示，点击缩略图查看原图。
    * @returns 控件对象，getValue 返回 [{ name, mimeType, size, data }]，data 为 Base64；另有 whenReady() 在读取完成后 resolve。
    */
   aiUi.filePicker = function (options) {
@@ -59,6 +79,7 @@
     const multiple = Boolean(settings.multiple);
     const maxFiles = multiple ? settings.maxFiles || Number.POSITIVE_INFINITY : 1;
     const maxFileBytes = settings.maxFileBytes || Number.POSITIVE_INFINITY;
+    const showsThumbnails = settings.preview === 'image';
 
     let items = [];
     let pending = 0;
@@ -69,7 +90,7 @@
       attrs: { type: 'file', accept: accept.join(','), multiple: multiple ? 'multiple' : undefined, tabindex: '-1', 'aria-hidden': 'true' }
     });
     const chooseButton = aiUi.button({ text: settings.buttonText || (multiple ? '添加文件' : '选择文件'), onClick: () => input.click() });
-    const list = aiUi.h('ul', { class: 'ui-file-picker__list' });
+    const list = aiUi.h('ul', { class: showsThumbnails ? 'ui-file-picker__list ui-file-picker__grid' : 'ui-file-picker__list' });
     const message = aiUi.h('p', { class: 'ui-file-picker__message', hidden: true, attrs: { role: 'status', 'aria-live': 'polite' } });
     const element = aiUi.h(
       'div',
@@ -95,20 +116,37 @@
         return;
       }
       items.forEach((item, index) => {
-        const row = aiUi.h(
-          'li',
-          { class: 'ui-file-picker__item' },
-          aiUi.h('span', { class: 'ui-file-picker__name', text: item.name, attrs: { title: item.name } }),
-          aiUi.h('span', { class: 'ui-file-picker__size', text: formatSize(item.size) })
-        );
+        const row = showsThumbnails
+          ? aiUi.h(
+              'li',
+              { class: 'ui-file-picker__card' },
+              aiUi.h(
+                'button',
+                {
+                  class: 'ui-file-picker__thumb',
+                  attrs: { type: 'button', title: item.name, 'aria-label': `查看原图：${item.name}` },
+                  on: { click: () => openViewer(item) }
+                },
+                aiUi.h('img', { class: 'ui-file-picker__thumb-image', attrs: { src: toDataUrl(item), alt: item.name } })
+              ),
+              aiUi.h('span', { class: 'ui-file-picker__size', text: formatSize(item.size) })
+            )
+          : aiUi.h(
+              'li',
+              { class: 'ui-file-picker__item' },
+              aiUi.h('span', { class: 'ui-file-picker__name', text: item.name, attrs: { title: item.name } }),
+              aiUi.h('span', { class: 'ui-file-picker__size', text: formatSize(item.size) })
+            );
         const actions = aiUi.h('span', { class: 'ui-file-picker__actions' });
         const addAction = (text, label, disabled, handler) => {
           const button = aiUi.button({ text, compact: true, ariaLabel: `${label}：${item.name}`, disabled: disabled || control.isDisabled(), onClick: handler });
           actions.append(button.element);
         };
         if (multiple) {
-          addAction('上移', '上移', index === 0, () => move(index, -1));
-          addAction('下移', '下移', index === items.length - 1, () => move(index, 1));
+          // 缩略图横向排列，用“前移”“后移”；文件列表竖向排列，用“上移”“下移”。
+          const [backText, forwardText] = showsThumbnails ? ['前移', '后移'] : ['上移', '下移'];
+          addAction(backText, backText, index === 0, () => move(index, -1));
+          addAction(forwardText, forwardText, index === items.length - 1, () => move(index, 1));
         }
         addAction('移除', '移除', false, () => remove(index));
         row.append(actions);

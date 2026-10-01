@@ -175,6 +175,60 @@ test('setValue 直接设置文件列表，不触发变化通知', () => {
   assert.deepEqual(changes, []);
 });
 
+/** 取缩略图网格中各卡片的缩略图地址。 */
+function thumbnailSources(control) {
+  return [...control.element.querySelectorAll('.ui-file-picker__thumb-image')].map((image) => image.getAttribute('src'));
+}
+
+const PNG_ITEM = { name: 'a.png', mimeType: 'image/png', size: 3, data: 'AAEC' };
+const JPG_ITEM = { name: 'b.jpg', mimeType: 'image/jpeg', size: 3, data: 'AwQF' };
+
+test('图片预览：显示缩略图而不是文件名，按顺序排列，名称只出现在提示里', () => {
+  const ui = setup();
+  const control = ui.filePicker({ accept: ['.png', '.jpg'], multiple: true, preview: 'image' });
+  control.setValue([PNG_ITEM, JPG_ITEM]);
+
+  assert.deepEqual(thumbnailSources(control), ['data:image/png;base64,AAEC', 'data:image/jpeg;base64,AwQF']);
+  assert.equal(control.element.querySelector('.ui-file-picker__name'), null);
+  assert.equal(control.element.querySelector('.ui-file-picker__thumb').getAttribute('title'), 'a.png');
+});
+
+test('图片预览：点击缩略图弹出原图查看页，可关闭；前移、后移、移除可用', async () => {
+  const ui = setup();
+  const changes = [];
+  const control = ui.filePicker({ multiple: true, preview: 'image', onChange: () => changes.push(thumbnailSources(control).length) });
+  control.setValue([PNG_ITEM, JPG_ITEM]);
+  env.document.body.append(control.element);
+
+  control.element.querySelector('.ui-file-picker__thumb').click();
+  const viewer = env.document.querySelector('.ui-dialog');
+  assert.ok(viewer, '应弹出查看页');
+  assert.equal(viewer.querySelector('.ui-dialog__title').textContent, 'a.png');
+  assert.equal(viewer.querySelector('.ui-file-picker__viewer-image').getAttribute('src'), 'data:image/png;base64,AAEC');
+  viewer.querySelector('.ui-dialog__close').click();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(env.document.querySelector('.ui-dialog'), null);
+
+  const cardButton = (index, text) => [...control.element.querySelectorAll('.ui-file-picker__card')[index].querySelectorAll('button')].find((button) => button.textContent === text);
+  assert.equal(cardButton(0, '前移').disabled, true);
+  cardButton(0, '后移').click();
+  assert.deepEqual(control.getValue().map((file) => file.name), ['b.jpg', 'a.png']);
+  cardButton(0, '移除').click();
+  assert.deepEqual(control.getValue().map((file) => file.name), ['a.png']);
+  assert.deepEqual(changes, [2, 1]);
+});
+
+test('图片预览：在已有图片之后继续添加，数量上限包含已有图片', async () => {
+  const ui = setup();
+  const control = ui.filePicker({ accept: ['.png'], multiple: true, maxFiles: 2, preview: 'image' });
+  control.setValue([PNG_ITEM]);
+
+  choose(control, [makeFile('b.png', 'b'), makeFile('c.png', 'c')]);
+  await control.whenReady();
+  assert.deepEqual(plain(control.getValue().map((file) => file.name)), ['a.png', 'b.png']);
+  assert.equal(thumbnailSources(control).length, 2);
+});
+
 test('样式：文件选择控件只使用令牌颜色', () => {
   const css = readFileSync(join(sourceRoot, 'ui-file-picker.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
   assert.doesNotMatch(css, /#[0-9a-f]{3,8}\b|\brgba?\(/i);

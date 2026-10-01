@@ -9,7 +9,7 @@
 
 import { ConflictError, NotFoundError } from '../../domain/errors';
 import { StageDisplayStatus, StageRun } from '../../domain/models/stage-run';
-import { Work, WorkKind, WorkSourceType } from '../../domain/models/work';
+import { NewWorkSource, Work, WorkKind, WorkSourceType } from '../../domain/models/work';
 import { StageRunRepository } from '../../domain/ports/stage-run-repository';
 import { WorkRepository } from '../../domain/ports/work-repository';
 import { toDisplayStatus } from '../../domain/rules/stage-review-rules';
@@ -101,6 +101,11 @@ export class WorkService {
     return this.runs.listVersions({ workId, stage: 'screenplay', episodeId: null }).every((run) => run.approvedAt === null);
   }
 
+  /** 按上传顺序读取作品的灵感图片，供编辑表单带出已有图片。 */
+  listImageSources(workId: number): NewWorkSource[] {
+    return this.works.listSources(workId, 'image');
+  }
+
   /**
    * 创建作品（单个短视频同时创建第 1 集）与素材文件。
    * @param creation 已校验的作品内容与素材。
@@ -116,7 +121,7 @@ export class WorkService {
   }
 
   /**
-   * 修改作品名称，在形态还能修改时一并修改形态。
+   * 修改作品名称，在形态还能修改时一并修改形态；灵感图片作品还会整体替换图片。
    * @param id 作品标识。
    * @param rawInput 表单提交的原始内容。
    * @throws ValidationError 内容不合法。
@@ -125,7 +130,7 @@ export class WorkService {
    */
   updateWork(id: number, rawInput: unknown): Work {
     const work = this.getWork(id);
-    const update = normalizeWorkUpdate(rawInput, work.kind, this.canChangeKind(id));
+    const update = normalizeWorkUpdate(rawInput, work.kind, this.canChangeKind(id), work.sourceType);
     if (!this.isWorkNameAvailable(work.projectId, update.name, id)) {
       throw new ConflictError('workName', DUPLICATE_WORK_NAME_MESSAGE);
     }

@@ -223,6 +223,49 @@ test('编辑作品：只有名称和形态字段，初始值为现有内容，�
   }
 });
 
+test('编辑图片作品：带出已有图片，可删除、新增、调整顺序后整体替换；至少保留 1 张', async () => {
+  const fixture = createFixture();
+  try {
+    const { database, works, project, open } = fixture;
+    const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 9, 9]);
+    const item = (name: string, bytes: Buffer) => ({ name, mimeType: 'application/octet-stream', size: bytes.length, data: bytes.toString('base64') });
+    const work = works.createWork(
+      project.id,
+      normalizeWorkCreation({ workName: '图片作品', kind: '单个短视频', images: JSON.stringify([item('a.png', PNG), item('b.jpg', JPEG)]) }, 'image')
+    );
+
+    const form = open(WORK_FORM_NAMES.edit, { workId: work.id });
+    const imageField = form.schema.fields.find((field) => field.key === 'images');
+    assert.deepEqual([imageField?.control, imageField?.preview, imageField?.multiple], ['file', 'image', true]);
+    const shown = JSON.parse(form.initialValues.images) as Array<{ name: string; mimeType: string; size: number; data: string }>;
+    assert.deepEqual(shown.map((file) => [file.name, file.mimeType, file.size]), [['a.png', 'image/png', PNG.length], ['b.jpg', 'image/jpeg', JPEG.length]]);
+
+    // 删除第 1 张、再加一张新图并放到最前：库里按新顺序只剩这两张。
+    const added = item('c.png', PNG);
+    await form.submit({ workName: '图片作品', kind: '单个短视频', images: JSON.stringify([added, shown[1]]) });
+    const names = () => (database.prepare("SELECT file_name FROM work_sources WHERE work_id = ? AND kind = 'image' ORDER BY sort_order").all(work.id) as Array<{ file_name: string }>).map((row) => row.file_name);
+    assert.deepEqual(names(), ['c.png', 'b.jpg']);
+
+    await assert.rejects(
+      () => submit(form, { workName: '图片作品', kind: '单个短视频', images: '[]' }),
+      (error) => error instanceof ValidationError && 'images' in error.fieldErrors
+    );
+    assert.deepEqual(names(), ['c.png', 'b.jpg']);
+  } finally {
+    fixture.database.close();
+  }
+});
+
+test('编辑作品：文字灵感作品没有图片字段', () => {
+  const fixture = createFixture();
+  try {
+    const form = fixture.open(WORK_FORM_NAMES.edit, { workId: addWork(fixture, '文字作品').id });
+    assert.equal(form.schema.fields.some((field) => field.key === 'images'), false);
+  } finally {
+    fixture.database.close();
+  }
+});
+
 test('编辑作品：改名同步第 1 集标题；单个短视频与多集短片互改时增删第 1 集', async () => {
   const fixture = createFixture();
   try {

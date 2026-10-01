@@ -27,6 +27,8 @@ export interface WorkInput {
 export interface WorkUpdate {
   readonly name: string;
   readonly kind: WorkKind;
+  /** 灵感图片作品提交的完整图片列表（按顺序，整体替换原有图片）；其他作品为空。 */
+  readonly images?: readonly NewWorkSource[];
 }
 
 /** 作品。 */

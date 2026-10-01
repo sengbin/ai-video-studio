@@ -62,17 +62,19 @@
         return { kind: 'boolean', control: aiUi.switchControl({ label: fieldSchema.label, checked: initialText === 'true' }) };
       case 'checkboxes':
         return { kind: 'list', control: aiUi.checkboxGroup({ options, value: parseList(initialText) }) };
-      case 'file':
-        return {
-          kind: 'files',
-          control: aiUi.filePicker({
-            accept: fieldSchema.accept || [],
-            multiple: Boolean(fieldSchema.multiple),
-            maxFiles: fieldSchema.maxFiles,
-            maxFileBytes: fieldSchema.maxFileBytes,
-            ariaLabel: fieldSchema.label
-          })
-        };
+      case 'file': {
+        const control = aiUi.filePicker({
+          accept: fieldSchema.accept || [],
+          multiple: Boolean(fieldSchema.multiple),
+          maxFiles: fieldSchema.maxFiles,
+          maxFileBytes: fieldSchema.maxFileBytes,
+          preview: fieldSchema.preview,
+          ariaLabel: fieldSchema.label
+        });
+        // 编辑时带出已保存的文件（与提交格式相同的 JSON 数组）。
+        control.setValue(parseList(initialText));
+        return { kind: 'files', control };
+      }
       default:
         return { kind: 'text', control: aiUi.textInput({ value: initialText, placeholder: fieldSchema.placeholder }) };
     }
