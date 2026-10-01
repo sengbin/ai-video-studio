@@ -106,3 +106,13 @@ test('表格：样式只使用令牌颜色，令牌已定义；数字列靠右�
   assert.match(ruleBody(css, '.ui-table__cell--number'), /text-align:\s*right/);
   assert.match(ruleBody(css, '.ui-table__cell--actions'), /width:\s*1%/);
 });
+
+test('表格操作列：左对齐、固定在右侧，行内单元格不透明且悬停色叠在底色上', () => {
+  const css = readStyle('ui-table.css');
+  const actions = ruleBody(css, '.ui-table__cell--actions');
+  assert.match(actions, /text-align:\s*left/);
+  assert.match(actions, /position:\s*sticky/);
+  assert.match(actions, /right:\s*0/);
+  assert.match(ruleBody(css, '.ui-table tbody .ui-table__cell--actions'), /background:\s*var\(--table-surface\)/);
+  assert.match(ruleBody(css, '.ui-table tbody tr:hover .ui-table__cell--actions'), /var\(--table-row-hover\)[^;]*var\(--table-surface\)/);
+});

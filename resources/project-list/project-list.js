@@ -20,7 +20,7 @@
   const FORM_CREATE = 'project.create';
   const FORM_EDIT = 'project.edit';
 
-  const PAGE_TITLE = '全部项目';
+  const PAGE_TITLE = '所有项目';
   const UNSET_TEXT = '未设置';
   const GENERIC_ERROR_TEXT = '操作失败，请重试。';
 

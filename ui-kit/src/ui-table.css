@@ -1,7 +1,7 @@
 /*
  * ------------------------------------------------------------------------
  * 名称：ui-table.css
- * 说明：界面组件库的数据表格与标签样式：圆角卡片、表头色带、行分隔与悬停、数字列与操作列。
+ * 说明：界面组件库的数据表格与标签样式：圆角卡片、表头色带、行分隔与悬停、数字列与固定在右侧的操作列。
  * 作者：Lion
  * 邮箱：chengbin@3578.cn
  * 日期：2026-09-30
@@ -68,11 +68,24 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* 操作列：收缩到内容宽度，靠右，按钮之间留间距 */
+/* 操作列：收缩到内容宽度，左对齐，按钮之间留间距；固定在表格右侧，横向滚动时其他列的内容从它下面滑过 */
 .ui-table__cell--actions {
+  position: sticky;
+  right: 0;
   width: 1%;
-  text-align: right;
+  text-align: left;
   white-space: nowrap;
+  box-shadow: inset 1px 0 0 var(--table-row-divider);
+}
+
+/* 固定列必须不透明，否则会透出下面滑过的内容；表头已有色带，行内用卡片底色 */
+.ui-table tbody .ui-table__cell--actions {
+  background: var(--table-surface);
+}
+
+/* 悬停色是半透明的，叠在卡片底色上，与其他单元格的悬停效果一致 */
+.ui-table tbody tr:hover .ui-table__cell--actions {
+  background: linear-gradient(var(--table-row-hover), var(--table-row-hover)), var(--table-surface);
 }
 
 /* 操作列的按钮是 inline-flex，默认按基线对齐，带图标与纯文字按钮会错开，统一居中 */

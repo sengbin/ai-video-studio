@@ -229,7 +229,7 @@
     });
   }
 
-  /** 剧本操作按钮：已有剧本记录时查看；没有时创意已确认才能生成。 */
+  /** 剧本操作按钮（剧本视图）：已有剧本记录时查看；没有时创意已确认才能生成。 */
   function renderScreenplayButton(work) {
     if (work.screenplay.runId !== null) {
       return aiUi.button({
@@ -278,7 +278,6 @@
           ariaLabel: `查看创意：${work.name}`,
           onClick: () => openStage(work.id, STAGE_CREATIVE)
         }).element,
-        renderScreenplayButton(work),
         aiUi.button({
           kind: 'edit',
           compact: true,

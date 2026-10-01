@@ -35,7 +35,7 @@ export const SIDEBAR_SECTIONS: readonly SidebarMenuSection[] = [
     id: 'project',
     title: '项目',
     surface: 'flat',
-    items: [{ id: 'project-list', title: '全部项目', actionLabel: '创建' }]
+    items: [{ id: 'project-list', title: '所有项目', actionLabel: '创建' }]
   },
   {
     id: 'creation',
@@ -53,7 +53,7 @@ export const SIDEBAR_SECTIONS: readonly SidebarMenuSection[] = [
     surface: 'stage',
     items: [
       { id: 'screenplay', title: '剧本', actionLabel: '添加' },
-      { id: 'storyboard-script', title: '分镜脚本', actionLabel: '添加' }
+      { id: 'storyboard-script', title: '分镜', actionLabel: '添加' }
     ]
   },
   {

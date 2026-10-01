@@ -66,7 +66,7 @@ const SUBMIT_LABEL_EDIT = '保存';
 const LABEL_SINGLE_KIND = WORK_KIND_LABELS.single;
 /** 新建表单中“所属项目”字段的键；项目名称全局唯一，字段值就是项目名称。 */
 const PROJECT_FIELD_KEY = 'projectName';
-const NO_PROJECT_MESSAGE = '还没有项目，请先在“全部项目”中创建项目。';
+const NO_PROJECT_MESSAGE = '还没有项目，请先在“所有项目”中创建项目。';
 const PROJECT_REQUIRED_MESSAGE = '请选择所属项目。';
 const KIND_LOCKED_NOTE = '；剧本已确认，作品形态不能再修改';
 

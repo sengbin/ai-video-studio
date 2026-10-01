@@ -12,7 +12,7 @@
 (function () {
   const aiUi = window.aiUi;
 
-  /** 列类型：text 文本（默认）、number 数字（靠右等宽）、actions 操作（靠右、按钮成组）。 */
+  /** 列类型：text 文本（默认）、number 数字（靠右等宽）、actions 操作（左对齐、按钮成组、固定在表格右侧）。 */
   const COLUMN_TYPES = ['text', 'number', 'actions'];
 
   /** 数字按像素处理，字符串（如 "34%"）原样使用。 */

@@ -17,7 +17,7 @@ import { PROJECT_LIST_EVENTS, ProjectListRequest, registerProjectListHandlers } 
 
 const PROJECT_LIST_PANEL_KEY = 'project-list';
 const PROJECT_LIST_VIEW_TYPE = 'aiVideoStudio.projectList';
-const PROJECT_LIST_TITLE = '全部项目';
+const PROJECT_LIST_TITLE = '所有项目';
 
 /** 项目相关页面的入口集合。 */
 export class ProjectPages {
