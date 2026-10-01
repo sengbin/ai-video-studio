@@ -13,7 +13,7 @@ import { normalizeWorkCreation } from '../../domain/rules/work-rules';
 import { MessageRouter } from '../messaging/message-router';
 import { createServiceFixture } from '../services/testing/service-fixture';
 import { STAGE_REQUESTS } from './stage-handlers';
-import { SCREENPLAY_VIEW, WORK_LIST_REQUESTS, WorkListRequest, WorkListRow, registerWorkListHandlers } from './work-list-handlers';
+import { SCREENPLAY_VIEW, STORYBOARD_VIEW, WORK_LIST_REQUESTS, WorkListRequest, WorkListRow, registerWorkListHandlers } from './work-list-handlers';
 
 const PARAMS = { chapterMinWords: 100, chapterMaxWords: 200, maxChapters: 3 };
 
@@ -128,6 +128,47 @@ test('剧本视图：跨素材来源，只列创意已确认或已有剧本的�
     assert.deepEqual(withScreenplay[0].contentCounts, { episodes: 1, entities: 2 });
     assert.equal(withScreenplay[0].screenplay.display, 'pending');
     assert.ok(!withScreenplay.some((row) => row.id === second.id || row.id === novel.id));
+  } finally {
+    database.close();
+  }
+});
+
+test('分镜视图：只列剧本已确认或已有分镜脚本的作品，带各集进度汇总；可读取各集状态', async () => {
+  const fixture = createFixture();
+  const { database, first, second, stages, screenplays, storyboards, runner } = fixture;
+  try {
+    const router = new MessageRouter();
+    registerWorkListHandlers(router, STORYBOARD_VIEW, fixture, { takePending: () => undefined });
+    const send = (name: string, payload?: unknown) => router.handle({ type: 'request', requestId: 1, name, payload });
+    const load = async () => {
+      const response = await send(WORK_LIST_REQUESTS.load);
+      assert.ok(response?.ok);
+      return (response.data as { works: WorkListRow[] }).works;
+    };
+    assert.deepEqual(await load(), [], '剧本都未确认时没有作品');
+
+    const creative = await stages.startCreative(first.id, PARAMS);
+    await runner.whenIdle();
+    stages.approve(creative.id);
+    const screenplay = await screenplays.start(first.id, { maxEpisodeDurationSeconds: 60 });
+    await runner.whenIdle();
+    assert.deepEqual(await load(), [], '剧本待确认时仍不能生成分镜脚本');
+    stages.approve(screenplay.id);
+    assert.deepEqual((await load()).map((row) => [row.name, row.storyboard]), [['作品甲', { canStart: true, episodes: 1, approved: 0, started: 0 }]]);
+
+    const [episode] = storyboards.listEpisodeStatuses(first.id);
+    const [run] = await storyboards.start(first.id, [episode.episodeId], {});
+    await runner.whenIdle();
+    stages.approve(run.id);
+    const rows = await load();
+    assert.deepEqual(rows[0].storyboard, { canStart: true, episodes: 1, approved: 1, started: 1 });
+    assert.ok(!rows.some((row) => row.id === second.id));
+
+    const episodes = await send(WORK_LIST_REQUESTS.storyboardEpisodes, { workId: first.id });
+    const data = episodes?.ok && (episodes.data as { episodes: Array<{ display: string; shotCount: number }> });
+    assert.deepEqual(data && data.episodes.map((item) => [item.display, item.shotCount]), [['approved', 2]]);
+    const missing = await send(WORK_LIST_REQUESTS.storyboardEpisodes, { workId: 999 });
+    assert.ok(missing && !missing.ok && missing.error.kind === 'not-found');
   } finally {
     database.close();
   }

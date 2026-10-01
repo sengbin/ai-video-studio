@@ -215,6 +215,12 @@ export class StageService {
         this.dependencies.runner.cancel(running.id);
       }
     }
+    for (const episode of this.dependencies.screenplays.listEpisodes(workId)) {
+      const running = this.dependencies.runs.findRunning({ workId, stage: 'storyboard_script', episodeId: episode.id });
+      if (running !== undefined) {
+        this.dependencies.runner.cancel(running.id);
+      }
+    }
   }
 
   /**
@@ -278,11 +284,11 @@ export class StageService {
 
   /**
    * 确认记录属于指定作品和阶段，防止页面用别的作品的记录标识操作。
-   * @throws NotFoundError 记录不存在或不属于该作品和阶段。
+   * @throws NotFoundError 记录不存在或不属于该作品和阶段（分镜脚本还要属于该集）。
    */
-  assertRunBelongs(runId: number, workId: number, stage: StageKind): void {
+  assertRunBelongs(runId: number, workId: number, stage: StageKind, episodeId: number | null = null): void {
     const run = this.dependencies.runs.findById(runId);
-    if (run === undefined || run.workId !== workId || run.stage !== stage) {
+    if (run === undefined || run.workId !== workId || run.stage !== stage || (stage === 'storyboard_script' && run.episodeId !== episodeId)) {
       throw new NotFoundError('版本不存在。');
     }
   }

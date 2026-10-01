@@ -331,10 +331,15 @@
     regenerateForm: FORM_START,
     keptNote: '已完成的步骤已保留',
     discardMessage: '当前内容有未保存的修改，放弃这些修改？',
-    approveNote: (view) =>
-      view.merged
+    approveNote: (view) => {
+      const base = view.merged
         ? '确认后它将继续作为后续分镜脚本的依据。'
-        : '确认后将把抽取的集和实体合并到作品：集按序号更新，实体按类型与名称合并并保留已有绑定，不再出现的实体会被停用；它也将作为后续分镜脚本的依据。',
+        : '确认后将把抽取的集和实体合并到作品：集按序号更新，实体按类型与名称合并并保留已有绑定，不再出现的实体会被停用；它也将作为后续分镜脚本的依据。';
+      const downstream = view.downstreamEpisodes || [];
+      return downstream.length === 0
+        ? base
+        : `${base}第 ${downstream.join('、')} 集已有分镜脚本，确认后它们会显示“上游已变更”，不会自动更新。`;
+    },
     confirmRegenerate: (view) =>
       view.merged || view.versions.some((item) => item.isCurrent)
         ? aiUi.confirm({

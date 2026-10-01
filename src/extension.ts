@@ -18,11 +18,13 @@ import { ChangeNotifier } from './app/services/change-notifier';
 import { ProjectService } from './app/services/project-service';
 import { ScreenplayService } from './app/services/screenplay-service';
 import { StageChange, StageService } from './app/services/stage-service';
+import { StoryboardService } from './app/services/storyboard-service';
 import { TextSettingsService } from './app/services/text-settings-service';
 import { WorkService } from './app/services/work-service';
 import { CreativeWorkflow } from './app/stages/creative-workflow';
 import { ScreenplayWorkflow } from './app/stages/screenplay-workflow';
 import { StageRunner } from './app/stages/stage-runner';
+import { StoryboardWorkflow } from './app/stages/storyboard-workflow';
 import { WorkSourceType } from './domain/models/work';
 import { CopilotModelCatalog } from './infra/copilot/copilot-model-catalog';
 import { CopilotTextGeneration } from './infra/copilot/copilot-text-generation';
@@ -31,6 +33,7 @@ import { openDatabase } from './infra/database/database-connection';
 import { SqliteProjectRepository } from './infra/database/sqlite-project-repository';
 import { SqliteScreenplayRepository } from './infra/database/sqlite-screenplay-repository';
 import { SqliteChapterRepository, SqliteStageRunRepository } from './infra/database/sqlite-stage-run-repository';
+import { SqliteStoryboardRepository } from './infra/database/sqlite-storyboard-repository';
 import { SqliteWorkRepository } from './infra/database/sqlite-work-repository';
 import { SqliteWorkSourceReader } from './infra/database/sqlite-work-source-reader';
 import { FilePromptTemplates } from './infra/prompts/file-prompt-templates';
@@ -64,6 +67,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const runs = new SqliteStageRunRepository(database);
   const chapters = new SqliteChapterRepository(database);
   const screenplays = new SqliteScreenplayRepository(database);
+  const storyboards = new SqliteStoryboardRepository(database);
   const settingsStore = new VsCodeTextGenerationSettings();
   const prompts = new FilePromptTemplates(vscode.Uri.joinPath(context.extensionUri, 'resources', 'prompts').fsPath);
 
@@ -81,7 +85,8 @@ export function activate(context: vscode.ExtensionContext): void {
         prompts,
         getSplitSettings: () => settingsStore.getSplitSettings()
       }),
-      new ScreenplayWorkflow({ chapters, screenplays, prompts })
+      new ScreenplayWorkflow({ chapters, screenplays, prompts }),
+      new StoryboardWorkflow({ screenplays, storyboards, prompts })
     ],
     notify: (run) => stageChanges.notify({ workId: run.workId, runId: run.id, stage: run.stage })
   });
@@ -89,11 +94,26 @@ export function activate(context: vscode.ExtensionContext): void {
   runner.recoverInterrupted();
   const stageService = new StageService({ works: workService, runs, chapters, screenplays, runner, changes: stageChanges });
   const screenplayService = new ScreenplayService({ works: workService, runs, screenplays, runner, stages: stageService });
+  const storyboardService = new StoryboardService({
+    works: workService,
+    projects: projectService,
+    runs,
+    screenplays,
+    storyboards,
+    runner,
+    stages: stageService
+  });
   const textSettingsService = new TextSettingsService(settingsStore, new CopilotModelCatalog());
 
   // 页面。
   const panels = new PanelManager(context.extensionUri);
-  const services = { projects: projectService, works: workService, stages: stageService, screenplays: screenplayService };
+  const services = {
+    projects: projectService,
+    works: workService,
+    stages: stageService,
+    screenplays: screenplayService,
+    storyboards: storyboardService
+  };
   const projectPages = new ProjectPages(projectService, panels);
   const workListPages = new WorkListPages(services, panels);
   const settingsPages = new SettingsPages(textSettingsService, panels);
@@ -113,6 +133,10 @@ export function activate(context: vscode.ExtensionContext): void {
   actionRegistry
     .register('screenplay', 'main', () => workListPages.show('screenplay'))
     .register('screenplay', 'action', () => workListPages.show('screenplay', { action: 'create' }));
+  // 分镜：主入口打开分镜脚本列表；添加打开列表并弹出“选择作品”。
+  actionRegistry
+    .register('storyboard-script', 'main', () => workListPages.show('storyboard'))
+    .register('storyboard-script', 'action', () => workListPages.show('storyboard', { action: 'create' }));
   const sidebarRouter = new MessageRouter();
   registerSidebarHandlers(sidebarRouter, actionRegistry);
 

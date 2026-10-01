@@ -149,6 +149,49 @@ export function readInteger(source: Record<string, unknown>, rule: IntegerRule, 
   return parsed;
 }
 
+/** 小数字段的读取要求。 */
+export interface DecimalRule {
+  readonly key: string;
+  readonly label: string;
+  /** 允许的最小值（含）。 */
+  readonly min: number;
+  readonly max: number;
+  /** 最多保留的小数位数。 */
+  readonly maxDecimals: number;
+}
+
+/**
+ * 读取可选的小数字段：接受数字或十进制文本，空值返回 null。
+ * @param source 提交内容。
+ * @param rule 字段规则。
+ * @param errors 累积错误的记录。
+ */
+export function readOptionalDecimal(source: Record<string, unknown>, rule: DecimalRule, errors: FieldErrors): number | null {
+  const value = source[rule.key];
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (typeof value !== 'number' && typeof value !== 'string') {
+    errors[rule.key] = `${rule.label}必须是数字。`;
+    return null;
+  }
+  const text = String(value).trim();
+  if (text === '') {
+    return null;
+  }
+  const parsed = /^\d+(\.\d+)?$/.test(text) ? Number(text) : Number.NaN;
+  const decimals = text.includes('.') ? text.split('.')[1].length : 0;
+  if (!Number.isFinite(parsed) || decimals > rule.maxDecimals) {
+    errors[rule.key] = `${rule.label}必须是数字，最多 ${rule.maxDecimals} 位小数。`;
+    return null;
+  }
+  if (parsed < rule.min || parsed > rule.max) {
+    errors[rule.key] = `${rule.label}必须在 ${rule.min} 到 ${rule.max} 之间。`;
+    return null;
+  }
+  return parsed;
+}
+
 /**
  * 存在字段错误时抛出校验错误。
  * @param errors 累积错误的记录。

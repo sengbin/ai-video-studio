@@ -1,10 +1,10 @@
 // ------------------------------------------------------------------------
 // 名称：work-list.js
-// 说明：作品列表页脚本：列出某种素材来源下所有项目的作品（或跨来源的剧本视图），按项目与名称关键字筛选，在页内弹出页面中新建、编辑作品、生成剧本，弹出创意与剧本产出层，带名称确认地删除作品。
+// 说明：作品列表页脚本：列出某种素材来源下所有项目的作品（或跨来源的剧本、分镜视图），按项目与名称关键字筛选，在页内弹出页面中新建、编辑作品、生成剧本与分镜脚本，弹出创意、剧本、分镜脚本产出层，带名称确认地删除作品。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-01
-// 备注：请求与事件名称与 src/app/pages/work-list-handlers.ts、src/app/forms/work-form.ts、src/app/forms/screenplay-form.ts 一致；依赖 form/form-runtime.js（aiForm）、stage/stage.js（aiStage）与 shared/page-format.js（pageFormat）。
+// 备注：请求与事件名称与 src/app/pages/work-list-handlers.ts、src/app/forms/work-form.ts、src/app/forms/screenplay-form.ts、src/app/forms/storyboard-form.ts 一致；依赖 form/form-runtime.js（aiForm）、stage/stage.js（aiStage）与 shared/page-format.js（pageFormat）。
 // ------------------------------------------------------------------------
 
 'use strict';
@@ -14,18 +14,24 @@
   const REQUEST_TAKE_PENDING = 'works.takePending';
   const REQUEST_PREPARE_DELETE = 'works.prepareDelete';
   const REQUEST_DELETE = 'works.delete';
+  const REQUEST_STORYBOARD_EPISODES = 'works.storyboardEpisodes';
   const EVENT_CHANGED = 'works.changed';
   const EVENT_ACTION = 'works.action';
   const EVENT_OPEN_STAGE = 'works.openStage';
   const EVENT_START_SCREENPLAY = 'works.startScreenplay';
+  const EVENT_START_STORYBOARD = 'works.startStoryboard';
   const ACTION_CREATE = 'create';
   const FORM_CREATE = 'work.create';
   const FORM_EDIT = 'work.edit';
   const FORM_START_SCREENPLAY = 'screenplay.start';
   const FORM_PICK_SCREENPLAY = 'screenplay.pick';
+  const FORM_START_STORYBOARD = 'storyboard.start';
+  const FORM_PICK_STORYBOARD = 'storyboard.pick';
   const STAGE_CREATIVE = 'creative';
   const STAGE_SCREENPLAY = 'screenplay';
+  const STAGE_STORYBOARD = 'storyboard_script';
   const VIEW_SCREENPLAY = 'screenplay';
+  const VIEW_STORYBOARD = 'storyboard';
 
   const GENERIC_ERROR_TEXT = '操作失败，请重试。';
   const FILTER_ALL = 'all';
@@ -147,7 +153,10 @@
   /** 数据变化后稍作合并再刷新，生成进度频繁推送时避免反复重绘。 */
   function scheduleRefresh() {
     window.clearTimeout(refreshTimer);
-    refreshTimer = window.setTimeout(() => void loadWorks(false), REFRESH_DELAY_MS);
+    refreshTimer = window.setTimeout(() => {
+      void loadWorks(false);
+      if (episodeListRefresh) void episodeListRefresh();
+    }, REFRESH_DELAY_MS);
   }
 
   /** 弹出表单；已有表单打开时忽略，避免重复点击叠出多个。 */
@@ -170,16 +179,18 @@
     else action();
   }
 
-  /** 弹出作品某个阶段的产出层。 */
-  function openStage(workId, stage) {
-    runAfterForm(() => aiStage.open(workId, stage));
+  /** 弹出作品某个阶段的产出层；分镜脚本阶段还要指定集。 */
+  function openStage(workId, stage, episodeId) {
+    runAfterForm(() => aiStage.open(workId, stage, episodeId || null));
   }
 
-  /** 弹出“新建作品”表单（剧本视图中为“选择作品”）；筛选了某个项目时把它作为默认值或限定范围。 */
+  /** 弹出“新建作品”表单（剧本、分镜视图中为“选择作品”）；筛选了某个项目时把它作为默认值或限定范围。 */
   function openCreateForm() {
-    const params = view === VIEW_SCREENPLAY ? {} : { sourceType: view };
+    const isPickView = view === VIEW_SCREENPLAY || view === VIEW_STORYBOARD;
+    const params = isPickView ? {} : { sourceType: view };
     if (filterProjectId !== FILTER_ALL) params.projectId = Number(filterProjectId);
-    void showForm({ form: view === VIEW_SCREENPLAY ? FORM_PICK_SCREENPLAY : FORM_CREATE, params });
+    const form = view === VIEW_SCREENPLAY ? FORM_PICK_SCREENPLAY : view === VIEW_STORYBOARD ? FORM_PICK_STORYBOARD : FORM_CREATE;
+    void showForm({ form, params });
   }
 
   /** 弹出“编辑作品”表单。 */
@@ -190,6 +201,84 @@
   /** 弹出“生成剧本”表单；创意已确认才能打开。 */
   function openScreenplayForm(work) {
     void showForm({ form: FORM_START_SCREENPLAY, params: { workId: work.id } });
+  }
+
+  /** 弹出“生成分镜脚本”表单；剧本已确认才能打开，指定集时只为这一集生成。 */
+  function openStoryboardForm(workId, episodeId) {
+    void showForm({ form: FORM_START_STORYBOARD, params: episodeId ? { workId, episodeId } : { workId } });
+  }
+
+  /** 查看作品的分镜脚本：单个短视频直接打开那一集，多集短片先弹出各集的状态列表。 */
+  async function viewStoryboards(work) {
+    if (work.kind === 'single') {
+      const result = await runAction(REQUEST_STORYBOARD_EPISODES, { workId: work.id });
+      const episode = result && result.episodes.find((item) => item.runId !== null);
+      if (episode) openStage(work.id, STAGE_STORYBOARD, episode.episodeId);
+      return;
+    }
+    openEpisodeList(work);
+  }
+
+  /** 同一时间只显示一个“各集分镜脚本”列表，数据变化时原地刷新。 */
+  let episodeListRefresh = null;
+
+  /** 弹出作品各集的分镜脚本状态，可查看或重新生成某一集。 */
+  function openEpisodeList(work) {
+    if (episodeListRefresh) return;
+    const content = aiUi.h('div');
+    const columns = [
+      { title: '集', width: '34%', minWidth: 140, render: (item) => aiUi.tableMainCell({ text: `第 ${item.seq} 集 ${item.title}` }) },
+      { title: '分镜脚本', width: '28%', minWidth: 120, render: (item) => renderStageStatus(item) },
+      { title: '镜头数', width: 70, nowrap: true, muted: true, render: (item) => (item.runId === null ? '—' : String(item.shotCount)) },
+      {
+        title: '操作',
+        type: 'actions',
+        render: (item) => [
+          aiUi.button({
+            text: '查看',
+            compact: true,
+            disabled: item.runId === null,
+            ariaLabel: `查看第 ${item.seq} 集的分镜脚本`,
+            onClick: () => openStage(work.id, STAGE_STORYBOARD, item.episodeId)
+          }).element,
+          aiUi.button({
+            text: item.runId === null ? '生成' : '重新生成',
+            compact: true,
+            disabled: item.display === 'running',
+            ariaLabel: `生成第 ${item.seq} 集的分镜脚本`,
+            onClick: () => openStoryboardForm(work.id, item.episodeId)
+          }).element
+        ]
+      }
+    ];
+    async function load() {
+      try {
+        const result = await window.hostBridge.request(REQUEST_STORYBOARD_EPISODES, { workId: work.id });
+        content.textContent = '';
+        content.append(
+          result.episodes.length === 0
+            ? aiUi.h('p', { class: 'description', text: '这个作品还没有集。' })
+            : aiUi.table({ columns, rows: result.episodes, ariaLabel: '各集分镜脚本' }).element
+        );
+      } catch (error) {
+        content.textContent = '';
+        content.append(aiUi.h('p', { class: 'status-error', text: (error && error.message) || GENERIC_ERROR_TEXT }));
+      }
+    }
+    episodeListRefresh = load;
+    const handle = aiUi.openPage({
+      title: `${work.name} › 分镜脚本`,
+      content,
+      width: 640,
+      height: 360,
+      minWidth: 420,
+      minHeight: 240,
+      buttons: [{ id: 'close', text: '关闭', variant: 'primary', isDefault: true, isCancel: true }]
+    });
+    void handle.closed.then(() => {
+      episodeListRefresh = null;
+    });
+    void load();
   }
 
   /** 删除作品：先取名称，再用页内删除对话框要求输入作品名称，最后请求删除。 */
@@ -322,6 +411,58 @@
     { title: '操作', type: 'actions', render: (work) => [renderScreenplayButton(work)] }
   ];
 
+  /** 分镜脚本进度：已确认集数 / 总集数，全部确认为绿色，尚未开始为说明文字。 */
+  function renderStoryboardProgress(work) {
+    const { episodes, approved, started } = work.storyboard;
+    if (started === 0) return aiUi.h('span', { class: stageStatusClass('none'), text: stageStatusLabel('none') });
+    return aiUi.h('span', {
+      class: approved === episodes ? 'status-success' : 'status-warning',
+      text: `${approved} / ${episodes} 集已确认`
+    });
+  }
+
+  /** 分镜脚本操作按钮（分镜视图）：已有记录时可查看；剧本已确认才能生成。 */
+  function renderStoryboardButtons(work) {
+    return [
+      aiUi.button({
+        text: '查看分镜',
+        compact: true,
+        disabled: work.storyboard.started === 0,
+        ariaLabel: `查看分镜脚本：${work.name}`,
+        onClick: () => void viewStoryboards(work)
+      }).element,
+      aiUi.button({
+        text: '生成分镜',
+        compact: true,
+        disabled: !work.storyboard.canStart,
+        ariaLabel: `生成分镜脚本：${work.name}`,
+        onClick: () => openStoryboardForm(work.id)
+      }).element
+    ];
+  }
+
+  /** 作品表格的列（分镜视图）：跨素材来源，只有分镜脚本相关的操作。 */
+  const STORYBOARD_COLUMNS = [
+    {
+      title: '作品名称',
+      width: '26%',
+      minWidth: 180,
+      render: (work) => aiUi.tableMainCell({ text: work.name, description: KIND_LABELS[work.kind] || '' })
+    },
+    { title: '所属项目', width: '16%', minWidth: 120, render: (work) => aiUi.chip({ text: work.projectName }) },
+    { title: '剧本', width: '16%', minWidth: 120, render: (work) => renderStageStatus(work.screenplay) },
+    { title: '分镜脚本', width: '18%', minWidth: 140, render: (work) => renderStoryboardProgress(work) },
+    {
+      title: '创建时间',
+      width: 110,
+      nowrap: true,
+      muted: true,
+      render: (work) => formatRelativeTime(work.createdAt),
+      tooltip: (work) => new Date(work.createdAt).toLocaleString('zh-CN')
+    },
+    { title: '操作', type: 'actions', render: (work) => renderStoryboardButtons(work) }
+  ];
+
   /** 空状态和错误状态。 */
   function renderState(text, button) {
     return aiUi.h('div', { class: 'works-state' }, aiUi.h('p', { class: 'description', text }), button && button.element);
@@ -342,7 +483,9 @@
       contentElement.append(
         view === VIEW_SCREENPLAY
           ? renderState('还没有可生成剧本的作品。请先在“创作”列表中新建作品并确认创意。')
-          : renderState('还没有作品。', aiUi.button({ text: '新建作品', kind: 'add', onClick: openCreateForm }))
+          : view === VIEW_STORYBOARD
+            ? renderState('还没有可生成分镜脚本的作品。请先在“剧本”列表中确认剧本。')
+            : renderState('还没有作品。', aiUi.button({ text: '新建作品', kind: 'add', onClick: openCreateForm }))
       );
       return;
     }
@@ -353,10 +496,11 @@
         (filterStatus === FILTER_ALL || work.screenplay.display === filterStatus) &&
         work.name.toLowerCase().includes(text)
     );
+    const columns = view === VIEW_SCREENPLAY ? SCREENPLAY_COLUMNS : view === VIEW_STORYBOARD ? STORYBOARD_COLUMNS : WORK_COLUMNS;
     contentElement.append(
       visible.length === 0
         ? renderState('没有匹配的作品。')
-        : aiUi.table({ columns: view === VIEW_SCREENPLAY ? SCREENPLAY_COLUMNS : WORK_COLUMNS, rows: visible, ariaLabel: '作品' }).element
+        : aiUi.table({ columns, rows: visible, ariaLabel: '作品' }).element
     );
   }
 
@@ -387,11 +531,14 @@
   window.hostBridge.onEvent(EVENT_CHANGED, scheduleRefresh);
   window.hostBridge.onEvent(EVENT_ACTION, (request) => void handleRequest(request));
   window.hostBridge.onEvent(EVENT_OPEN_STAGE, (payload) => {
-    if (payload) openStage(payload.workId, payload.stage);
+    if (payload) openStage(payload.workId, payload.stage, payload.episodeId);
   });
-  // “选择作品”表单提交后，表单关闭再打开该作品的“生成剧本”表单。
+  // “选择作品”表单提交后，表单关闭再打开该作品的“生成剧本”“生成分镜脚本”表单。
   window.hostBridge.onEvent(EVENT_START_SCREENPLAY, (payload) => {
     if (payload) runAfterForm(() => void showForm({ form: FORM_START_SCREENPLAY, params: { workId: payload.workId } }));
+  });
+  window.hostBridge.onEvent(EVENT_START_STORYBOARD, (payload) => {
+    if (payload) runAfterForm(() => openStoryboardForm(payload.workId));
   });
   const initialLoad = loadWorks(true);
   // 页面打开前已登记的请求（如侧栏点“添加”），加载完成后主动取走。

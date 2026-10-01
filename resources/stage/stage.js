@@ -4,7 +4,7 @@
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
-// 备注：通过 aiStage.open(workId, stage) 打开，同一作品的同一阶段只有一个产出层；阶段内容由 stage-creative.js、stage-screenplay.js 通过 aiStage.registerStage 登记；请求载荷都带 workId 与 stage，事件名称与 src/app/pages/stage-handlers.ts 一致；依赖 form/form-runtime.js（aiForm）与 shared/page-format.js（pageFormat）。
+// 备注：通过 aiStage.open(workId, stage, episodeId?) 打开，同一作品的同一阶段（分镜脚本还要同一集）只有一个产出层；阶段内容由 stage-creative.js、stage-screenplay.js、stage-storyboard.js 通过 aiStage.registerStage 登记；请求载荷都带 workId 与 stage（分镜脚本还带 episodeId），事件名称与 src/app/pages/stage-handlers.ts 一致；依赖 form/form-runtime.js（aiForm）与 shared/page-format.js（pageFormat）。
 // ------------------------------------------------------------------------
 
 'use strict';
@@ -31,7 +31,7 @@
 
   /**
    * 各阶段登记的“阶段内容”：
-   * { stage, label, regenerateForm, keptNote, discardMessage, approveNote(view), confirmRegenerate?(view), create(context) }，
+   * { stage, label, regenerateForm, keptNote, discardMessage, approveNote(view), confirmRegenerate?(view), titleSuffix?(view), create(context) }，
    * create 接收 { call, runAction, showMessage, reload, getView, confirmDiscard }，返回 { render(view, container), renderSummary(view), isDirty(), discard() }。
    */
   const providers = new Map();
@@ -43,18 +43,19 @@
     providers.set(provider.stage, provider);
   }
 
-  /** 产出层的键。 */
-  function viewKey(workId, stage) {
-    return `${stage}:${workId}`;
+  /** 产出层的键；分镜脚本按集区分。 */
+  function viewKey(workId, stage, episodeId) {
+    return episodeId ? `${stage}:${workId}:${episodeId}` : `${stage}:${workId}`;
   }
 
   /**
    * 为一个作品的一个阶段创建产出层：弹出页面、加载数据并随宿主事件刷新。
    * @param {number} workId 作品标识。
-   * @param {string} stage 阶段，如 creative、screenplay。
+   * @param {string} stage 阶段，如 creative、screenplay、storyboard_script。
+   * @param {number|null} episodeId 集标识，仅分镜脚本阶段使用。
    * @returns 弹出页面的句柄。
    */
-  function createStageView(workId, stage) {
+  function createStageView(workId, stage, episodeId) {
     const provider = providers.get(stage);
     if (!provider) throw new Error(`没有登记阶段：${stage}`);
 
@@ -75,9 +76,14 @@
     const bodyElement = aiUi.h('div', { class: 'stage-body' });
     const root = aiUi.h('div', { class: 'stage-view' }, headerElement, messageElement, progressElement, bodyElement);
 
-    /** 发起带作品标识与阶段的请求。 */
+    /** 发起带作品标识与阶段（分镜脚本还带集标识）的请求。 */
     function call(name, payload) {
-      return window.hostBridge.request(name, { ...payload, workId, stage });
+      return window.hostBridge.request(name, { ...payload, workId, stage, ...(episodeId ? { episodeId } : {}) });
+    }
+
+    /** 阶段在标题里附加的文字，如分镜脚本的“ › 第 1 集”。 */
+    function titleSuffix() {
+      return provider.titleSuffix && view ? provider.titleSuffix(view) : '';
     }
 
     /** 在操作结果区显示文字；空串表示清除。 */
@@ -157,7 +163,7 @@
     async function approve() {
       const confirmed = await aiUi.confirm({
         title: '确认采用',
-        message: `确认采用“${view.work.name}”的${provider.label} v${view.run.version}？${provider.approveNote(view)}`,
+        message: `确认采用“${view.work.name}”的${provider.label}${titleSuffix().replace(' › ', ' ')} v${view.run.version}？${provider.approveNote(view)}`,
         confirmText: '确认采用'
       });
       if (!confirmed) return;
@@ -181,7 +187,7 @@
       if (provider.confirmRegenerate && !(await provider.confirmRegenerate(view))) return;
       isFormOpen = true;
       try {
-        await aiForm.open({ form: provider.regenerateForm, params: { workId: view.work.id } });
+        await aiForm.open({ form: provider.regenerateForm, params: { workId: view.work.id, ...(episodeId ? { episodeId } : {}) } });
       } finally {
         isFormOpen = false;
       }
@@ -223,7 +229,7 @@
       headerElement.textContent = '';
       if (!view) return;
       const { work, run, actions, versions } = view;
-      if (handle) handle.setTitle(`${work.name} › ${provider.label}`);
+      if (handle) handle.setTitle(`${work.name} › ${provider.label}${titleSuffix()}`);
 
       const versionSelect = aiUi.select({
         options: versions.map((item) => ({
@@ -324,7 +330,7 @@
       minHeight: PAGE_MIN_HEIGHT,
       beforeClose: () => confirmDiscardEdits()
     });
-    const key = viewKey(workId, stage);
+    const key = viewKey(workId, stage, episodeId);
     openViews.set(key, { workId, handle, refresh: scheduleRefresh });
     void handle.closed.then(() => {
       window.clearTimeout(refreshTimer);
@@ -338,15 +344,16 @@
    * 打开作品某个阶段的产出层；已经打开时聚焦已有的。
    * @param {number} workId 作品标识。
    * @param {string} stage 阶段，缺省为创意。
+   * @param {number|null} episodeId 集标识，分镜脚本阶段必填。
    * @returns 弹出页面的句柄。
    */
-  function open(workId, stage = 'creative') {
-    const existing = openViews.get(viewKey(workId, stage));
+  function open(workId, stage = 'creative', episodeId = null) {
+    const existing = openViews.get(viewKey(workId, stage, episodeId));
     if (existing) {
       existing.handle.element.focus();
       return existing.handle;
     }
-    return createStageView(workId, stage);
+    return createStageView(workId, stage, episodeId);
   }
 
   /** 关闭作品已不存在的产出层（作品被删除，或随所属项目一起删除）。 */

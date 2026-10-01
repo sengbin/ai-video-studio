@@ -75,6 +75,7 @@ export const WORK_LIST_PAGE_RESOURCES: PageResources = createEditorPageResources
     'stage/stage.js',
     'stage/stage-creative.js',
     'stage/stage-screenplay.js',
+    'stage/stage-storyboard.js',
     'work-list/work-list.js'
   ]
 );

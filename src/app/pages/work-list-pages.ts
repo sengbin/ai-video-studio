@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：work-list-pages.ts
-// 说明：作品列表页（P3）的入口：每种素材来源一个面板，列出所有项目中该来源的作品；另有一个跨来源的“剧本”面板；新建、编辑、重新生成、生成剧本表单和阶段产出层都在页内弹出。
+// 说明：作品列表页（P3）的入口：每种素材来源一个面板，列出所有项目中该来源的作品；另有跨来源的“剧本”“分镜”面板；新建、编辑、重新生成、生成剧本与分镜脚本表单和阶段产出层都在页内弹出。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-01
@@ -10,6 +10,7 @@
 import { StageKind } from '../../domain/models/stage-run';
 import { registerFormHandlers } from '../forms/form-handlers';
 import { createScreenplayFormCatalog } from '../forms/screenplay-form';
+import { createStoryboardFormCatalog } from '../forms/storyboard-form';
 import { createWorkFormCatalog } from '../forms/work-form';
 import { MessageRouter } from '../messaging/message-router';
 import { WORK_LIST_PAGE_RESOURCES } from '../panels/page-resources';
@@ -17,6 +18,7 @@ import { OpenedPanel, PanelManager } from '../panels/panel-manager';
 import { ProjectService } from '../services/project-service';
 import { ScreenplayService } from '../services/screenplay-service';
 import { StageService } from '../services/stage-service';
+import { StoryboardService } from '../services/storyboard-service';
 import { WorkService } from '../services/work-service';
 import { STAGE_EVENTS } from './stage-handlers';
 import { WORK_LIST_EVENTS, WorkListRequest, WorkListView, registerWorkListHandlers } from './work-list-handlers';
@@ -28,7 +30,8 @@ const WORK_LIST_TITLES: Readonly<Record<WorkListView, string>> = {
   text: '文字灵感',
   image: '图片灵感',
   novel: '小说改编',
-  screenplay: '剧本'
+  screenplay: '剧本',
+  storyboard: '分镜'
 };
 
 /** 各视图的页面描述，显示在页面顶部标题栏里。 */
@@ -36,7 +39,8 @@ const WORK_LIST_DESCRIPTIONS: Readonly<Record<WorkListView, string>> = {
   text: '所有项目中以文字灵感为素材的作品，可新建作品、查看创意、修改和删除。',
   image: '所有项目中以灵感图片为素材的作品，可新建作品、查看创意、修改和删除。',
   novel: '所有项目中以小说原文为素材的作品，可新建作品、查看创意、修改和删除。',
-  screenplay: '创意已确认的作品，可生成、查看和编辑剧本，确认采用后合并集和实体。'
+  screenplay: '创意已确认的作品，可生成、查看和编辑剧本，确认采用后合并集和实体。',
+  storyboard: '剧本已确认的作品，可为每一集生成、查看和编辑分镜脚本，确认采用后供下游使用。'
 };
 
 /** 已打开的作品列表页。 */
@@ -52,7 +56,7 @@ export class WorkListPages {
   private readonly opened = new Map<WorkListView, OpenedWorkList>();
 
   /**
-   * @param services 项目、作品、阶段与剧本服务。
+   * @param services 项目、作品、阶段、剧本与分镜脚本服务。
    * @param panels 面板管理器。
    */
   constructor(
@@ -61,6 +65,7 @@ export class WorkListPages {
       readonly works: WorkService;
       readonly stages: StageService;
       readonly screenplays: ScreenplayService;
+      readonly storyboards: StoryboardService;
     },
     private readonly panels: PanelManager
   ) {}
@@ -80,7 +85,7 @@ export class WorkListPages {
       return;
     }
 
-    const { projects, works, stages, screenplays } = this.services;
+    const { projects, works, stages, screenplays, storyboards } = this.services;
     const entry: OpenedWorkList = { panel: undefined, pending: request };
     const router = new MessageRouter();
     registerWorkListHandlers(router, view, this.services, {
@@ -90,7 +95,8 @@ export class WorkListPages {
         return taken;
       }
     });
-    const openStage = (workId: number, stage: StageKind): void => entry.panel?.postEvent(WORK_LIST_EVENTS.openStage, { workId, stage });
+    const openStage = (workId: number, stage: StageKind, episodeId?: number): void =>
+      entry.panel?.postEvent(WORK_LIST_EVENTS.openStage, { workId, stage, episodeId });
     registerFormHandlers(
       router,
       new Map([
@@ -101,6 +107,13 @@ export class WorkListPages {
           screenplays,
           onStarted: (workId) => openStage(workId, 'screenplay'),
           onPicked: (workId) => entry.panel?.postEvent(WORK_LIST_EVENTS.startScreenplay, { workId })
+        }),
+        ...createStoryboardFormCatalog({
+          projects,
+          works,
+          storyboards,
+          onStarted: (workId, episodeId) => openStage(workId, 'storyboard_script', episodeId),
+          onPicked: (workId) => entry.panel?.postEvent(WORK_LIST_EVENTS.startStoryboard, { workId })
         })
       ])
     );

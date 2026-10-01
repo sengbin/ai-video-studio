@@ -14,9 +14,10 @@ import { test } from 'node:test';
 import { CREATIVE_PROMPT_VARIABLES } from './creative-workflow';
 import { listTemplateVariables, renderTemplate, wrapMaterial } from './prompt-templates';
 import { SCREENPLAY_PROMPT_VARIABLES } from './screenplay-workflow';
+import { STORYBOARD_PROMPT_VARIABLES } from './storyboard-workflow';
 
 const PROMPTS_DIRECTORY = join(resolve(__dirname, '..', '..', '..'), 'resources', 'prompts');
-const PROMPT_VARIABLES = { ...CREATIVE_PROMPT_VARIABLES, ...SCREENPLAY_PROMPT_VARIABLES };
+const PROMPT_VARIABLES = { ...CREATIVE_PROMPT_VARIABLES, ...SCREENPLAY_PROMPT_VARIABLES, ...STORYBOARD_PROMPT_VARIABLES };
 
 test('渲染：替换变量，素材里的 {{…}} 不会被再次解析', () => {
   const rendered = renderTemplate('标题：{{title}}；内容：{{body}}', { title: '灯塔', body: '含有 {{title}} 的文字' });

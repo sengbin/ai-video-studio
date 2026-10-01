@@ -119,8 +119,52 @@ test('剧本产出：读取视图、编辑正文、集、实体，重新抽取�
     // 创意阶段的版本标识不能用在剧本阶段的请求上，未知阶段被拒绝。
     const wrongStage = await sendStage(STAGE_REQUESTS.approve, { id: creative.id }, 'screenplay');
     assert.ok(wrongStage && !wrongStage.ok && wrongStage.error.kind === 'not-found');
-    const unknown = await sendStage(STAGE_REQUESTS.load, {}, 'storyboard_script');
+    const unknown = await sendStage(STAGE_REQUESTS.load, {}, 'bogus');
     assert.ok(unknown && !unknown.ok && unknown.error.kind === 'validation');
+  } finally {
+    database.close();
+  }
+});
+
+test('分镜脚本产出：按集读取视图、编辑镜头、确认采用；缺少集标识或集不符的请求被拒绝', async () => {
+  const { database, sendStage, work, stages, screenplays, storyboards, runner } = createFixture();
+  try {
+    const creative = await stages.startCreative(work.id, PARAMS);
+    await runner.whenIdle();
+    stages.approve(creative.id);
+    const screenplay = await screenplays.start(work.id, { maxEpisodeDurationSeconds: 60 });
+    await runner.whenIdle();
+    stages.approve(screenplay.id);
+    const [episode] = storyboards.listEpisodeStatuses(work.id);
+    const [run] = await storyboards.start(work.id, [episode.episodeId], {});
+    await runner.whenIdle();
+    const send = (name: string, payload: object = {}) => sendStage(name, { episodeId: episode.episodeId, ...payload }, 'storyboard_script');
+
+    const noEpisode = await sendStage(STAGE_REQUESTS.load, {}, 'storyboard_script');
+    assert.ok(noEpisode && !noEpisode.ok && noEpisode.error.kind === 'validation');
+    const missingEpisode = await sendStage(STAGE_REQUESTS.load, { episodeId: 9999 }, 'storyboard_script');
+    assert.ok(missingEpisode && !missingEpisode.ok && missingEpisode.error.kind === 'not-found');
+
+    const loaded = await send(STAGE_REQUESTS.load);
+    assert.ok(loaded?.ok);
+    const view = loaded.data as { shots: Array<{ id: number; action: string }>; run: { display: string }; episode: { seq: number } };
+    assert.equal(view.run.display, 'pending');
+    assert.equal(view.shots.length, 2);
+
+    const base = { id: run.id, ref: view.shots[0].id, action: '新画面', durationSeconds: '3', firstFrameMode: 'none', entityIds: [], sounds: [] };
+    const saved = await send(STAGE_REQUESTS.saveShot, base);
+    assert.ok(saved?.ok);
+    assert.equal(storyboards.getView(work.id, episode.episodeId).shots[0].action, '新画面');
+    const invalid = await send(STAGE_REQUESTS.saveShot, { ...base, action: '' });
+    assert.ok(invalid && !invalid.ok && invalid.error.fieldErrors?.action);
+
+    // 别的集的标识不能操作这一集的版本。
+    const wrongEpisode = await sendStage(STAGE_REQUESTS.approve, { id: run.id, episodeId: episode.episodeId + 100 }, 'storyboard_script');
+    assert.ok(wrongEpisode && !wrongEpisode.ok && wrongEpisode.error.kind === 'not-found');
+
+    const approved = await send(STAGE_REQUESTS.approve, { id: run.id });
+    assert.ok(approved?.ok);
+    assert.equal(storyboards.getView(work.id, episode.episodeId).run.display, 'approved');
   } finally {
     database.close();
   }

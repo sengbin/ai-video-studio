@@ -84,6 +84,64 @@ function createResponder() {
         ]
       });
     }
+    if (text.includes('# 任务：生成分镜脚本')) {
+      const silent = text.includes('这是无声视频');
+      const kinds = ['dialogue', 'narration', 'sfx', 'music'].filter((kind) => text.includes(`${kind}（`));
+      const withFirstFrame = text.includes('逐个镜头判断 firstFrameMode');
+      const chained = text.includes('都以上一镜头的尾帧作为首帧');
+      const sound = (kind, body) => (silent || !kinds.includes(kind) ? [] : [body]);
+      const shots = [
+        {
+          sceneLabel: '第01场',
+          shotSize: '远景',
+          cameraAngle: '平视',
+          action: '雨夜里，海边的灯塔亮起光束，扫过漆黑的海面。',
+          cameraMovement: '固定',
+          durationSeconds: 4,
+          transition: '切',
+          continuityNote: '雨夜，冷色调。',
+          entities: [{ kind: 'scene', name: '灯塔' }],
+          sounds: [...sound('music', { kind: 'music', text: '低沉紧张的弦乐', delivery: '渐强' }), ...sound('sfx', { kind: 'sfx', text: '海浪与风声' })],
+          promptZh: '雨夜的海边灯塔，光束扫过漆黑的海面，冷色调，远景。',
+          promptEn: 'A lighthouse by the sea on a rainy night, its beam sweeping across the dark water, cold tones, wide shot.'
+        },
+        {
+          sceneLabel: '第01场',
+          shotSize: '中景',
+          cameraAngle: '平视',
+          action: '老陈站在灯塔内的窗边，翻开值班日志，眉头渐渐皱起。',
+          cameraMovement: '缓慢推进',
+          durationSeconds: 5,
+          transition: '切',
+          continuityNote: '老陈的服装与光线与上一镜头保持一致。',
+          entities: [{ kind: 'character', name: '老陈' }, { kind: 'prop', name: '值班日志' }, { kind: 'scene', name: '灯塔' }],
+          sounds: [...sound('dialogue', { kind: 'dialogue', speaker: '老陈', text: '今晚会下雨。', delivery: '低声、沙哑' })],
+          promptZh: '灯塔内，老人在窗边翻开旧日志，神情凝重，中景，缓慢推进。',
+          promptEn: 'Inside the lighthouse, an old man opens a worn logbook by the window with a grave expression, medium shot, slow push-in.'
+        },
+        {
+          sceneLabel: '第02场',
+          shotSize: '特写',
+          cameraAngle: '俯拍',
+          action: '日志最新一页上出现一行陌生的字迹，雨水沿着窗沿滴落。',
+          cameraMovement: '固定',
+          durationSeconds: 3,
+          transition: '切',
+          continuityNote: '',
+          entities: [{ kind: 'prop', name: '值班日志' }],
+          sounds: [...sound('narration', { kind: 'narration', text: '那行字，不是他写的。' })],
+          promptZh: '旧日志页面特写，陌生的字迹，雨水滴落在窗沿。',
+          promptEn: 'Close-up of a logbook page with unfamiliar handwriting, rain dripping on the windowsill.'
+        }
+      ].map((shot, index) => {
+        const result = { ...shot };
+        if (!silent && !kinds.length) result.sounds = [];
+        if (withFirstFrame) result.firstFrameMode = index === 1 ? 'prev_tail' : 'none';
+        if (chained) delete result.firstFrameMode;
+        return result;
+      });
+      return JSON.stringify({ shots });
+    }
     return JSON.stringify({ refused: '示例应答无法处理该任务。' });
   };
 }

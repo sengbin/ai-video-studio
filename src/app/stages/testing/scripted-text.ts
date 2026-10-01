@@ -117,5 +117,32 @@ export function standardResponder(request: TextGenerationRequest): unknown {
       ]
     };
   }
+  if (user.includes('# 任务：生成分镜脚本')) {
+    // 声音类型、首帧来源随生成参数裁剪，以工具参数的字段区分。
+    const schema = JSON.stringify(request.tool.inputSchema);
+    const withSounds = schema.includes('"sounds"');
+    const withFirstFrame = schema.includes('"firstFrameMode"');
+    const shot = (index: number, entities: unknown[], sounds: unknown[]): Record<string, unknown> => ({
+      sceneLabel: '第01场',
+      shotSize: index === 1 ? '远景' : '特写',
+      cameraAngle: '平视',
+      action: index === 1 ? '雨夜里的灯塔亮起光' : '守夜人抬头望向海面',
+      cameraMovement: '固定',
+      durationSeconds: 4,
+      transition: '切',
+      continuityNote: '雨夜、冷色调',
+      ...(withFirstFrame ? { firstFrameMode: index === 1 ? 'none' : 'prev_tail' } : {}),
+      entities,
+      ...(withSounds ? { sounds } : {}),
+      promptZh: '雨夜的灯塔',
+      promptEn: 'A lighthouse on a rainy night'
+    });
+    return {
+      shots: [
+        shot(1, [{ kind: 'scene', name: '灯塔' }], [{ kind: 'music', text: '紧张的弦乐', delivery: '低沉' }]),
+        shot(2, [{ kind: 'character', name: '老陈' }], [{ kind: 'dialogue', speaker: '老陈', text: '今晚会下雨。', delivery: '低声' }])
+      ]
+    };
+  }
   throw new Error(`未预期的请求：${user.slice(0, 40)}`);
 }

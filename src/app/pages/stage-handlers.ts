@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：stage-handlers.ts
-// 说明：阶段产出（P7）的请求处理：读取视图、确认采用、取消、重试、读取失败时的原始输出，以及创意章节与剧本正文、集、实体的编辑保存、重新抽取。
+// 说明：阶段产出（P7）的请求处理：读取视图、确认采用、取消、重试、读取失败时的原始输出，以及创意章节、剧本正文、集、实体、分镜脚本镜头的编辑保存、重新抽取。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-09-30
@@ -13,6 +13,7 @@ import { readEntityId, readRecord } from '../../domain/rules/field-readers';
 import { MessageRouter } from '../messaging/message-router';
 import { ScreenplayService } from '../services/screenplay-service';
 import { StageService } from '../services/stage-service';
+import { StoryboardService } from '../services/storyboard-service';
 
 /** 阶段产出使用的请求名称，需与 resources/stage 下的脚本一致。 */
 export const STAGE_REQUESTS = {
@@ -25,6 +26,7 @@ export const STAGE_REQUESTS = {
   saveScreenplayText: 'stage.saveScreenplayText',
   saveEpisode: 'stage.saveEpisode',
   saveEntity: 'stage.saveEntity',
+  saveShot: 'stage.saveShot',
   reextract: 'stage.reextract'
 } as const;
 
@@ -34,7 +36,7 @@ export const STAGE_EVENTS = {
 } as const;
 
 /** 产出层目前支持的阶段。 */
-const SUPPORTED_STAGES: readonly StageKind[] = ['creative', 'screenplay'];
+const SUPPORTED_STAGES: readonly StageKind[] = ['creative', 'screenplay', 'storyboard_script'];
 
 /** 读取请求载荷中的阶段，必须是产出层支持的阶段。 */
 function readStage(payload: unknown): StageKind {
@@ -45,23 +47,29 @@ function readStage(payload: unknown): StageKind {
   return stage as StageKind;
 }
 
+/** 读取请求载荷中的集标识（分镜脚本阶段必填）。 */
+function readEpisodeId(payload: unknown): number {
+  return readEntityId({ id: readRecord(payload ?? {}).episodeId }, '集');
+}
+
 /**
  * 在路由器上注册阶段产出的请求处理函数。
  * @param router 面板的请求路由器。
- * @param services 阶段服务与剧本服务。
+ * @param services 阶段服务、剧本服务与分镜脚本服务。
  * @param resolveWorkId 从请求载荷中读取作品标识并校验它属于所属页面；不合法时抛出错误。
  */
 export function registerStageHandlers(
   router: MessageRouter,
-  services: { readonly stages: StageService; readonly screenplays: ScreenplayService },
+  services: { readonly stages: StageService; readonly screenplays: ScreenplayService; readonly storyboards: StoryboardService },
   resolveWorkId: (payload: unknown) => number
 ): void {
-  const { stages, screenplays } = services;
+  const { stages, screenplays, storyboards } = services;
 
-  /** 读取请求中的记录标识，并确认它属于请求指定的作品与阶段。 */
+  /** 读取请求中的记录标识，并确认它属于请求指定的作品与阶段（分镜脚本还要属于请求指定的集）。 */
   const readOwnRunId = (payload: unknown): number => {
     const runId = readEntityId(payload, '版本');
-    stages.assertRunBelongs(runId, resolveWorkId(payload), readStage(payload));
+    const stage = readStage(payload);
+    stages.assertRunBelongs(runId, resolveWorkId(payload), stage, stage === 'storyboard_script' ? readEpisodeId(payload) : null);
     return runId;
   };
 
@@ -70,6 +78,9 @@ export function registerStageHandlers(
     const workId = resolveWorkId(payload);
     const runId = readRecord(payload ?? {}).id;
     const id = typeof runId === 'number' ? runId : undefined;
+    if (stage === 'storyboard_script') {
+      return storyboards.getView(workId, readEpisodeId(payload), id);
+    }
     return stage === 'screenplay' ? screenplays.getView(workId, id) : stages.getCreativeView(workId, id);
   });
 
@@ -107,6 +118,11 @@ export function registerStageHandlers(
 
   router.register(STAGE_REQUESTS.saveEntity, (payload) => {
     screenplays.saveEntity(readOwnRunId(payload), payload);
+    return { saved: true };
+  });
+
+  router.register(STAGE_REQUESTS.saveShot, (payload) => {
+    storyboards.saveShot(readOwnRunId(payload), payload);
     return { saved: true };
   });
 

@@ -79,6 +79,8 @@ export interface ScreenplayStageView {
   readonly merged: boolean;
   /** 上游创意已被修改或不再是已确认版本。 */
   readonly stale: boolean;
+  /** 下游已有分镜脚本的集序号，确认采用新版本前提示用户它们可能过期。 */
+  readonly downstreamEpisodes: number[];
   readonly actions: ScreenplayActions;
 }
 
@@ -195,6 +197,10 @@ export class ScreenplayService {
       entityKinds: ENTITY_KIND_VIEWS,
       merged,
       stale: run.status === 'succeeded' && isStale(run, source),
+      downstreamEpisodes: screenplays
+        .listEpisodes(workId)
+        .filter((episode) => runs.listVersions({ workId, stage: 'storyboard_script', episodeId: episode.id }).length > 0)
+        .map((episode) => episode.seq),
       actions: {
         canApprove: canApprove(run),
         canCancel: canCancel(run),
