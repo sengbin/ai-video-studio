@@ -75,6 +75,11 @@
   white-space: nowrap;
 }
 
+/* 操作列的按钮是 inline-flex，默认按基线对齐，带图标与纯文字按钮会错开，统一居中 */
+.ui-table__cell--actions .ui-button {
+  vertical-align: middle;
+}
+
 .ui-table__cell--actions .ui-button + .ui-button {
   margin-left: 6px;
 }

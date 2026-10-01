@@ -70,6 +70,11 @@ test('禁用态：按钮、输入、下拉、单选复选、开关都有明确�
   assert.match(ruleBody(css, '.ui-switch:disabled,\n.ui-switch:disabled:hover,\n.ui-switch:disabled:active'), /cursor:\s*default/);
 });
 
+test('表格操作列：按钮垂直居中，带图标与纯文字按钮不会错开', () => {
+  const css = readStyle('ui-table.css');
+  assert.match(ruleBody(css, '.ui-table__cell--actions .ui-button'), /vertical-align:\s*middle/);
+});
+
 test('多行文本：关闭浏览器原生的拖动手柄，改用自绘把手', () => {
   const css = readStyle('ui-controls.css');
   assert.match(css, /\.ui-textarea__field \{[^}]*resize:\s*none/);
