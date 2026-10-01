@@ -230,7 +230,7 @@ flowchart LR
 
 ### 3.3 P3 项目详情层
 
-形态：在项目列表页内以弹出页面显示（模态、可拖动、可调整大小），**不单独打开编辑器标签页**；组件为 `resources/project-detail/project-detail.js` 的 `aiProjectDetail.open(projectId)`，同时只有一个详情层。弹出页面的标题行显示项目名称。
+形态：在项目列表页内以弹出页面显示（模态、可拖动、可调整大小），宽 760 像素、高度随内容自适应（不超过窗口，超出时内容区滚动），**不单独打开编辑器标签页**；组件为 `resources/project-detail/project-detail.js` 的 `aiProjectDetail.open(projectId)`，同时只有一个详情层。弹出页面的标题行显示项目名称。
 
 顶部左侧为项目摘要：描述、视觉风格、默认画幅、默认分辨率，右侧为筛选下拉，下方有分割线；“生成视频”按钮随工作台实现；项目信息在项目列表页修改。
 

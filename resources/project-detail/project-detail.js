@@ -22,10 +22,8 @@
   const DEFAULT_TITLE = '项目详情';
   const FILTER_ALL = 'all';
   const REFRESH_DELAY_MS = 150;
-  const PAGE_WIDTH = 960;
-  const PAGE_HEIGHT = 640;
+  const PAGE_WIDTH = 760;
   const PAGE_MIN_WIDTH = 420;
-  const PAGE_MIN_HEIGHT = 360;
   const SOURCE_TYPES = [
     { value: 'text', label: '文字灵感' },
     { value: 'image', label: '图片灵感' },
@@ -303,9 +301,7 @@
       title: DEFAULT_TITLE,
       content: root,
       width: PAGE_WIDTH,
-      height: PAGE_HEIGHT,
-      minWidth: PAGE_MIN_WIDTH,
-      minHeight: PAGE_MIN_HEIGHT
+      minWidth: PAGE_MIN_WIDTH
     });
     const initialLoad = loadDetail(true);
     void handle.closed.then(() => {
