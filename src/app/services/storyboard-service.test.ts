@@ -19,8 +19,8 @@ const CREATIVE_PARAMS = { chapterMinWords: 100, chapterMaxWords: 200, maxChapter
 const SCREENPLAY_PARAMS = { maxEpisodeDurationSeconds: '60', maxEpisodes: '3' };
 
 /** 创建夹具与作品，生成并确认创意；withScreenplay 为 true 时再生成并确认剧本。 */
-async function createFixture(kind: '单个短视频' | '多集短片' = '单个短视频', withScreenplay = true, responder: Responder = standardResponder) {
-  const fixture = createServiceFixture(responder);
+async function createFixture(kind: '单个短视频' | '多集短片' = '单个短视频', withScreenplay = true, responder: Responder = standardResponder, sceneBatchMaxChars?: number) {
+  const fixture = createServiceFixture(responder, sceneBatchMaxChars);
   const work = fixture.works.createWork(fixture.project.id, normalizeWorkCreation({ workName: '作品甲', kind }, 'text'));
   const creative = await fixture.stages.startCreative(work.id, CREATIVE_PARAMS);
   await fixture.runner.whenIdle();
@@ -386,4 +386,64 @@ test('画幅提示：解析不了宽高比时只说明画幅，没有指定时�
   assert.match(describeAspectRatio('宽屏'), /目标视频画幅为 宽屏。按这个画幅安排构图/);
   assert.match(describeAspectRatio('21:9'), /横屏/);
   assert.match(describeAspectRatio(null), /没有指定/);
+});
+
+/** 三个场次的剧本正文，每个场次约 40 个字。 */
+const THREE_SCENE_TEXT = [1, 2, 3].map((number) => `第${number}场 地点${number}｜内景｜夜\n${'浪'.repeat(30)}`).join('\n');
+
+/** 把单个短视频这一集的剧本正文换成多场次的正文（直接写库，模拟剧本里已有“第N场”标题）。 */
+function useSceneText(fixture: Awaited<ReturnType<typeof createFixture>>): void {
+  fixture.database.prepare('UPDATE episodes SET screenplay_text = ? WHERE work_id = ?').run(THREE_SCENE_TEXT, fixture.work.id);
+}
+
+test('分批：正文超过单批上限且有多个场次时按场次逐批生成，镜头序号连续，预算按正文占比分配，后一批带上前一批的最后一个镜头', async () => {
+  const fixture = await createFixture('单个短视频', true, standardResponder, 50);
+  try {
+    useSceneText(fixture);
+    const episodeId = firstEpisodeId(fixture);
+    await fixture.storyboards.start(fixture.work.id, [episodeId], { maxShots: '6' });
+    await fixture.runner.whenIdle();
+
+    const requests = fixture.text.requests.filter((request) => request.user.includes('# 任务：生成分镜脚本'));
+    assert.equal(requests.length, 3, '三个场次各一批');
+    assert.ok(requests[0].user.includes('第 1 批') && requests[0].user.includes('第1场 地点1') && !requests[0].user.includes('第2场 地点2'));
+    assert.ok(!requests[0].user.includes('最后一个镜头属于'), '第一批没有前面的镜头');
+    assert.ok(requests[1].user.includes('第 2 批') && requests[1].user.includes('最后一个镜头属于“第01场”') && !requests[1].user.includes('第1场 地点1'));
+    assert.ok(requests.every((request) => request.user.includes('本批镜头总数不超过 2 个') && request.user.includes('本批的时长预算为')));
+    assert.ok(requests[2].user.includes('第 3 批') && requests[2].user.includes('第3场 地点3'));
+
+    const view = fixture.storyboards.getView(fixture.work.id, episodeId);
+    assert.equal(view.run.display, 'pending');
+    assert.deepEqual(view.shots.map((shot) => shot.seq), [1, 2, 3, 4, 5, 6]);
+    assert.equal(view.totalSeconds, 24);
+  } finally {
+    fixture.database.close();
+  }
+});
+
+test('分批：镜头总数上限太小，每批至少 1 个镜头都放不下时失败并给出提示；不分批的短正文仍是一次调用', async () => {
+  const fixture = await createFixture('单个短视频', true, standardResponder, 50);
+  try {
+    useSceneText(fixture);
+    const episodeId = firstEpisodeId(fixture);
+    await fixture.storyboards.start(fixture.work.id, [episodeId], { maxShots: '2' });
+    await fixture.runner.whenIdle();
+    const view = fixture.storyboards.getView(fixture.work.id, episodeId);
+    assert.equal(view.run.display, 'failed');
+    assert.match(view.run.errorMessage ?? '', /镜头总数上限太小.*3 批/);
+  } finally {
+    fixture.database.close();
+  }
+
+  const short = await createFixture('单个短视频', true, standardResponder, 5000);
+  try {
+    useSceneText(short);
+    await short.storyboards.start(short.work.id, [firstEpisodeId(short)], {});
+    await short.runner.whenIdle();
+    const requests = short.text.requests.filter((request) => request.user.includes('# 任务：生成分镜脚本'));
+    assert.equal(requests.length, 1);
+    assert.ok(!requests[0].user.includes('分 3 批') && requests[0].user.includes('本集目标时长为'));
+  } finally {
+    short.database.close();
+  }
 });

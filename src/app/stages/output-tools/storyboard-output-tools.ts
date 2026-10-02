@@ -45,8 +45,9 @@ function createSoundSchema(params: StoryboardParams): Record<string, unknown> {
  * 分镜脚本：{ shots: [{ sceneLabel, shotSize, cameraAngle, action, cameraMovement, durationSeconds, transition, continuityNote,
  * firstFrameMode?, entities, sounds?, promptZh, promptEn }] }。
  * @param params 生成参数：连贯策略为“由 AI 判断”时才有 firstFrameMode；声音模式为无声时没有 sounds。
+ * @param continuesFromPrevious 为 true 表示这一批接在前面已生成的镜头之后，第 1 个镜头可以接上一批最后一个镜头的尾帧。
  */
-export function createStoryboardTool(params: StoryboardParams): OutputTool {
+export function createStoryboardTool(params: StoryboardParams, continuesFromPrevious = false): OutputTool {
   const shotProperties: Record<string, unknown> = {
     sceneLabel: { type: 'string', description: '所属场次，如“第01场”。' },
     shotSize: { type: 'string', description: '景别，如远景、中景、特写。' },
@@ -77,7 +78,7 @@ export function createStoryboardTool(params: StoryboardParams): OutputTool {
     shotProperties.firstFrameMode = {
       type: 'string',
       enum: ['none', 'prev_tail'],
-      description: 'none：不指定首帧；prev_tail：以上一镜头的尾帧作为本镜头首帧，用于画面连续的镜头。第 1 个镜头只能是 none。'
+      description: 'none：不指定首帧；prev_tail：以上一镜头的尾帧作为本镜头首帧，用于画面连续的镜头。' + (continuesFromPrevious ? '本批第 1 个镜头的上一镜头是前面已生成的最后一个镜头。' : '第 1 个镜头只能是 none。')
     };
     required.push('firstFrameMode');
   }

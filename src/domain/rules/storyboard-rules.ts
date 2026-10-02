@@ -70,6 +70,8 @@ export interface StoryboardContext {
   readonly entities: readonly StoryboardEntity[];
   /** 本集全部镜头的总时长上限（秒），来自本集目标时长；不填表示不限制。 */
   readonly maxTotalSeconds?: number | null;
+  /** 第一个镜头的序号，缺省为 1；按场次分批生成时，后面的批次接着前面批次的序号。 */
+  readonly firstSeq?: number;
 }
 
 /** 判断值是否为普通对象。 */
@@ -340,7 +342,7 @@ function parseFirstFrame(record: Record<string, unknown>, seq: number, params: S
 /** 解析并校验一个镜头；序号由顺序决定。 */
 function parseShot(item: unknown, index: number, context: StoryboardContext, issues: string[]): ShotDraft {
   const { params, entities } = context;
-  const seq = index + 1;
+  const seq = (context.firstSeq ?? 1) + index;
   const label = `第 ${seq} 个镜头`;
   const record = isRecord(item) ? item : {};
 
@@ -401,7 +403,7 @@ function parseShot(item: unknown, index: number, context: StoryboardContext, iss
 /**
  * 校验并整理模型生成的一集分镜脚本。
  * @param raw 模型提交的 { shots }。
- * @param context 生成参数与可引用的实体；镜头引用的实体按（类型，名称或别名）映射为实体标识。
+ * @param context 生成参数与可引用的实体；镜头引用的实体按（类型，名称或别名）映射为实体标识。镜头数上限与总时长上限按本次调用（一批）计算。
  * @throws GeneratedOutputError 格式不对、镜头数超限、时长越界或引用了不存在的实体。
  */
 export function parseStoryboard(raw: unknown, context: StoryboardContext): ShotDraft[] {

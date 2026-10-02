@@ -49,8 +49,9 @@ export interface ServiceFixture {
 /**
  * 创建服务层夹具。
  * @param responder 假文本生成端口的响应函数，默认按提示词返回合规内容。
+ * @param sceneBatchMaxChars 分镜脚本按场次分批的单批字数上限，缺省用正式值。
  */
-export function createServiceFixture(responder: Responder = standardResponder): ServiceFixture {
+export function createServiceFixture(responder: Responder = standardResponder, sceneBatchMaxChars?: number): ServiceFixture {
   const database = openDatabase(IN_MEMORY_DATABASE_PATH);
   const runs = new SqliteStageRunRepository(database);
   const chapters = new SqliteChapterRepository(database);
@@ -73,7 +74,7 @@ export function createServiceFixture(responder: Responder = standardResponder): 
         getSplitSettings: () => ({ mode: 'chapter', maxSegmentChars: 1000 })
       }),
       new ScreenplayWorkflow({ chapters, screenplays: screenplayRepository, prompts: FILE_PROMPTS }),
-      new StoryboardWorkflow({ screenplays: screenplayRepository, storyboards: storyboardRepository, prompts: FILE_PROMPTS })
+      new StoryboardWorkflow({ screenplays: screenplayRepository, storyboards: storyboardRepository, prompts: FILE_PROMPTS, sceneBatchMaxChars })
     ],
     notify: (run) => changes.notify({ workId: run.workId, runId: run.id, stage: run.stage })
   });
