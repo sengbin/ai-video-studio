@@ -17,6 +17,9 @@ import { generateStructured } from './structured-generation';
 /** 单次请求的输入 token 不得超过模型上限的这个比例，给输出和系统段留余量。 */
 const INPUT_BUDGET_RATIO = 0.8;
 
+/** 一次提问需要的上下文：阶段工作流上下文，或只含模型、文本端口与取消信号的最小上下文。 */
+export type AskContext = Pick<StageContext, 'model' | 'text' | 'signal'>;
+
 /** 一次提问的选项。 */
 export interface AskOptions {
   readonly images?: readonly ImageInput[];
@@ -38,7 +41,7 @@ export interface AskOptions {
  * @throws InvalidOutputError 输出不符合要求。
  */
 export async function askModel<T>(
-  context: StageContext,
+  context: AskContext,
   prompts: PromptTemplates,
   template: string,
   variables: Readonly<Record<string, string>>,

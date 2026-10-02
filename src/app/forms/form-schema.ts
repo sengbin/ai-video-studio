@@ -45,6 +45,21 @@ export interface FormFieldSchema {
   readonly derive?: 'image' | 'audio';
 }
 
+/** 表单里的一个动作按钮：把当前字段值发给宿主执行（可能较慢，可取消），结果回填到指定字段。 */
+export interface FormActionSchema {
+  /** 动作键，对应 FormDefinition.actions 的键。 */
+  readonly key: string;
+  readonly label: string;
+  /** 按钮显示在这个字段之前。 */
+  readonly before: string;
+  /** 执行成功后会被回填的字段键；这些字段已有内容时，回填前先询问是否覆盖。 */
+  readonly fills: readonly string[];
+  /** 随请求附带图片的文件字段键：只取前若干张、缩小后发送；不填则不发送任何文件字段。 */
+  readonly imageField?: string;
+  /** 随请求附带的图片数量上限；仅 imageField 有值时使用。 */
+  readonly maxImages?: number;
+}
+
 /** 表单描述。 */
 export interface FormSchema {
   /** 页面标题。 */
@@ -52,4 +67,6 @@ export interface FormSchema {
   /** 提交按钮文字。 */
   readonly submitLabel: string;
   readonly fields: readonly FormFieldSchema[];
+  /** 字段动作按钮，显示在指定字段之前。 */
+  readonly actions?: readonly FormActionSchema[];
 }

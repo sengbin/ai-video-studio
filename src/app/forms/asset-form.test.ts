@@ -9,12 +9,16 @@
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { ConflictError, NotFoundError, ValidationError } from '../../domain/errors';
+import { ConflictError, NotFoundError, TextGenerationError, ValidationError } from '../../domain/errors';
 import { IN_MEMORY_DATABASE_PATH, openDatabase } from '../../infra/database/database-connection';
 import { SqliteAssetRepository } from '../../infra/database/sqlite-asset-repository';
+import { SqliteBindingRepository } from '../../infra/database/sqlite-binding-repository';
 import { SqliteProjectRepository } from '../../infra/database/sqlite-project-repository';
+import { AssetPromptService } from '../services/asset-prompt-service';
 import { AssetService, DUPLICATE_ASSET_NAME_MESSAGE } from '../services/asset-service';
+import { BindingService } from '../services/binding-service';
 import { ProjectService } from '../services/project-service';
+import { FILE_PROMPTS, ScriptedText } from '../stages/testing/scripted-text';
 import { ASSET_FORM_NAMES, createAssetFormCatalog } from './asset-form';
 import { FormDefinition } from './form-definition';
 
@@ -24,15 +28,19 @@ const WAV = Buffer.concat([Buffer.from('RIFF'), Buffer.from([0, 0, 0, 0]), Buffe
 function createFixture(projectNames: readonly string[] = ['项目甲', '项目乙']) {
   const database = openDatabase(IN_MEMORY_DATABASE_PATH);
   const projects = new ProjectService(new SqliteProjectRepository(database));
-  const assets = new AssetService(new SqliteAssetRepository(database), projects);
+  const assetRepository = new SqliteAssetRepository(database);
+  const assets = new AssetService(assetRepository, projects);
   const created = projectNames.map((name) => projects.createProject({ name }));
-  const catalog = createAssetFormCatalog({ projects, assets });
+  const text = new ScriptedText(() => ({ promptZh: '中文提示词', promptEn: 'english prompt' }));
+  const prompts = new AssetPromptService({ text, prompts: FILE_PROMPTS, projects });
+  const bindings = new BindingService(new SqliteBindingRepository(database), assetRepository);
+  const catalog = createAssetFormCatalog({ projects, assets, prompts, entities: bindings });
   const open = (name: string, params: unknown): FormDefinition => {
     const factory = catalog.get(name);
     assert.ok(factory);
     return factory(params);
   };
-  return { database, projects, assets, created, open };
+  return { database, projects, assets, bindings, text, created, open };
 }
 
 /** 提交并等待完成，供 assert.rejects 使用。 */
@@ -163,6 +171,126 @@ test('编辑音频：初始值使用界面文字，已有音频随表单带出',
     const form = open(ASSET_FORM_NAMES.edit, { assetId: audio.id });
     assert.deepEqual([form.initialValues.audioKind, form.initialValues.description, form.initialValues.language], ['背景音乐', '紧张', '']);
     assert.equal((JSON.parse(form.initialValues.files) as unknown[]).length, 1);
+  } finally {
+    database.close();
+  }
+});
+
+test('生成提示词动作：图像类资产有，音频没有；用表单草稿、参考图和项目风格调用模型并回填中英文提示词', async () => {
+  const { database, projects, text, created, open } = createFixture();
+  try {
+    projects.updateProject(created[0].id, { name: '项目甲', visualStyle: '写实摄影' });
+    assert.deepEqual(open(ASSET_FORM_NAMES.create, { kind: 'audio' }).schema.actions, []);
+    assert.equal(open(ASSET_FORM_NAMES.create, { kind: 'audio' }).actions, undefined);
+
+    const form = open(ASSET_FORM_NAMES.create, { kind: 'character', projectId: created[0].id });
+    assert.deepEqual(form.schema.actions, [
+      { key: 'generatePrompt', label: '生成提示词', before: 'promptZh', fills: ['promptZh', 'promptEn'], imageField: 'files', maxImages: 3 }
+    ]);
+    const image = { name: 'a.png', mimeType: 'image/png', size: PNG.length, data: PNG.toString('base64') };
+    const result = await form.actions?.generatePrompt(
+      { projectName: '项目甲', name: '林夏', appearance: '短发', files: JSON.stringify([image]) },
+      new AbortController().signal
+    );
+    assert.deepEqual(result, { promptZh: '中文提示词', promptEn: 'english prompt' });
+    const [request] = text.requests;
+    assert.match(request.user, /角色名称：林夏/);
+    assert.match(request.user, /角色外观：短发/);
+    assert.match(request.user, /画面风格（沿用项目风格）：写实摄影/);
+    assert.equal(request.images?.length, 1);
+    assert.equal(request.tool.name, 'submit_asset_prompts');
+  } finally {
+    database.close();
+  }
+});
+
+test('生成提示词动作：信息不足、参考图无效时报错，取消时终止', async () => {
+  const { database, open } = createFixture();
+  try {
+    const { generatePrompt } = open(ASSET_FORM_NAMES.create, { kind: 'prop' }).actions ?? {};
+    const signal = new AbortController().signal;
+    await assert.rejects(generatePrompt({ name: '钥匙' }, signal), (error) => error instanceof ValidationError && /至少填写一项描述/.test(error.message));
+    await assert.rejects(generatePrompt({ appearance: '黄铜' }, signal), ValidationError);
+    const notImage = JSON.stringify([{ name: 'x.png', mimeType: 'image/png', size: 3, data: Buffer.from('abc').toString('base64') }]);
+    await assert.rejects(generatePrompt({ name: '钥匙', files: notImage }, signal), (error) => error instanceof ValidationError && error.fieldErrors.files !== undefined);
+
+    const controller = new AbortController();
+    controller.abort();
+    await assert.rejects(generatePrompt({ name: '钥匙', appearance: '黄铜' }, controller.signal), (error) => error instanceof TextGenerationError && error.category === 'canceled');
+  } finally {
+    database.close();
+  }
+});
+
+test('生成提示词动作：模型输出不合格时给出文本生成错误', async () => {
+  const { database, text, open } = createFixture();
+  try {
+    const bad = new ScriptedText(() => ({ promptZh: '', promptEn: 'only english' }));
+    Object.assign(text, { generate: bad.generate.bind(bad) });
+    const { generatePrompt } = open(ASSET_FORM_NAMES.create, { kind: 'prop' }).actions ?? {};
+    await assert.rejects(
+      generatePrompt({ name: '钥匙', appearance: '黄铜' }, new AbortController().signal),
+      (error) => error instanceof TextGenerationError && /中文提示词不能为空/.test(error.message)
+    );
+  } finally {
+    database.close();
+  }
+});
+
+/** 在项目甲下写入作品、集和一个带设定的角色实体。 */
+function seedEntity(database: ReturnType<typeof openDatabase>, projectId: number) {
+  const insert = (sql: string, ...params: Array<string | number>) => Number(database.prepare(sql).run(...params).lastInsertRowid);
+  const work = insert("INSERT INTO works (project_id, name, kind, created_at, updated_at) VALUES (?, '作品甲', 'single', 't', 't')", projectId);
+  const episode = insert("INSERT INTO episodes (work_id, seq, title, created_at, updated_at) VALUES (?, 1, '第一集', 't', 't')", work);
+  const entity = insert(
+    `INSERT INTO script_entities (work_id, kind, name, description, attributes_json, created_at, updated_at)
+     VALUES (?, 'character', '守夜人', '灯塔守护者', ?, 't', 't')`,
+    work,
+    JSON.stringify({ appearance: '花白胡须', outfit: '深蓝雨衣', voice: '低沉沙哑', identity: '守塔四十年' })
+  );
+  return { episode, entity };
+}
+
+test('从实体新建：按设定预填，项目固定为作品所在项目，保存后记录来源并绑定为形象', async () => {
+  const { database, assets, bindings, created, open } = createFixture();
+  try {
+    const { episode, entity } = seedEntity(database, created[1].id);
+    const form = open(ASSET_FORM_NAMES.create, { episodeId: episode, entityId: entity });
+    assert.equal(form.schema.title, '新建角色');
+    assert.deepEqual(form.schema.fields.find((field) => field.key === 'projectName')?.options, ['项目乙']);
+    assert.deepEqual(form.initialValues, {
+      projectName: '项目乙',
+      name: '守夜人',
+      appearance: '花白胡须',
+      clothing: '深蓝雨衣',
+      voiceDescription: '低沉沙哑',
+      extra: '设定概述：灯塔守护者\n身份与目标：守塔四十年'
+    });
+
+    await submit(form, { ...form.initialValues });
+    const [asset] = assets.listAssets('character');
+    assert.deepEqual([asset.name, asset.projectId, asset.sourceEntityId], ['守夜人', created[1].id, entity]);
+    assert.deepEqual(
+      bindings.listBindings(episode).map((binding) => [binding.entityId, binding.assetId, binding.purpose, binding.isPrimary]),
+      [[entity, asset.id, 'visual', true]]
+    );
+  } finally {
+    database.close();
+  }
+});
+
+test('从实体新建：绑定失败时不留下新资产；实体不存在或标识无效时打不开', async () => {
+  const { database, assets, created, open } = createFixture();
+  try {
+    const { episode, entity } = seedEntity(database, created[0].id);
+    const form = open(ASSET_FORM_NAMES.create, { episodeId: episode, entityId: entity });
+    // 实体在打开表单后被删除：绑定会失败，新建的资产要回滚。
+    database.prepare('DELETE FROM script_entities WHERE id = ?').run(entity);
+    await assert.rejects(submit(form, { ...form.initialValues }));
+    assert.equal(assets.listAssets('character').length, 0);
+
+    assert.throws(() => open(ASSET_FORM_NAMES.create, { episodeId: episode, entityId: entity }), NotFoundError);
+    assert.throws(() => open(ASSET_FORM_NAMES.create, { episodeId: 'x', entityId: entity }), ValidationError);
   } finally {
     database.close();
   }

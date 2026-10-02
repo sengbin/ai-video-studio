@@ -48,6 +48,16 @@ export interface BindingContext {
   readonly entityName: string;
 }
 
+/** 用于“从实体新建资产”的实体设定：所属项目、类型、名称、概述和设定字段。 */
+export interface BindingEntityDetail {
+  readonly projectId: number;
+  readonly kind: EntityKind;
+  readonly name: string;
+  readonly description: string;
+  /** 设定字段，键取自 ENTITY_ATTRIBUTES，值为非空文本。 */
+  readonly attributes: Readonly<Record<string, string>>;
+}
+
 /** 参与自动匹配的实体。 */
 export interface BindingEntityCandidate {
   readonly entityId: number;

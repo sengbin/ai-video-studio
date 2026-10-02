@@ -4,7 +4,7 @@
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
-// 备注：类型由入口决定、创建后不能修改；新建时在表单里选择所属项目（入口可传默认项目），编辑时不显示项目；字段约束取自领域规则常量，保证界面与宿主校验一致；表单引擎不支持字段联动与折叠，风格留空表示沿用项目风格，语言仅对音色参考有效。
+// 备注：类型由入口决定、创建后不能修改；新建时在表单里选择所属项目（入口可传默认项目），编辑时不显示项目；字段约束取自领域规则常量，保证界面与宿主校验一致；表单引擎不支持字段联动和折叠，风格留空表示沿用项目风格，语言仅对音色参考有效；图像类资产带“生成提示词”动作；从实体新建（参数带 episodeId、entityId）时按实体设定预填、项目固定为作品所在项目，保存后自动绑定为形象。
 // ------------------------------------------------------------------------
 
 import { FORM_LEVEL_ERROR_KEY, ValidationError } from '../../domain/errors';
@@ -18,7 +18,10 @@ import {
   AssetRecord,
   AudioKind
 } from '../../domain/models/asset';
+import { BindingEntityDetail } from '../../domain/models/binding';
 import { ASSET_OPTION_SETS, AUDIO_LANGUAGE_OPTIONS, CHARACTER_TYPE_OPTIONS } from '../../domain/models/option-sets';
+import { ASSET_PROMPT_MAX_IMAGES, isPromptAssetKind } from '../../domain/rules/asset-prompt-rules';
+import { buildAssetPrefill } from '../../domain/rules/entity-asset-prefill';
 import {
   ASSET_ATTRIBUTE_MAX_LENGTH,
   ASSET_AUDIO_EXTENSIONS,
@@ -36,9 +39,10 @@ import {
 } from '../../domain/rules/asset-rules';
 import { readEntityId, readRecord } from '../../domain/rules/field-readers';
 import { ASSET_PROJECT_FIELD_KEY, AssetService, DUPLICATE_ASSET_NAME_MESSAGE } from '../services/asset-service';
+import { AssetPromptService } from '../services/asset-prompt-service';
 import { ProjectService } from '../services/project-service';
-import { FormCatalog, FormDefinition, FormFactory, FormValues } from './form-definition';
-import { FormFieldSchema } from './form-schema';
+import { FormAction, FormCatalog, FormDefinition, FormFactory, FormValues } from './form-definition';
+import { FormActionSchema, FormFieldSchema } from './form-schema';
 
 /** 资产表单在表单目录中的名称，页面据此请求打开。 */
 export const ASSET_FORM_NAMES = {
@@ -289,15 +293,71 @@ function toFormValues(asset: AssetRecord, files: readonly AssetFileRecord[]): Fo
 export interface AssetFormDependencies {
   readonly projects: ProjectService;
   readonly assets: AssetService;
+  readonly prompts: AssetPromptService;
+  /** 从实体新建资产时读取实体设定并绑定；不支持从实体新建的页面可以不传。 */
+  readonly entities?: AssetEntitySource;
+}
+
+/** 从实体新建资产需要的能力：读取实体设定、把新资产绑定到实体（BindingService 实现）。 */
+export interface AssetEntitySource {
+  getEntityDetail(episodeId: number, entityId: number): BindingEntityDetail;
+  bind(rawInput: unknown): unknown;
+}
+
+/** “生成提示词”动作的键。 */
+const GENERATE_PROMPT_ACTION = 'generatePrompt';
+
+/** 图像类资产的“生成提示词”按钮；音频没有提示词。 */
+function createPromptActionSchemas(kind: AssetKind): FormActionSchema[] {
+  return isPromptAssetKind(kind)
+    ? [
+        {
+          key: GENERATE_PROMPT_ACTION,
+          label: '生成提示词',
+          before: 'promptZh',
+          fills: ['promptZh', 'promptEn'],
+          imageField: ASSET_FILE_FIELD_KEY,
+          maxImages: ASSET_PROMPT_MAX_IMAGES
+        }
+      ]
+    : [];
+}
+
+/**
+ * “生成提示词”动作：用表单当前内容调用 Copilot，结果回填中英文提示词字段。
+ * @param resolveProjectId 按表单当前值确定所属项目（用于沿用项目风格）；还没选项目时返回 undefined。
+ */
+function createPromptActions(
+  prompts: AssetPromptService,
+  kind: AssetKind,
+  resolveProjectId: (values: FormValues) => number | undefined
+): Readonly<Record<string, FormAction>> | undefined {
+  if (!isPromptAssetKind(kind)) {
+    return undefined;
+  }
+  return {
+    [GENERATE_PROMPT_ACTION]: async (values, signal) => {
+      const { promptZh, promptEn } = await prompts.generate({ kind, values, projectId: resolveProjectId(values) }, signal);
+      return { promptZh, promptEn };
+    }
+  };
+}
+
+/** 表单到项目的解析：按项目名称找到项目标识。 */
+function findProjectIdByName(projects: ProjectService, name: string | undefined): number | undefined {
+  return name === undefined ? undefined : projects.listProjects().find((project) => project.name === name.trim())?.id;
 }
 
 /**
  * 创建“新建资产”表单的定义。
- * @param params `{ kind, projectId? }`，projectId 为入口筛选的项目，作为所属项目的默认值。
+ * @param params `{ kind, projectId? }`，projectId 为入口筛选的项目，作为所属项目的默认值；或 `{ episodeId, entityId }`，从实体预填并在保存后绑定。
  */
 function createNewAssetForm(dependencies: AssetFormDependencies, params: unknown): FormDefinition {
-  const { projects, assets } = dependencies;
   const source = readRecord(params ?? {});
+  if (source.entityId !== undefined) {
+    return createEntityAssetForm(dependencies, source);
+  }
+  const { projects, assets, prompts } = dependencies;
   const kind = readKind(source.kind);
   const summaries = projects.listProjects();
   if (summaries.length === 0) {
@@ -309,30 +369,70 @@ function createNewAssetForm(dependencies: AssetFormDependencies, params: unknown
     schema: {
       title: `新建${ASSET_KIND_LABELS[kind]}`,
       submitLabel: SUBMIT_LABEL,
-      fields: createFields(kind, summaries.map((project) => project.name), false)
+      fields: createFields(kind, summaries.map((project) => project.name), false),
+      actions: createPromptActionSchemas(kind)
     },
     initialValues: {
       ...(defaultProject === undefined ? {} : { [ASSET_PROJECT_FIELD_KEY]: defaultProject.name }),
       ...(kind === 'audio' ? { audioKind: AUDIO_KIND_LABELS.voice } : {})
     },
+    actions: createPromptActions(prompts, kind, (values) => findProjectIdByName(projects, values[ASSET_PROJECT_FIELD_KEY])),
     submit: (values) => {
       assets.createAsset(kind, values);
     }
   };
 }
 
+/**
+ * 创建“从实体新建资产”表单的定义：类型与实体相同，所属项目固定为作品所在项目（否则无法绑定），保存后绑定为该实体的形象。
+ * @param source `{ episodeId, entityId }`。
+ */
+function createEntityAssetForm(dependencies: AssetFormDependencies, source: Record<string, unknown>): FormDefinition {
+  const { projects, assets, prompts, entities } = dependencies;
+  if (entities === undefined) {
+    throw new ValidationError({ [FORM_LEVEL_ERROR_KEY]: '当前页面不支持从实体新建资产。' });
+  }
+  const episodeId = readEntityId({ id: source.episodeId }, '集');
+  const entityId = readEntityId({ id: source.entityId }, '实体');
+  const entity = entities.getEntityDetail(episodeId, entityId);
+  const project = projects.getProject(entity.projectId);
+  const kind: AssetKind = entity.kind;
+  return {
+    schema: {
+      title: `新建${ASSET_KIND_LABELS[kind]}`,
+      submitLabel: SUBMIT_LABEL,
+      fields: createFields(kind, [project.name], false),
+      actions: createPromptActionSchemas(kind)
+    },
+    initialValues: { ...buildAssetPrefill(entity), [ASSET_PROJECT_FIELD_KEY]: project.name },
+    actions: createPromptActions(prompts, kind, () => project.id),
+    submit: (values) => {
+      const asset = assets.createAsset(kind, values, { sourceEntityId: entityId });
+      try {
+        entities.bind({ episodeId, entityId, assetId: asset.id, purpose: 'visual' });
+      } catch (error) {
+        // 绑定失败时不留下未绑定的新资产，用户重新保存不会因重名被拒绝。
+        assets.deleteAsset(asset.id);
+        throw error;
+      }
+    }
+  };
+}
+
 /** 创建“编辑资产”表单的定义；所属项目与类型不能修改，因此不显示项目字段。 */
-function createEditAssetForm(assets: AssetService, assetId: number): FormDefinition {
+function createEditAssetForm(assets: AssetService, prompts: AssetPromptService, assetId: number): FormDefinition {
   const asset = assets.getAsset(assetId);
   return {
     schema: {
       title: `编辑${ASSET_KIND_LABELS[asset.kind]}`,
       submitLabel: SUBMIT_LABEL,
-      fields: createFields(asset.kind, undefined, true)
+      fields: createFields(asset.kind, undefined, true),
+      actions: createPromptActionSchemas(asset.kind)
     },
     initialValues: toFormValues(asset, assets.getReferenceFiles(assetId)),
     checkField: (key, value) =>
       key === 'name' && !assets.isNameAvailable(asset.projectId, asset.kind, value, asset.id) ? DUPLICATE_ASSET_NAME_MESSAGE : undefined,
+    actions: createPromptActions(prompts, asset.kind, () => asset.projectId),
     submit: (values) => {
       assets.updateAsset(asset.id, values);
     }
@@ -340,15 +440,20 @@ function createEditAssetForm(assets: AssetService, assetId: number): FormDefinit
 }
 
 /**
- * 创建资产表单目录：新建的参数为 `{ kind, projectId? }`，编辑的参数为 `{ assetId }`。
- * @param dependencies 项目与资产服务。
+ * 创建资产表单目录：新建的参数为 `{ kind, projectId? }` 或 `{ episodeId, entityId }`（从实体新建），编辑的参数为 `{ assetId }`。
+ * @param dependencies 项目、资产与提示词生成服务，以及可选的实体来源。
  */
 export function createAssetFormCatalog(dependencies: AssetFormDependencies): FormCatalog {
   return new Map<string, FormFactory>([
     [ASSET_FORM_NAMES.create, (params) => createNewAssetForm(dependencies, params)],
     [
       ASSET_FORM_NAMES.edit,
-      (params) => createEditAssetForm(dependencies.assets, readEntityId({ id: readRecord(params ?? {}).assetId }, '资产'))
+      (params) =>
+        createEditAssetForm(
+          dependencies.assets,
+          dependencies.prompts,
+          readEntityId({ id: readRecord(params ?? {}).assetId }, '资产')
+        )
     ]
   ]);
 }

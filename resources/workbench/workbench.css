@@ -188,6 +188,12 @@
   gap: 6px;
 }
 
+.wb-bind-cell__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
 .wb-bind-item__name {
   max-width: 160px;
   overflow: hidden;

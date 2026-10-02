@@ -108,14 +108,26 @@
     );
   }
 
-  /** 形象资产单元格：已绑定的资产与“选择资产”。 */
+  /** 形象资产单元格：已绑定的资产与“选择资产”“新建资产”。 */
   function renderVisualCell(entity) {
     return aiUi.h(
       'div',
       { class: 'wb-bind-cell' },
       entity.visual.length === 0 ? aiUi.h('span', { class: 'status-warning', text: '未绑定' }) : entity.visual.map((item) => renderItem(item, entity.visual.length)),
-      aiUi.button({ text: entity.visual.length === 0 ? '选择资产' : '再选一个', compact: true, ariaLabel: `为${entity.name}选择资产`, onClick: () => pickVisual(entity) }).element
+      aiUi.h(
+        'div',
+        { class: 'wb-bind-cell__actions' },
+        aiUi.button({ text: entity.visual.length === 0 ? '选择资产' : '再选一个', compact: true, ariaLabel: `为${entity.name}选择资产`, onClick: () => pickVisual(entity) }).element,
+        aiUi.button({ text: '新建资产', compact: true, ariaLabel: `按${entity.name}的设定新建${entity.kindLabel}资产`, onClick: () => void createAsset(entity) }).element
+      )
     );
+  }
+
+  /** 按实体设定预填新建资产，保存后自动绑定为该实体的形象。 */
+  async function createAsset(entity) {
+    if (!session) return;
+    const saved = await window.aiForm.open({ form: 'asset.create', params: { episodeId: session.episodeId, entityId: entity.entityId } });
+    if (saved) await refresh();
   }
 
   /** 音色参考单元格：只有角色有；一个实体使用一个音色，更换时替换原来的。 */

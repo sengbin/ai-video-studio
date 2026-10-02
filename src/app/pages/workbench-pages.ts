@@ -7,11 +7,14 @@
 // 备注：请求处理在 workbench-handlers.ts；页内“重新生成分镜脚本”表单复用分镜表单目录，开始后产出层自己刷新，不需要额外跳转。
 // ------------------------------------------------------------------------
 
+import { createAssetFormCatalog } from '../forms/asset-form';
+import { FormCatalog } from '../forms/form-definition';
 import { registerFormHandlers } from '../forms/form-handlers';
 import { createStoryboardFormCatalog } from '../forms/storyboard-form';
 import { MessageRouter } from '../messaging/message-router';
 import { WORKBENCH_PAGE_RESOURCES } from '../panels/page-resources';
 import { PanelManager } from '../panels/panel-manager';
+import { AssetPromptService } from '../services/asset-prompt-service';
 import { AssetService } from '../services/asset-service';
 import { ProjectService } from '../services/project-service';
 import { STAGE_EVENTS } from './stage-handlers';
@@ -26,6 +29,7 @@ const WORKBENCH_DESCRIPTION = '按镜头组为已确认的分镜脚本生成视�
 export interface WorkbenchPageServices extends WorkbenchServices {
   readonly projects: ProjectService;
   readonly assets: AssetService;
+  readonly prompts: AssetPromptService;
 }
 
 /** 工作台页的入口。 */
@@ -41,11 +45,15 @@ export class WorkbenchPages {
     if (this.panels.reveal(WORKBENCH_PANEL_KEY)) {
       return;
     }
-    const { generation, profiles, bindings, assets, works, stages, projects, storyboards } = this.services;
+    const { generation, profiles, bindings, assets, prompts, works, stages, projects, storyboards } = this.services;
     const router = new MessageRouter();
     registerWorkbenchHandlers(router, this.services, this.host);
-    // 产出层里的“重新生成”会弹出分镜表单；作品和集都已确定，开始后产出层随阶段事件自行刷新。
-    registerFormHandlers(router, createStoryboardFormCatalog({ projects, works, storyboards, onStarted: () => undefined, onPicked: () => undefined }));
+    // 产出层里的“重新生成”会弹出分镜表单（作品和集都已确定，开始后产出层随阶段事件自行刷新）；实体绑定页的“新建资产”弹出资产表单。路由器只能注册一次表单请求，因此合并两个目录。
+    const catalog: FormCatalog = new Map([
+      ...createStoryboardFormCatalog({ projects, works, storyboards, onStarted: () => undefined, onPicked: () => undefined }),
+      ...createAssetFormCatalog({ projects, assets, prompts, entities: bindings })
+    ]);
+    registerFormHandlers(router, catalog);
 
     const panel = this.panels.open({
       key: WORKBENCH_PANEL_KEY,

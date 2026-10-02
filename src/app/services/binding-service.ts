@@ -12,6 +12,7 @@ import { ASSET_KINDS, AssetListItem, AssetRecord, AssetThumbnail } from '../../d
 import {
   BINDING_PURPOSES,
   BindingContext,
+  BindingEntityDetail,
   BindingPurpose,
   BindingRecord,
   BindingSuggestion
@@ -91,6 +92,18 @@ export class BindingService {
   /** 列出一集的全部绑定。 */
   listBindings(episodeId: number): BindingRecord[] {
     return this.bindings.listByEpisode(episodeId);
+  }
+
+  /**
+   * 读取集内一个实体的设定，用于从实体预填新建资产。
+   * @throws NotFoundError 集或实体不存在，或实体不属于这一集所在的作品。
+   */
+  getEntityDetail(episodeId: number, entityId: number): BindingEntityDetail {
+    const detail = this.bindings.findEntityDetail(episodeId, entityId);
+    if (detail === undefined) {
+      throw new NotFoundError(NOT_FOUND_MESSAGE);
+    }
+    return detail;
   }
 
   /**

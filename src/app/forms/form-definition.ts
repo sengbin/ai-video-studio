@@ -12,6 +12,15 @@ import { FormSchema } from './form-schema';
 /** 表单提交的值：字段键到文本。 */
 export type FormValues = Readonly<Record<string, string>>;
 
+/**
+ * 表单动作：根据当前字段值异步计算需要回填的字段值，不改变会话状态。
+ * @param values 表单当前值。
+ * @param signal 取消信号，用户点“取消”或关闭表单时触发。
+ * @returns 字段键到新值。
+ * @throws ValidationError、TextGenerationError 等领域错误。
+ */
+export type FormAction = (values: FormValues, signal: AbortSignal) => Promise<FormValues>;
+
 /** 一个具体表单的定义。 */
 export interface FormDefinition {
   readonly schema: FormSchema;
@@ -22,6 +31,8 @@ export interface FormDefinition {
    * @returns 错误提示；没有问题返回 undefined。
    */
   checkField?(key: string, value: string): string | undefined;
+  /** 字段动作，键与 schema.actions 一致。 */
+  readonly actions?: Readonly<Record<string, FormAction>>;
   /**
    * 提交表单，可以是异步的（例如需要先确认 Copilot 可用）；完成前表单会话保持有效。
    * @throws ValidationError、ConflictError 等领域错误。

@@ -90,6 +90,19 @@ test('编辑表单：初始值来自项目，未设置的选项为空串', () =>
   }
 });
 
+test('编辑表单：旧版本保存的小写分辨率对应到大写选项', () => {
+  const { database, service } = createService();
+  try {
+    const project = service.createProject({ name: '灯塔计划', defaultResolution: '480P' });
+    database.prepare('UPDATE projects SET default_resolution = ? WHERE id = ?').run('480p', project.id);
+    const form = createEditProjectForm(service, service.getProject(project.id));
+
+    assert.equal(form.initialValues.defaultResolution, '480P');
+  } finally {
+    database.close();
+  }
+});
+
 test('编辑表单：保留自身名称可提交，与其他项目重名被拒绝，检查时排除自身', () => {
   const { database, service } = createService();
   try {

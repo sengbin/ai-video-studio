@@ -7,7 +7,7 @@
 // 备注：同步调用；同一（集，实体，用途）下最多一条主资产，由仓库在新增、删除、切换时维护。
 // ------------------------------------------------------------------------
 
-import { BindingContext, BindingEntityCandidate, BindingRecord, NewBinding } from '../models/binding';
+import { BindingContext, BindingEntityCandidate, BindingEntityDetail, BindingRecord, NewBinding } from '../models/binding';
 
 /** 实体绑定的数据访问接口。 */
 export interface BindingRepository {
@@ -17,6 +17,8 @@ export interface BindingRepository {
   findById(id: number): BindingRecord | undefined;
   /** 读取绑定校验的上下文；集或实体不存在，或实体不属于该集所在的作品时返回 undefined。 */
   findContext(episodeId: number, entityId: number): BindingContext | undefined;
+  /** 读取实体的设定（含所属项目）；集或实体不存在，或实体不属于该集所在的作品时返回 undefined。 */
+  findEntityDetail(episodeId: number, entityId: number): BindingEntityDetail | undefined;
   /** 查找一集内某实体与某资产的绑定（任意用途）；没有返回 undefined。 */
   findExisting(episodeId: number, entityId: number, assetId: number): BindingRecord | undefined;
   /** 新增绑定并返回标识；该实体在本集、该用途下还没有绑定时自动成为主资产。 */

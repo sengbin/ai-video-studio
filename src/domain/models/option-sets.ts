@@ -22,7 +22,7 @@ export const VISUAL_STYLE_OPTIONS: readonly string[] = [
 export const VIDEO_ASPECT_RATIO_OPTIONS: readonly string[] = ['16:9', '9:16', '1:1', '4:3', '3:4'];
 
 /** 视频分辨率的通用选项。 */
-export const VIDEO_RESOLUTION_OPTIONS: readonly string[] = ['480p', '720p', '1080p'];
+export const VIDEO_RESOLUTION_OPTIONS: readonly string[] = ['480P', '720P', '1080P'];
 
 /** 创意题材预置项；题材允许自定义，不限于此列表。 */
 export const GENRE_OPTIONS: readonly string[] = ['悬疑', '爱情', '科幻', '奇幻', '喜剧', '现实题材', '历史', '武侠', '冒险', '恐怖'];

@@ -111,7 +111,7 @@ erDiagram
 | `description` | 文本 | 是 | 空串 | 项目描述 |
 | `visual_style` | 文本 | 否 | | 项目视觉风格，资产和分镜脚本默认沿用 |
 | `default_aspect_ratio` | 文本 | 否 | | 默认画幅，如 `16:9` |
-| `default_resolution` | 文本 | 否 | | 默认分辨率，如 `1080p` |
+| `default_resolution` | 文本 | 否 | | 默认分辨率，如 `1080P` |
 | `created_at` | 文本 | 是 | | 创建时间 |
 | `updated_at` | 文本 | 是 | | 更新时间 |
 

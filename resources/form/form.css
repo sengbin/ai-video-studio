@@ -21,6 +21,19 @@
   outline-offset: 0;
 }
 
+/* 字段动作按钮（如“生成提示词”）：在目标字段之前，失败原因显示在按钮右侧 */
+.form-action {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 6px;
+}
+
+.form-action__message {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 /* 按钮跟在最后一个字段下面，随表单内容滚动，不固定在弹出页面底部 */
 .form-actions {
   display: flex;

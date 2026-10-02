@@ -11,11 +11,11 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { ValidationError } from '../../domain/errors';
 import { MessageRouter } from '../messaging/message-router';
-import { FormCatalog, FormDefinition, FormValues } from './form-definition';
+import { FormAction, FormCatalog, FormDefinition, FormValues } from './form-definition';
 import { FORM_REQUESTS, registerFormHandlers } from './form-handlers';
 
 /** 创建路由器与一个名为 `demo` 的表单；返回提交记录与发送请求的函数。 */
-function createFixture(options: { submit?: (values: FormValues) => void | Promise<void> } = {}) {
+function createFixture(options: { submit?: (values: FormValues) => void | Promise<void>; action?: FormAction } = {}) {
   const submittedValues: FormValues[] = [];
   const openedParams: unknown[] = [];
   const catalog: FormCatalog = new Map([
@@ -30,6 +30,7 @@ function createFixture(options: { submit?: (values: FormValues) => void | Promis
             fields: [{ key: 'name', label: '项目名称', description: '项目的名称', control: 'text', required: true }]
           },
           initialValues: { name: '' },
+          actions: options.action === undefined ? undefined : { fill: options.action },
           checkField: (key, value) => (key === 'name' && value === '重名' ? '已存在同名项目。' : undefined),
           submit:
             options.submit ??
@@ -179,3 +180,71 @@ test('检查与提交需要有效的会话标识', async () => {
     assert.ok(response && !response.ok && response.error.kind === 'not-found', `载荷 ${JSON.stringify(payload)} 应被拒绝`);
   }
 });
+
+test('表单动作：用会话内的定义执行，返回回填值；同一动作进行中不能重复执行', async () => {
+  let release: () => void = () => undefined;
+  const received: Array<Readonly<Record<string, string>>> = [];
+  const { send, open } = createFixture({
+    action: async (values) => {
+      received.push(values);
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      return { name: '生成的名称' };
+    }
+  });
+  const formId = await open();
+  const first = send(FORM_REQUESTS.action, { formId, action: 'fill', values: { name: '草稿' } });
+  const second = await send(FORM_REQUESTS.action, { formId, action: 'fill', values: { name: '草稿' } });
+  assert.ok(second && !second.ok && second.error.kind === 'validation');
+
+  release();
+  const done = await first;
+  assert.deepEqual(done?.ok && done.data, { values: { name: '生成的名称' } });
+  assert.deepEqual(received, [{ name: '草稿' }]);
+
+  // 结束后可以再次执行。
+  const again = send(FORM_REQUESTS.action, { formId, action: 'fill', values: { name: '再来' } });
+  release();
+  assert.ok((await again)?.ok);
+});
+
+test('表单动作：未登记的动作、非文本的值被拒绝', async () => {
+  const { send, open } = createFixture({ action: async () => ({}) });
+  const formId = await open();
+  const unknown = await send(FORM_REQUESTS.action, { formId, action: 'missing', values: {} });
+  assert.ok(unknown && !unknown.ok && unknown.error.kind === 'validation');
+  const notText = await send(FORM_REQUESTS.action, { formId, action: 'fill', values: { name: 1 } });
+  assert.ok(notText && !notText.ok);
+  const noSession = await send(FORM_REQUESTS.action, { formId: 999, action: 'fill', values: {} });
+  assert.ok(noSession && !noSession.ok && noSession.error.kind === 'not-found');
+});
+
+test('取消动作与关闭表单：触发动作的取消信号；动作失败时错误按类型返回', async () => {
+  const signals: AbortSignal[] = [];
+  const { send, open } = createFixture({
+    action: (_values, signal) => {
+      signals.push(signal);
+      return new Promise((_resolve, reject) => {
+        signal.addEventListener('abort', () => reject(new ValidationError({ name: '已取消。' })), { once: true });
+      });
+    }
+  });
+
+  const formId = await open();
+  const running = send(FORM_REQUESTS.action, { formId, action: 'fill', values: {} });
+  assert.ok((await send(FORM_REQUESTS.cancelAction, { formId, action: 'fill' }))?.ok);
+  const canceled = await running;
+  assert.ok(canceled && !canceled.ok && canceled.error.kind === 'validation');
+  assert.equal(signals[0].aborted, true);
+  // 没有进行中的动作时取消不报错。
+  assert.ok((await send(FORM_REQUESTS.cancelAction, { formId, action: 'fill' }))?.ok);
+
+  const secondId = await open();
+  const pending = send(FORM_REQUESTS.action, { formId: secondId, action: 'fill', values: {} });
+  assert.ok((await send(FORM_REQUESTS.close, { formId: secondId }))?.ok);
+  await pending;
+  assert.equal(signals[1].aborted, true, '关闭表单时中止仍在运行的动作');
+});
+
+

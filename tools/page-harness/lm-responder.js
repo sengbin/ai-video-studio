@@ -59,6 +59,10 @@ function createResponder() {
       const seq = Number(chapter[1]);
       return JSON.stringify({ title: `第${seq}章 示例`, content: makeContent(readMinWords(text), seq) });
     }
+    if (text.includes('# 任务：撰写资产参考图的图像生成提示词')) {
+      const name = /名称：(.+)/.exec(text)?.[1] ?? '资产';
+      return JSON.stringify({ promptZh: `${name}的参考图，主体清晰居中，背景简洁，光线柔和。`, promptEn: `Reference image of ${name}, clear centered subject, clean background, soft light.` });
+    }
     if (text.includes('# 任务：撰写剧本包')) {
       return JSON.stringify({
         title: '雨夜来客',

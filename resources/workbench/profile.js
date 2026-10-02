@@ -26,6 +26,12 @@
   /** 当前打开的参数页；没有打开时为 null。 */
   let dialog = null;
 
+  /** 在选项里找与值相同的一项（忽略大小写，兼容旧版本保存的小写分辨率），返回选项里的写法；没有则返回 undefined。 */
+  function matchOption(options, value) {
+    const text = String(value).toLowerCase();
+    return options.find((option) => String(option).toLowerCase() === text);
+  }
+
   /** 在模型支持的值里选一个：当前值有效就用当前值，否则用偏好值或第一个。 */
   function pickDefault(values, preferred) {
     return preferred && values.includes(preferred) ? preferred : values[0] || '';
@@ -56,8 +62,9 @@
         return;
       }
       if (stored[field] !== null) {
-        values[field] = stored[field];
-        if (!options.includes(stored[field])) issues[field] = `${label}“${AUDIO_MODE_LABELS[stored[field]] || stored[field]}”超出所选模型范围，请重新选择。`;
+        const matched = matchOption(options, stored[field]);
+        values[field] = matched === undefined ? stored[field] : matched;
+        if (matched === undefined) issues[field] = `${label}“${AUDIO_MODE_LABELS[stored[field]] || stored[field]}”超出所选模型范围，请重新选择。`;
         return;
       }
       values[field] = pickDefault(options, preferred);
@@ -109,7 +116,9 @@
     fieldsElement.textContent = '';
 
     const addField = (field, label, options, note) => {
-      const current = storedValue(values, field);
+      const stored = storedValue(values, field);
+      const matched = stored === '' ? undefined : options.find((option) => option.value.toLowerCase() === stored.toLowerCase());
+      const current = matched === undefined ? stored : matched.value;
       const select = aiUi.select({
         options: withStoredOption(options, current, note),
         value: current,

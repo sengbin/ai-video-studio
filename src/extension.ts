@@ -17,6 +17,7 @@ import { WorkListPages } from './app/pages/work-list-pages';
 import { WorkbenchPages } from './app/pages/workbench-pages';
 import { PanelManager } from './app/panels/panel-manager';
 import { JobChange, JobQueue } from './app/queue/job-queue';
+import { AssetPromptService } from './app/services/asset-prompt-service';
 import { AssetService } from './app/services/asset-service';
 import { BindingService } from './app/services/binding-service';
 import { ChangeNotifier } from './app/services/change-notifier';
@@ -90,6 +91,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const storyboards = new SqliteStoryboardRepository(database);
   const settingsStore = new VsCodeTextGenerationSettings();
   const prompts = new FilePromptTemplates(vscode.Uri.joinPath(context.extensionUri, 'resources', 'prompts').fsPath);
+  const textGeneration = new CopilotTextGeneration(settingsStore);
 
   // 应用服务。
   const projectService = new ProjectService(new SqliteProjectRepository(database));
@@ -97,7 +99,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const stageChanges = new ChangeNotifier<StageChange>();
   const runner = new StageRunner({
     runs,
-    text: new CopilotTextGeneration(settingsStore),
+    text: textGeneration,
     workflows: [
       new CreativeWorkflow({
         chapters,
@@ -126,6 +128,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const textSettingsService = new TextSettingsService(settingsStore, new CopilotModelCatalog());
   const assetRepository = new SqliteAssetRepository(database);
   const assetService = new AssetService(assetRepository, projectService);
+  const assetPromptService = new AssetPromptService({ text: textGeneration, prompts, projects: projectService });
   const bindingService = new BindingService(new SqliteBindingRepository(database), assetRepository);
   const providerRepository = new SqliteProviderRepository(database);
   const providerService = new ProviderService({
@@ -185,10 +188,10 @@ export function activate(context: vscode.ExtensionContext): void {
   };
   const projectPages = new ProjectPages(projectService, panels);
   const workListPages = new WorkListPages(services, panels);
-  const assetListPages = new AssetListPages({ projects: projectService, assets: assetService }, panels);
+  const assetListPages = new AssetListPages({ projects: projectService, assets: assetService, prompts: assetPromptService }, panels);
   const settingsPages = new SettingsPages({ text: textSettingsService, providers: providerService }, panels);
   const workbenchPages = new WorkbenchPages(
-    { generation: generationService, profiles: profileService, bindings: bindingService, assets: assetService, ...services },
+    { generation: generationService, profiles: profileService, bindings: bindingService, assets: assetService, prompts: assetPromptService, ...services },
     // 结果视频用系统默认的视频播放器打开。
     { openFile: async (absolutePath) => void (await vscode.env.openExternal(vscode.Uri.file(absolutePath))) },
     panels

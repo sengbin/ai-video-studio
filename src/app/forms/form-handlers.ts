@@ -4,7 +4,7 @@
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-09-30
-// 备注：不依赖 VS Code；表单在页面内以弹出页面显示，未保存修改的确认在页面完成，宿主只维护会话。
+// 备注：不依赖 VS Code；表单在页面内以弹出页面显示，未保存修改的确认在页面完成，宿主只维护会话；表单动作在会话内执行，表单关闭时中止仍在运行的动作。
 // ------------------------------------------------------------------------
 
 import { FORM_LEVEL_ERROR_KEY, NotFoundError, ValidationError } from '../../domain/errors';
@@ -17,11 +17,20 @@ export const FORM_REQUESTS = {
   open: 'form.open',
   checkField: 'form.checkField',
   submit: 'form.submit',
+  action: 'form.action',
+  cancelAction: 'form.cancelAction',
   close: 'form.close'
 } as const;
 
 /** 表单会话失效（已提交或已关闭）时的提示。 */
 const SESSION_EXPIRED_MESSAGE = '表单已失效，请重新打开。';
+const ACTION_RUNNING_MESSAGE = '正在执行，请等待完成或取消。';
+
+/** 一次打开的表单会话：定义与正在运行的动作（动作键到取消控制器）。 */
+interface FormSession {
+  readonly definition: FormDefinition;
+  readonly running: Map<string, AbortController>;
+}
 
 /**
  * 在路由器上注册表单相关的全部请求处理函数。
@@ -30,16 +39,24 @@ const SESSION_EXPIRED_MESSAGE = '表单已失效，请重新打开。';
  * @param catalog 页面可以打开的表单目录。
  */
 export function registerFormHandlers(router: MessageRouter, catalog: FormCatalog): void {
-  const sessions = new Map<number, FormDefinition>();
+  const sessions = new Map<number, FormSession>();
   let nextFormId = 1;
 
-  const findSession = (payload: unknown): { formId: number; definition: FormDefinition } => {
+  const findSession = (payload: unknown): { formId: number; definition: FormDefinition; running: Map<string, AbortController> } => {
     const formId = readRecord(payload).formId;
-    const definition = typeof formId === 'number' ? sessions.get(formId) : undefined;
-    if (typeof formId !== 'number' || definition === undefined) {
+    const session = typeof formId === 'number' ? sessions.get(formId) : undefined;
+    if (typeof formId !== 'number' || session === undefined) {
       throw new NotFoundError(SESSION_EXPIRED_MESSAGE);
     }
-    return { formId, definition };
+    return { formId, ...session };
+  };
+
+  /** 会话结束时中止仍在运行的动作并移除会话。 */
+  const endSession = (formId: number): void => {
+    for (const controller of sessions.get(formId)?.running.values() ?? []) {
+      controller.abort();
+    }
+    sessions.delete(formId);
   };
 
   router.register(FORM_REQUESTS.open, (payload) => {
@@ -50,7 +67,7 @@ export function registerFormHandlers(router: MessageRouter, catalog: FormCatalog
     }
     const definition = factory(source.params);
     const formId = nextFormId++;
-    sessions.set(formId, definition);
+    sessions.set(formId, { definition, running: new Map() });
     return { formId, schema: definition.schema, values: definition.initialValues };
   });
 
@@ -64,14 +81,40 @@ export function registerFormHandlers(router: MessageRouter, catalog: FormCatalog
   router.register(FORM_REQUESTS.submit, async (payload) => {
     const { formId, definition } = findSession(payload);
     await definition.submit(readFormValues(readRecord(payload).values));
-    sessions.delete(formId);
+    endSession(formId);
+    return {};
+  });
+
+  router.register(FORM_REQUESTS.action, async (payload) => {
+    const { definition, running } = findSession(payload);
+    const source = readRecord(payload);
+    const key = readString(source.action, 'action');
+    const action = definition.actions?.[key];
+    if (action === undefined) {
+      throw new ValidationError({ [FORM_LEVEL_ERROR_KEY]: '不支持的操作。' });
+    }
+    if (running.has(key)) {
+      throw new ValidationError({ [FORM_LEVEL_ERROR_KEY]: ACTION_RUNNING_MESSAGE });
+    }
+    const controller = new AbortController();
+    running.set(key, controller);
+    try {
+      return { values: await action(readFormValues(source.values), controller.signal) };
+    } finally {
+      running.delete(key);
+    }
+  });
+
+  router.register(FORM_REQUESTS.cancelAction, (payload) => {
+    const { running } = findSession(payload);
+    running.get(readString(readRecord(payload).action, 'action'))?.abort();
     return {};
   });
 
   router.register(FORM_REQUESTS.close, (payload) => {
     const formId = readRecord(payload).formId;
     if (typeof formId === 'number') {
-      sessions.delete(formId);
+      endSession(formId);
     }
     return {};
   });

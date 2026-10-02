@@ -13,6 +13,7 @@ import { registerFormHandlers } from '../forms/form-handlers';
 import { MessageRouter } from '../messaging/message-router';
 import { ASSET_LIST_PAGE_RESOURCES } from '../panels/page-resources';
 import { OpenedPanel, PanelManager } from '../panels/panel-manager';
+import { AssetPromptService } from '../services/asset-prompt-service';
 import { AssetService } from '../services/asset-service';
 import { ProjectService } from '../services/project-service';
 import { ASSET_LIST_EVENTS, AssetListRequest, registerAssetListHandlers } from './asset-list-handlers';
@@ -41,11 +42,15 @@ export class AssetListPages {
   private readonly opened = new Map<AssetKind, OpenedAssetList>();
 
   /**
-   * @param services 项目与资产服务。
+   * @param services 项目、资产与提示词生成服务。
    * @param panels 面板管理器。
    */
   constructor(
-    private readonly services: { readonly projects: ProjectService; readonly assets: AssetService },
+    private readonly services: {
+      readonly projects: ProjectService;
+      readonly assets: AssetService;
+      readonly prompts: AssetPromptService;
+    },
     private readonly panels: PanelManager
   ) {}
 
@@ -64,7 +69,7 @@ export class AssetListPages {
       return;
     }
 
-    const { projects, assets } = this.services;
+    const { projects, assets, prompts } = this.services;
     const entry: OpenedAssetList = { panel: undefined, pending: request };
     const router = new MessageRouter();
     registerAssetListHandlers(router, kind, this.services, {
@@ -74,7 +79,7 @@ export class AssetListPages {
         return taken;
       }
     });
-    registerFormHandlers(router, createAssetFormCatalog({ projects, assets }));
+    registerFormHandlers(router, createAssetFormCatalog({ projects, assets, prompts }));
 
     const panel = this.panels.open({
       key,

@@ -9,7 +9,14 @@
 
 import type { DatabaseSync } from 'node:sqlite';
 import { AssetKind } from '../../domain/models/asset';
-import { BindingContext, BindingEntityCandidate, BindingPurpose, BindingRecord, NewBinding } from '../../domain/models/binding';
+import {
+  BindingContext,
+  BindingEntityCandidate,
+  BindingEntityDetail,
+  BindingPurpose,
+  BindingRecord,
+  NewBinding
+} from '../../domain/models/binding';
 import { EntityKind } from '../../domain/models/screenplay';
 import { BindingRepository } from '../../domain/ports/binding-repository';
 import { runInTransaction } from './transaction';
@@ -78,6 +85,29 @@ export class SqliteBindingRepository implements BindingRepository {
       )
       .get(episodeId, entityId) as unknown as { project_id: number; kind: EntityKind; name: string } | undefined;
     return row === undefined ? undefined : { projectId: row.project_id, entityKind: row.kind, entityName: row.name };
+  }
+
+  findEntityDetail(episodeId: number, entityId: number): BindingEntityDetail | undefined {
+    const row = this.database
+      .prepare(
+        `SELECT w.project_id, se.kind, se.name, se.description, se.attributes_json
+           FROM episodes e
+           JOIN works w ON w.id = e.work_id
+           JOIN script_entities se ON se.work_id = e.work_id
+          WHERE e.id = ? AND se.id = ?`
+      )
+      .get(episodeId, entityId) as unknown as
+      | { project_id: number; kind: EntityKind; name: string; description: string; attributes_json: string }
+      | undefined;
+    return row === undefined
+      ? undefined
+      : {
+          projectId: row.project_id,
+          kind: row.kind,
+          name: row.name,
+          description: row.description,
+          attributes: JSON.parse(row.attributes_json) as Record<string, string>
+        };
   }
 
   findExisting(episodeId: number, entityId: number, assetId: number): BindingRecord | undefined {
