@@ -15,7 +15,7 @@ import { WorkKind, WorkSourceType } from '../../domain/models/work';
 import { ScreenplayRepository } from '../../domain/ports/screenplay-repository';
 import { StageRunRepository } from '../../domain/ports/stage-run-repository';
 import { StoryboardRepository } from '../../domain/ports/storyboard-repository';
-import { readRecord } from '../../domain/rules/field-readers';
+import { readMoveStep, readRecord } from '../../domain/rules/field-readers';
 import { canApprove, canCancel, canRetry, isStale, toDisplayStatus } from '../../domain/rules/stage-review-rules';
 import { MAX_SHOTS_LIMIT, normalizeShotEdit, normalizeStoryboardParams } from '../../domain/rules/storyboard-rules';
 import { groupMaxSecondsOf, sumSeconds } from '../../domain/rules/shot-group-rules';
@@ -357,10 +357,7 @@ export class StoryboardService {
     const { storyboards } = this.dependencies;
     this.dependencies.stages.editLatest(runId, (run) => {
       const source = readRecord(rawInput);
-      const step = source.direction === 'up' ? -1 : source.direction === 'down' ? 1 : 0;
-      if (step === 0) {
-        throw new ValidationError({ [FORM_LEVEL_ERROR_KEY]: '移动方向不合法。' });
-      }
+      const step = readMoveStep(source);
       const shots = storyboards.listShots(run.id);
       const index = shots.findIndex((candidate) => candidate.id === source.ref);
       if (index < 0) {

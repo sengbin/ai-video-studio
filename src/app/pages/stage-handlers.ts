@@ -29,6 +29,7 @@ export const STAGE_REQUESTS = {
   saveShot: 'stage.saveShot',
   addEpisode: 'stage.addEpisode',
   deleteEpisode: 'stage.deleteEpisode',
+  moveEpisode: 'stage.moveEpisode',
   addEntity: 'stage.addEntity',
   deleteEntity: 'stage.deleteEntity',
   addShot: 'stage.addShot',
@@ -139,6 +140,8 @@ export function registerStageHandlers(
     screenplays.deleteEpisode(readOwnRunId(payload), payload);
     return { deleted: true };
   });
+
+  router.register(STAGE_REQUESTS.moveEpisode, (payload) => ({ ref: screenplays.moveEpisode(readOwnRunId(payload), payload) }));
 
   router.register(STAGE_REQUESTS.addEntity, (payload) => ({ ref: screenplays.addEntity(readOwnRunId(payload), payload) }));
 

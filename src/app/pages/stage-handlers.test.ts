@@ -192,6 +192,8 @@ test('新增与删除：实体、镜头经请求完成并返回定位值；单�
     assert.ok(addEpisode && !addEpisode.ok && addEpisode.error.kind === 'validation');
     const deleteEpisode = await sendStage(STAGE_REQUESTS.deleteEpisode, { id: screenplay.id, ref: 0 }, 'screenplay');
     assert.ok(deleteEpisode && !deleteEpisode.ok && deleteEpisode.error.kind === 'validation');
+    const moveEpisode = await sendStage(STAGE_REQUESTS.moveEpisode, { id: screenplay.id, ref: 0, direction: 'down' }, 'screenplay');
+    assert.ok(moveEpisode && !moveEpisode.ok && moveEpisode.error.kind === 'validation');
 
     stages.approve(screenplay.id);
     const [episode] = storyboards.listEpisodeStatuses(work.id);

@@ -46,6 +46,8 @@ export interface ScreenplayRepository {
   insertEpisode(workId: number, edit: EpisodeEdit, timestamp: string): number;
   /** 删除作品的一集（连同它的分镜脚本、绑定等下游数据），后面的集序号依次前移；集不存在时返回 false。 */
   deleteEpisode(workId: number, episodeId: number): boolean;
+  /** 互换作品中两集的序号（集的标识、分镜脚本、绑定等下游数据跟着集走）；任一集不存在返回 false。 */
+  swapEpisodes(workId: number, episodeId: number, otherEpisodeId: number, timestamp: string): boolean;
   /**
    * 新增作品的一个实体，返回实体标识。
    * @throws ConflictError 同类型下名称重复。

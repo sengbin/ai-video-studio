@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：stage-screenplay.js
-// 说明：剧本阶段的产出内容：左侧列表（剧本包正文、集、实体）、右侧编辑区、集与实体的新增和删除、重新抽取，以及生成结束后的汇总。
+// 说明：剧本阶段的产出内容：左侧列表（剧本包正文、集、实体）、右侧编辑区、集与实体的新增和删除、集的上移下移、重新抽取，以及生成结束后的汇总。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
@@ -15,6 +15,7 @@
   const REQUEST_SAVE_ENTITY = 'stage.saveEntity';
   const REQUEST_ADD_EPISODE = 'stage.addEpisode';
   const REQUEST_DELETE_EPISODE = 'stage.deleteEpisode';
+  const REQUEST_MOVE_EPISODE = 'stage.moveEpisode';
   const REQUEST_ADD_ENTITY = 'stage.addEntity';
   const REQUEST_DELETE_ENTITY = 'stage.deleteEntity';
   const REQUEST_REEXTRACT = 'stage.reextract';
@@ -317,6 +318,29 @@
       }
     }
 
+    /** 把当前的集与前一集（up）或后一集（down）互换位置；有未保存的修改时先确认放弃，已确认的版本先提示会回到待确认。 */
+    async function moveEpisode(direction) {
+      const view = context.getView();
+      if (!(await context.confirmDiscard())) return;
+      if (view.actions.editNeedsConfirm) {
+        const confirmed = await aiUi.confirm({
+          title: '调整集的顺序',
+          message: '该版本已确认采用。调整顺序后将回到待确认，需要重新确认。',
+          confirmText: '调整',
+          cancelText: '取消'
+        });
+        if (!confirmed) return;
+      }
+      const result = await context.runAction(REQUEST_MOVE_EPISODE, { id: view.run.id, ref: selection.ref, direction });
+      if (result) {
+        editorDirty = false;
+        // 未合并时定位值是抽取结果中的位置，要跟着集走。
+        selection = { type: TYPE_EPISODE, ref: result.ref };
+        await context.reload();
+        context.showMessage('已调整顺序。', false);
+      }
+    }
+
     /** 用当前正文重新抽取集和实体。 */
     async function reextract() {
       if (!(await context.confirmDiscard())) return;
@@ -372,8 +396,13 @@
       const reason = readonlyReason(view);
       // 单个短视频只有 1 集，不能删除。
       const canRemove = canEdit && !isNew && selection.type !== TYPE_TEXT && !(selection.type === TYPE_EPISODE && view.work.kind === 'single');
+      // 只有多集的已有集可以调整顺序。
+      const canMove = canEdit && !isNew && selection.type === TYPE_EPISODE && view.work.kind !== 'single';
+      const episodeIndex = view.episodes.findIndex((episode) => episode.ref === selection.ref);
       const actions = [
         canEdit ? saveButton.element : null,
+        canMove ? aiUi.button({ text: '上移', disabled: episodeIndex === 0, onClick: () => void moveEpisode('up') }).element : null,
+        canMove ? aiUi.button({ text: '下移', disabled: episodeIndex === view.episodes.length - 1, onClick: () => void moveEpisode('down') }).element : null,
         canEdit && selection.type === TYPE_TEXT && view.actions.canReextract
           ? aiUi.button({ text: '重新抽取', onClick: () => void reextract() }).element
           : null,

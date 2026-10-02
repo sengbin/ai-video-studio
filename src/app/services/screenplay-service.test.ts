@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：screenplay-service.test.ts
-// 说明：剧本阶段应用服务的自动化测试：生成、视图、编辑保存、确认时合并集和实体、合并后的编辑、重新抽取、上游变更与失败后继续。
+// 说明：剧本阶段应用服务的自动化测试：生成、视图、编辑保存、确认时合并集和实体、合并后的编辑、调整集的顺序、重新抽取、上游变更与失败后继续。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
@@ -296,6 +296,63 @@ test('新增与删除（合并前）：改的是抽取结果，序号重排，�
     assert.equal(single.screenplays.getView(single.work.id).entities.length, 3);
   } finally {
     single.database.close();
+  }
+});
+
+test('调整集的顺序（合并前）：互换抽取结果中的位置并重排序号，返回新位置；边界、单个短视频、不存在的集被拒绝', async () => {
+  const fixture = await createFixture('多集短片', twoCharacters);
+  const { database, screenplays, runs, work } = fixture;
+  try {
+    const run = await screenplays.start(work.id, PARAMS);
+    await fixture.runner.whenIdle();
+    const revision = runs.findById(run.id)!.revision;
+
+    assert.equal(screenplays.moveEpisode(run.id, { ref: 0, direction: 'down' }), 1);
+    assert.deepEqual(screenplays.getView(work.id).episodes.map((episode) => [episode.ref, episode.seq, episode.title]), [[0, 1, '第二集'], [1, 2, '第一集']]);
+    assert.equal(screenplays.moveEpisode(run.id, { ref: 1, direction: 'up' }), 0);
+    assert.deepEqual(screenplays.getView(work.id).episodes.map((episode) => episode.title), ['第一集', '第二集']);
+    assert.equal(runs.findById(run.id)!.revision, revision + 2);
+
+    assert.throws(() => screenplays.moveEpisode(run.id, { ref: 0, direction: 'up' }), /已经是第一集/);
+    assert.throws(() => screenplays.moveEpisode(run.id, { ref: 1, direction: 'down' }), /已经是最后一集/);
+    assert.throws(() => screenplays.moveEpisode(run.id, { ref: 0, direction: 'left' }), ValidationError);
+    assert.throws(() => screenplays.moveEpisode(run.id, { ref: 9, direction: 'up' }), NotFoundError);
+    assert.equal(runs.findById(run.id)!.revision, revision + 2, '被拒绝的操作不改变修订号');
+    assert.equal(database.prepare('SELECT COUNT(*) AS n FROM episodes').get()?.n, 0, '确认前不影响作品的集');
+  } finally {
+    database.close();
+  }
+
+  const single = await createFixture('单个短视频');
+  try {
+    const run = await generate(single);
+    assert.throws(() => single.screenplays.moveEpisode(run.id, { ref: 0, direction: 'down' }), /单个短视频只有 1 集/);
+  } finally {
+    single.database.close();
+  }
+});
+
+test('调整集的顺序（合并后）：只互换作品中两集的序号，集的标识和分镜脚本跟着集走；版本回到待确认', async () => {
+  const fixture = await createFixture('多集短片', twoCharacters);
+  const { database, screenplays, storyboards, stages, runs, work } = fixture;
+  try {
+    const run = await screenplays.start(work.id, PARAMS);
+    await fixture.runner.whenIdle();
+    stages.approve(run.id);
+    const [first, second] = screenplays.getView(work.id).episodes;
+    await storyboards.start(work.id, [first.ref], {});
+    await fixture.runner.whenIdle();
+
+    assert.equal(screenplays.moveEpisode(run.id, { ref: first.ref, direction: 'down' }), first.ref, '合并后定位值是集标识，不变');
+    const rows = database.prepare('SELECT id, seq, title FROM episodes WHERE work_id = ? ORDER BY seq').all(work.id);
+    assert.deepEqual(rows.map((row) => [row.id, row.seq, row.title]), [[second.ref, 1, '第二集'], [first.ref, 2, '第一集']]);
+    assert.equal(database.prepare('SELECT COUNT(*) AS n FROM stage_runs WHERE episode_id = ?').get(first.ref)?.n, 1, '分镜脚本仍属于原来的集');
+    assert.equal(runs.findById(run.id)!.reviewStatus, 'pending');
+
+    assert.throws(() => screenplays.moveEpisode(run.id, { ref: first.ref, direction: 'down' }), /已经是最后一集/);
+    assert.throws(() => screenplays.moveEpisode(run.id, { ref: 9999, direction: 'up' }), NotFoundError);
+  } finally {
+    database.close();
   }
 });
 

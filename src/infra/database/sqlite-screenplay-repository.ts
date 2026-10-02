@@ -212,6 +212,23 @@ export class SqliteScreenplayRepository implements ScreenplayRepository {
     });
   }
 
+  swapEpisodes(workId: number, episodeId: number, otherEpisodeId: number, timestamp: string): boolean {
+    return runInTransaction(this.database, () => {
+      const read = this.database.prepare('SELECT seq FROM episodes WHERE id = ? AND work_id = ?');
+      const first = read.get(episodeId, workId) as unknown as { seq: number } | undefined;
+      const second = read.get(otherEpisodeId, workId) as unknown as { seq: number } | undefined;
+      if (first === undefined || second === undefined) {
+        return false;
+      }
+      // 序号有唯一约束，先把第一集移出范围再互换。
+      const update = this.database.prepare('UPDATE episodes SET seq = ?, updated_at = ? WHERE id = ?');
+      update.run(SEQ_SHIFT, timestamp, episodeId);
+      update.run(first.seq, timestamp, otherEpisodeId);
+      update.run(second.seq, timestamp, episodeId);
+      return true;
+    });
+  }
+
   insertEntity(workId: number, kind: EntityKind, edit: EntityEdit, timestamp: string): number {
     const duplicate = this.database
       .prepare('SELECT id FROM script_entities WHERE work_id = ? AND kind = ? AND name = ?')

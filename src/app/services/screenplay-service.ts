@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：screenplay-service.ts
-// 说明：剧本阶段应用服务：启动剧本生成、整理阶段产出页的视图、保存人工编辑的正文、集与实体、重新抽取。
+// 说明：剧本阶段应用服务：启动剧本生成、整理阶段产出页的视图、保存人工编辑的正文、集与实体，调整集的顺序、重新抽取。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
@@ -8,12 +8,12 @@
 // ------------------------------------------------------------------------
 
 import { FORM_LEVEL_ERROR_KEY, NotFoundError, ValidationError } from '../../domain/errors';
-import { ENTITY_ATTRIBUTES, ENTITY_KIND_LABELS, EntityKind, ScreenplayParams, ScreenplayStructure } from '../../domain/models/screenplay';
+import { ENTITY_ATTRIBUTES, ENTITY_KIND_LABELS, EntityKind, EpisodeRecord, ScreenplayParams, ScreenplayStructure } from '../../domain/models/screenplay';
 import { StageRun, StageTarget } from '../../domain/models/stage-run';
 import { WorkKind, WorkSourceType } from '../../domain/models/work';
 import { ScreenplayRepository } from '../../domain/ports/screenplay-repository';
 import { StageRunRepository } from '../../domain/ports/stage-run-repository';
-import { readRecord } from '../../domain/rules/field-readers';
+import { readMoveStep, readRecord } from '../../domain/rules/field-readers';
 import {
   MAX_ENTITIES,
   MAX_EPISODES_LIMIT,
@@ -347,6 +347,50 @@ export class ScreenplayService {
       const episodes = structure.episodes.filter((_, index) => index !== ref).map((episode, index) => ({ ...episode, seq: index + 1 }));
       screenplays.saveStructure(run.id, { ...structure, episodes }, this.timestamp());
     });
+  }
+
+  /**
+   * 把一集与前一集或后一集互换位置，并让该版本回到待确认。已合并的集只互换序号，分镜脚本、绑定等下游数据跟着集走；尚未合并的互换抽取结果中的位置。
+   * @param rawInput { ref, direction }，ref 取自视图，direction 为 'up' 或 'down'。
+   * @returns 被移动的集的新定位值（已合并时不变，未合并时为新的位置）。
+   * @throws ValidationError 方向不合法、单个短视频、已经在最前或最后、不是最新版本或生成尚未成功。
+   * @throws NotFoundError 记录或集不存在。
+   */
+  moveEpisode(runId: number, rawInput: unknown): number {
+    const { screenplays } = this.dependencies;
+    let newRef = -1;
+    this.dependencies.stages.editLatest(runId, (run) => {
+      const step = readMoveStep(readRecord(rawInput));
+      const ref = readRef(rawInput);
+      this.assertSeries(run.workId, '调整');
+      const boundary = step < 0 ? '已经是第一集，不能再前移。' : '已经是最后一集，不能再后移。';
+      if (run.appliedAt !== null) {
+        const episodes = screenplays.listEpisodes(run.workId);
+        const index = episodes.findIndex((episode) => episode.id === ref);
+        if (index < 0) {
+          throw new NotFoundError('集不存在。');
+        }
+        const other = episodes[index + step] as EpisodeRecord | undefined;
+        if (other === undefined) {
+          throw new ValidationError({ [FORM_LEVEL_ERROR_KEY]: boundary });
+        }
+        screenplays.swapEpisodes(run.workId, ref, other.id, this.timestamp());
+        newRef = ref;
+        return;
+      }
+      const structure = this.requireStructure(run.id);
+      if (structure.episodes[ref] === undefined) {
+        throw new NotFoundError('集不存在。');
+      }
+      if (structure.episodes[ref + step] === undefined) {
+        throw new ValidationError({ [FORM_LEVEL_ERROR_KEY]: boundary });
+      }
+      const reordered = [...structure.episodes];
+      [reordered[ref], reordered[ref + step]] = [reordered[ref + step], reordered[ref]];
+      screenplays.saveStructure(run.id, { ...structure, episodes: reordered.map((episode, index) => ({ ...episode, seq: index + 1 })) }, this.timestamp());
+      newRef = ref + step;
+    });
+    return newRef;
   }
 
   /**

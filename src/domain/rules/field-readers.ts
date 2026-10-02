@@ -47,6 +47,16 @@ export function readEntityId(rawInput: unknown, entityLabel: string): number {
 }
 
 /**
+ * 读取移动方向（键为 direction）：'up' 为 -1（前移），'down' 为 1（后移）；其他取值抛出校验错误。
+ * @param source 提交内容。
+ */
+export function readMoveStep(source: Record<string, unknown>): -1 | 1 {
+  if (source.direction === 'up') return -1;
+  if (source.direction === 'down') return 1;
+  throw new ValidationError({ [FORM_LEVEL_ERROR_KEY]: '移动方向不合法。' });
+}
+
+/**
  * 读取文本字段：去除首尾空白，校验必填与长度；缺省或空值按空串处理。
  * @param source 提交内容。
  * @param rule 字段规则。
