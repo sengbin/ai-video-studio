@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：generation-rules.test.ts
-// 说明：视频生成规则的自动化测试：提交请求的读取、时长调整、镜头编译为提示词与快照、失败原因说明。
+// 说明：视频生成规则的自动化测试：提交请求的读取、组时长对齐、镜头组编译为带时间段的提示词与快照、失败原因说明。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
@@ -14,7 +14,7 @@ import { GenerationParams } from '../models/generation';
 import { VideoCapability } from '../models/model-capability';
 import { ShotRecord, SoundRecord } from '../models/storyboard';
 import { FAKE_VIDEO_CAPABILITY } from '../ports/testing/fake-model-providers';
-import { EntityReferences, describeJobFailure, fitDuration, planShotRequest, readSubmitInput } from './generation-rules';
+import { EntityReferences, describeJobFailure, fitGroupDuration, formatTimestamp, maxGroupSeconds, planGroupRequest, readSubmitInput } from './generation-rules';
 
 const PARAMS: GenerationParams = { modelId: 1, aspectRatio: '16:9', resolution: '720P', audioMode: null };
 
@@ -44,41 +44,107 @@ function shot(overrides: Partial<ShotRecord> = {}): ShotRecord {
 }
 
 function plan(shotOverrides: Partial<ShotRecord>, entities: EntityReferences[] = [], capability: VideoCapability = FAKE_VIDEO_CAPABILITY, params = PARAMS) {
-  return planShotRequest({ shot: shot(shotOverrides), storyboardRunId: 3, providerCode: 'fake', modelCode: 'fake-video', capability, params, entities });
+  return planMany([shot(shotOverrides)], entities, capability, params);
+}
+
+function planMany(shots: ShotRecord[], entities: EntityReferences[] = [], capability: VideoCapability = FAKE_VIDEO_CAPABILITY, params = PARAMS) {
+  return planGroupRequest({ shots, storyboardRunId: 3, providerCode: 'fake', modelCode: 'fake-video', capability, params, entities });
 }
 
 const GUARD: EntityReferences = { entityId: 1, name: '守夜人', kind: 'character', visualFileId: 101, voiceFileId: null };
 
-test('读取提交请求：去重镜头，可选参数为空时取 null', () => {
-  const input = readSubmitInput({ workId: 1, episodeId: 2, shotIds: [5, 5, 6], params: { modelId: 3, aspectRatio: '', resolution: '720P' } });
-  assert.deepEqual(input, { workId: 1, episodeId: 2, shotIds: [5, 6], params: { modelId: 3, aspectRatio: null, resolution: '720P', audioMode: null } });
+test('读取提交请求：去重镜头组，可选参数为空时取 null', () => {
+  const input = readSubmitInput({ workId: 1, episodeId: 2, groupIds: [5, 5, 6], params: { modelId: 3, aspectRatio: '', resolution: '720P' } });
+  assert.deepEqual(input, { workId: 1, episodeId: 2, groupIds: [5, 6], params: { modelId: 3, aspectRatio: null, resolution: '720P', audioMode: null } });
 });
 
-test('读取提交请求：标识、镜头数量、声音模式不合法时报错', () => {
-  const base = { workId: 1, episodeId: 2, shotIds: [5], params: { modelId: 3 } };
+test('读取提交请求：标识、镜头组数量、声音模式不合法时报错', () => {
+  const base = { workId: 1, episodeId: 2, groupIds: [5], params: { modelId: 3 } };
   const rejected = (input: unknown) => assert.throws(() => readSubmitInput(input), ValidationError);
   rejected(null);
   rejected({ ...base, workId: 'x' });
   rejected({ ...base, episodeId: 1.5 });
-  rejected({ ...base, shotIds: [] });
-  rejected({ ...base, shotIds: ['a'] });
-  rejected({ ...base, shotIds: Array.from({ length: 201 }, (_, index) => index) });
+  rejected({ ...base, groupIds: [] });
+  rejected({ ...base, groupIds: ['a'] });
+  rejected({ ...base, groupIds: Array.from({ length: 101 }, (_, index) => index) });
   rejected({ ...base, params: {} });
   rejected({ ...base, params: { modelId: 3, audioMode: 'external' } });
   rejected({ ...base, params: { modelId: 3, resolution: 'x'.repeat(21) } });
 });
 
-test('时长调整：步长取整、夹到范围、可选值取最近', () => {
-  assert.deepEqual(fitDuration({ min: 2, max: 10, step: 1 }, 3.4), { seconds: 3, adjusted: true });
-  assert.deepEqual(fitDuration({ min: 2, max: 10, step: 1 }, 4), { seconds: 4, adjusted: false });
-  assert.deepEqual(fitDuration({ min: 2, max: 10, step: 1 }, 1), { seconds: 2, adjusted: true });
-  assert.deepEqual(fitDuration({ min: 2, max: 10, step: 1 }, 40), { seconds: 10, adjusted: true });
-  assert.deepEqual(fitDuration({ options: [5, 10] }, 7.4), { seconds: 5, adjusted: true });
-  assert.deepEqual(fitDuration({ options: [5, 10] }, 8), { seconds: 10, adjusted: true });
-  assert.deepEqual(fitDuration({ max: 8 }, 12), { seconds: 8, adjusted: true });
+test('组时长对齐：只向上取整（不截断镜头），不足最短时长时补到最短，超过最长时长时标记并返回最长值', () => {
+  assert.deepEqual(fitGroupDuration({ min: 2, max: 10, step: 1 }, 3.4), { seconds: 4, adjusted: true, exceedsMax: false });
+  assert.deepEqual(fitGroupDuration({ min: 2, max: 10, step: 1 }, 4), { seconds: 4, adjusted: false, exceedsMax: false });
+  assert.deepEqual(fitGroupDuration({ min: 2, max: 10, step: 1 }, 1), { seconds: 2, adjusted: true, exceedsMax: false });
+  assert.deepEqual(fitGroupDuration({ min: 2, max: 10, step: 1 }, 40), { seconds: 10, adjusted: true, exceedsMax: true });
+  assert.deepEqual(fitGroupDuration({ options: [10, 5] }, 7.4), { seconds: 10, adjusted: true, exceedsMax: false });
+  assert.deepEqual(fitGroupDuration({ options: [5, 10] }, 12), { seconds: 10, adjusted: true, exceedsMax: true });
+  assert.deepEqual(fitGroupDuration({ max: 8 }, 8.2), { seconds: 8, adjusted: true, exceedsMax: true });
+  assert.deepEqual(fitGroupDuration({ min: 2, max: 30, step: 1 }, 14.1 + 0.9), { seconds: 15, adjusted: false, exceedsMax: false }, '小数误差不会多加一秒');
 });
 
-test('编译镜头：使用中文提示词、调整时长，默认原生声音并记录快照', () => {
+test('模型单次最长时长：取可选值的最大值或范围上限，没有信息时为 null', () => {
+  assert.equal(maxGroupSeconds({ min: 2, max: 30, step: 1 }), 30);
+  assert.equal(maxGroupSeconds({ options: [5, 15, 10] }), 15);
+  assert.equal(maxGroupSeconds({ min: 2 }), null);
+});
+
+test('时间标注：分:秒，小数秒保留 1 位', () => {
+  assert.deepEqual([0, 5, 59, 75, 600].map(formatTimestamp), ['0:00', '0:05', '0:59', '1:15', '10:00']);
+  assert.equal(formatTimestamp(2.5), '0:02.5');
+});
+
+test('编译镜头组：多个镜头用时间段依次描述，总时长为各镜头之和，快照记录组内镜头', () => {
+  const snapshot = planMany([
+    shot({ id: 10, durationSeconds: 3, promptZh: '远景，灯塔在暴风雨中' }),
+    shot({ id: 11, seq: 2, durationSeconds: 3, promptZh: '中景，守夜人点燃油灯' }),
+    shot({ id: 12, seq: 3, durationSeconds: 3, promptZh: '特写，灯光扫过海面' })
+  ]);
+  assert.equal(
+    snapshot.prompt,
+    ['多镜头分镜，共 3 个镜头，按时间段依次呈现，镜头之间自然切换：', '(0:00 - 0:03) 远景，灯塔在暴风雨中', '(0:03 - 0:06) 中景，守夜人点燃油灯', '(0:06 - 0:09) 特写，灯光扫过海面'].join('\n')
+  );
+  assert.deepEqual(snapshot.shotIds, [10, 11, 12]);
+  assert.equal(snapshot.params.durationSeconds, 9);
+});
+
+test('编译镜头组：总时长对齐后最后一段补足；单个镜头不加时间段和分镜说明', () => {
+  const snapshot = planMany([shot({ id: 10, durationSeconds: 4.2 }), shot({ id: 11, seq: 2, durationSeconds: 3.1, promptZh: '第二个镜头' })]);
+  assert.equal(snapshot.params.durationSeconds, 8);
+  assert.ok(snapshot.prompt.endsWith('(0:04.2 - 0:08) 第二个镜头'));
+  assert.match(snapshot.warnings.join(), /共 7.3 秒.*已调整为 8 秒/);
+  assert.ok(!plan({}).prompt.includes('(0:00'));
+  assert.ok(!plan({}).prompt.includes('多镜头'));
+});
+
+test('编译镜头组：组内不同镜头的声音挂在各自的时间段里；参考图按组内实体统一编号，只列一次', () => {
+  const snapshot = planMany(
+    [
+      shot({ id: 10, durationSeconds: 5, promptZh: '镜头一', sounds: [sound({ kind: 'dialogue', speakerEntityId: 1, text: '要下雨了' })] }),
+      shot({ id: 11, seq: 2, durationSeconds: 5, promptZh: '镜头二', sounds: [sound({ id: 2, kind: 'sfx', text: '雷声' })] })
+    ],
+    [GUARD]
+  );
+  assert.equal(
+    snapshot.prompt,
+    [
+      '图1是角色“守夜人”的形象参考。',
+      '多镜头分镜，共 2 个镜头，按时间段依次呈现，镜头之间自然切换：',
+      '(0:00 - 0:05) 镜头一 声音：守夜人说：“要下雨了”',
+      '(0:05 - 0:10) 镜头二 声音：音效：雷声'
+    ].join('\n')
+  );
+  assert.deepEqual(snapshot.referenceImageFileIds, [101]);
+});
+
+test('编译镜头组：只有组内第一个镜头的首帧设置会提醒，组内其他镜头的尾帧衔接在同一个视频里自然完成', () => {
+  const inner = planMany([shot({ id: 10 }), shot({ id: 11, seq: 2, firstFrameMode: 'prev_tail' })]);
+  assert.deepEqual(inner.warnings, []);
+  const leading = planMany([shot({ id: 10, firstFrameMode: 'prev_tail' }), shot({ id: 11, seq: 2 })]);
+  assert.match(leading.warnings.join(), /尚未开放/);
+});
+
+test('编译镜头：使用中文提示词、对齐时长，默认原生声音并记录快照', () => {
   const snapshot = plan({ durationSeconds: 3.6 });
   assert.equal(snapshot.prompt, '中景，守夜人缓缓登上灯塔');
   assert.deepEqual(snapshot.params, { aspectRatio: '16:9', resolution: '720P', durationSeconds: 4, audioMode: 'native', seed: null, extraParams: {} });

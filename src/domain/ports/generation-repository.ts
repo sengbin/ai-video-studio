@@ -7,31 +7,31 @@
 // 备注：状态变更方法只在任务仍处于允许的状态时生效并返回 true，避免覆盖已取消或已结束的任务；同步调用。
 // ------------------------------------------------------------------------
 
-import { JobFailure, JobStatus, NewVideoJob, NewVideoResult, ShotLocation, VideoJobRecord, VideoResultRecord } from '../models/generation';
+import { GroupLocation, JobFailure, JobStatus, NewVideoJob, NewVideoResult, VideoJobRecord, VideoResultRecord } from '../models/generation';
 import { MediaInput } from './provider-adapters';
 
 /** 生成任务与结果视频的数据访问接口。 */
 export interface GenerationRepository {
-  /** 新增任务，`attempt` 为该镜头已有任务数加 1。 */
+  /** 新增任务，`attempt` 为该镜头组已有任务数加 1。 */
   insertJob(job: NewVideoJob, timestamp: string): VideoJobRecord;
 
   /** 按标识读取任务；不存在返回 undefined。 */
   findJob(id: number): VideoJobRecord | undefined;
 
-  /** 列出若干镜头的全部任务，按创建时间从新到旧。 */
-  listJobsByShots(shotIds: readonly number[]): VideoJobRecord[];
+  /** 列出若干镜头组的全部任务，按创建时间从新到旧。 */
+  listJobsByGroups(groupIds: readonly number[]): VideoJobRecord[];
 
   /** 列出处于给定状态的全部任务，按标识升序（先提交先处理）。 */
   listJobsByStatus(statuses: readonly JobStatus[]): VideoJobRecord[];
 
-  /** 镜头是否有仍在进行（等待、排队、生成中）的任务。 */
-  hasActiveJob(shotId: number): boolean;
+  /** 镜头组是否有仍在进行（等待、排队、生成中）的任务。 */
+  hasActiveJob(groupId: number): boolean;
 
   /** 排队中的任务已提交给服务商：记下远端标识，状态变为生成中。任务不是排队中返回 false。 */
   markSubmitted(id: number, remoteJobId: string, timestamp: string): boolean;
 
   /**
-   * 生成成功：写入结果视频，任务状态变为成功；镜头还没有采用的版本时自动采用本条。
+   * 生成成功：写入结果视频，任务状态变为成功；镜头组还没有采用的版本时自动采用本条。
    * @returns 写入的结果；任务不是进行中的状态时返回 undefined。
    */
   markSucceeded(id: number, result: NewVideoResult, timestamp: string): VideoResultRecord | undefined;
@@ -42,14 +42,14 @@ export interface GenerationRepository {
   /** 取消任务。任务不是进行中的状态时返回 false。 */
   markCanceled(id: number, timestamp: string): boolean;
 
-  /** 列出若干镜头的全部结果视频，按创建时间从新到旧。 */
-  listResultsByShots(shotIds: readonly number[]): VideoResultRecord[];
+  /** 列出若干镜头组的全部结果视频，按创建时间从新到旧。 */
+  listResultsByGroups(groupIds: readonly number[]): VideoResultRecord[];
 
   /** 按标识读取结果视频；不存在返回 undefined。 */
   findResult(id: number): VideoResultRecord | undefined;
 
-  /** 读取镜头所在的项目、作品和集；镜头不存在返回 undefined。 */
-  getShotLocation(shotId: number): ShotLocation | undefined;
+  /** 读取镜头组所在的项目、作品和集；镜头组不存在返回 undefined。 */
+  getGroupLocation(groupId: number): GroupLocation | undefined;
 }
 
 /** 读取任务提交所需的素材内容：资产文件与尾帧图片。 */
@@ -72,14 +72,14 @@ export interface SavedResultFile {
 export interface ResultStore {
   /**
    * 下载结果视频并保存。
-   * @param location 镜头所在的项目、作品和集。
-   * @param shotId 镜头标识。
+   * @param location 镜头组所在的项目、作品和集。
+   * @param groupId 镜头组标识。
    * @param jobId 任务标识。
    * @param url 服务商返回的临时地址。
    * @param signal 取消信号。
    * @throws Error 下载失败、地址不合法或文件过大。
    */
-  save(location: ShotLocation, shotId: number, jobId: number, url: string, signal?: AbortSignal): Promise<SavedResultFile>;
+  save(location: GroupLocation, groupId: number, jobId: number, url: string, signal?: AbortSignal): Promise<SavedResultFile>;
 
   /** 把相对路径转换为本机绝对路径。 */
   resolvePath(filePath: string): string;

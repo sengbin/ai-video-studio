@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：local-result-store.ts
-// 说明：结果文件存储的本地实现：把服务商返回的临时地址下载到扩展存储目录，路径由项目、作品、集、镜头和任务标识决定。
+// 说明：结果文件存储的本地实现：把服务商返回的临时地址下载到扩展存储目录，路径由项目、作品、集、镜头组和任务标识决定。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
@@ -13,7 +13,7 @@ import * as path from 'node:path';
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import type { ReadableStream as WebReadableStream } from 'node:stream/web';
-import { ShotLocation } from '../../domain/models/generation';
+import { GroupLocation } from '../../domain/models/generation';
 import { ResultStore, SavedResultFile } from '../../domain/ports/generation-repository';
 
 /** 单个结果视频的大小上限，单位为字节。 */
@@ -33,11 +33,11 @@ export class LocalResultStore implements ResultStore {
     private readonly fetchFunction: typeof fetch = fetch
   ) {}
 
-  async save(location: ShotLocation, shotId: number, jobId: number, url: string, signal?: AbortSignal): Promise<SavedResultFile> {
+  async save(location: GroupLocation, groupId: number, jobId: number, url: string, signal?: AbortSignal): Promise<SavedResultFile> {
     if (!url.startsWith('https://')) {
       throw new Error('结果地址必须是 https 地址。');
     }
-    const filePath = `videos/${location.projectId}/${location.workId}/${location.episodeId}/${shotId}-${jobId}.mp4`;
+    const filePath = `videos/${location.projectId}/${location.workId}/${location.episodeId}/${groupId}-${jobId}.mp4`;
     const absolutePath = this.resolvePath(filePath);
     const partialPath = `${absolutePath}${PARTIAL_SUFFIX}`;
     await mkdir(path.dirname(absolutePath), { recursive: true });

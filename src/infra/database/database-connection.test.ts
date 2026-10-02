@@ -20,7 +20,7 @@ import { MIGRATIONS } from './migrations';
 import { runInTransaction } from './transaction';
 
 const NOW = '2026-01-01T00:00:00.000Z';
-const EXPECTED_TABLE_COUNT = 22;
+const EXPECTED_TABLE_COUNT = 23;
 
 /** 查询库中所有业务表的名称。 */
 function listTableNames(database: DatabaseSync): string[] {

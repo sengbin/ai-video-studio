@@ -18,8 +18,10 @@ import { StoryboardRepository } from '../../domain/ports/storyboard-repository';
 import { readRecord } from '../../domain/rules/field-readers';
 import { canApprove, canCancel, canRetry, isStale, toDisplayStatus } from '../../domain/rules/stage-review-rules';
 import { MAX_SHOTS_LIMIT, normalizeShotEdit, normalizeStoryboardParams } from '../../domain/rules/storyboard-rules';
+import { groupMaxSecondsOf, sumSeconds } from '../../domain/rules/shot-group-rules';
 import { StageRunner } from '../stages/stage-runner';
 import { ProjectService } from './project-service';
+import { syncShotGroups } from './shot-grouping';
 import { StageActions, StageRunView, StageService, StageVersionItem, toRunView, toVersionItem } from './stage-service';
 import { WorkService } from './work-service';
 
@@ -61,6 +63,14 @@ export interface StoryboardEntityView {
   readonly isActive: boolean;
 }
 
+/** 分镜脚本阶段产出页展示的镜头组：组序号、组内镜头与总时长。 */
+export interface StoryboardGroupView {
+  readonly id: number;
+  readonly seq: number;
+  readonly shotIds: readonly number[];
+  readonly totalSeconds: number;
+}
+
 /** 分镜脚本阶段产出页的完整视图。 */
 export interface StoryboardStageView {
   readonly work: {
@@ -75,6 +85,10 @@ export interface StoryboardStageView {
   readonly run: StageRunView;
   readonly params: StoryboardParams | null;
   readonly shots: ShotRecord[];
+  /** 相邻镜头打包成的镜头组（一组一次生成一个视频），按组序号排列。 */
+  readonly groups: StoryboardGroupView[];
+  /** 单组最长时长（秒），生成分镜脚本时设定。 */
+  readonly groupMaxSeconds: number;
   /** 全部镜头时长之和（秒）。 */
   readonly totalSeconds: number;
   readonly entities: StoryboardEntityView[];
@@ -188,7 +202,7 @@ export class StoryboardService {
     const latest = ids
       .flatMap((id) => runs.listVersions(storyboardTarget(workId, id)))
       .sort((left, right) => right.createdAt.localeCompare(left.createdAt) || right.id - left.id)[0];
-    return latest === undefined ? undefined : (readParams(latest) ?? undefined);
+    return latest === undefined ? undefined : (readStoryboardParams(latest) ?? undefined);
   }
 
   /**
@@ -215,15 +229,26 @@ export class StoryboardService {
       throw new NotFoundError('版本不存在。');
     }
 
+    const groupMaxSeconds = groupMaxSecondsOf(readStoryboardParams(run));
+    // 生成成功的版本读取时补全分组（旧数据没有分组）。
+    if (run.status === 'succeeded') syncShotGroups(storyboards, run.id, groupMaxSeconds, this.timestamp());
     const shots = storyboards.listShots(run.id);
+    const shotById = new Map(shots.map((shot) => [shot.id, shot]));
     const source = run.sourceRunId === null ? undefined : runs.findById(run.sourceRunId);
     return {
       work: { id: work.id, projectId: work.projectId, name: work.name, kind: work.kind, sourceType: work.sourceType },
       episode: { id: episode.id, seq: episode.seq, title: episode.title },
       versions: versions.map(toVersionItem),
       run: toRunView(run),
-      params: readParams(run),
+      params: readStoryboardParams(run),
       shots,
+      groups: storyboards.listGroups(run.id).map((group) => ({
+        id: group.id,
+        seq: group.seq,
+        shotIds: group.shotIds,
+        totalSeconds: sumSeconds(group.shotIds.flatMap((id) => shotById.get(id) ?? []))
+      })),
+      groupMaxSeconds,
       totalSeconds: Math.round(shots.reduce((sum, shot) => sum + shot.durationSeconds, 0) * 10) / 10,
       entities: screenplays.listEntities(workId).map((entity) => ({
         id: entity.id,
@@ -293,6 +318,7 @@ export class StoryboardService {
         .map(({ id, kind, name, aliases }) => ({ id, kind, name, aliases }));
       const edit = normalizeShotEdit(rawInput, entities, count === 0);
       shotId = storyboards.insertShot(run.id, edit, this.timestamp());
+      syncShotGroups(storyboards, run.id, groupMaxSecondsOf(readStoryboardParams(run)), this.timestamp());
     });
     return shotId;
   }
@@ -317,6 +343,7 @@ export class StoryboardService {
       if (!storyboards.deleteShot(run.id, ref as number, this.timestamp())) {
         throw new NotFoundError('镜头不存在。');
       }
+      syncShotGroups(storyboards, run.id, groupMaxSecondsOf(readStoryboardParams(run)), this.timestamp());
     });
   }
 
@@ -362,7 +389,7 @@ export function storyboardTarget(workId: number, episodeId: number): StageTarget
 }
 
 /** 从记录的输入快照中取出分镜脚本参数；快照结构不符时返回 null。 */
-function readParams(run: StageRun): StoryboardParams | null {
+export function readStoryboardParams(run: StageRun): StoryboardParams | null {
   const params = (run.input as { params?: unknown }).params;
   return typeof params === 'object' && params !== null ? (params as StoryboardParams) : null;
 }

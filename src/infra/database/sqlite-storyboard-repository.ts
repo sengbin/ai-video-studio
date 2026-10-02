@@ -8,7 +8,7 @@
 // ------------------------------------------------------------------------
 
 import type { DatabaseSync } from 'node:sqlite';
-import { FirstFrameMode, ShotDraft, ShotEdit, ShotRecord, SoundDraft, SoundKind, SoundRecord, StoryboardScript } from '../../domain/models/storyboard';
+import { FirstFrameMode, GroupLayoutEntry, ShotDraft, ShotEdit, ShotGroup, ShotRecord, SoundDraft, SoundKind, SoundRecord, StoryboardScript } from '../../domain/models/storyboard';
 import { StoryboardRepository } from '../../domain/ports/storyboard-repository';
 import { runInTransaction } from './transaction';
 
@@ -265,6 +265,72 @@ export class SqliteStoryboardRepository implements StoryboardRepository {
         )
         .run(timestamp, current.script_id);
       return true;
+    });
+  }
+
+  listGroups(runId: number): ShotGroup[] {
+    const groupRows = this.database
+      .prepare(
+        `SELECT g.id, g.seq FROM shot_groups g JOIN storyboard_scripts ss ON ss.id = g.storyboard_script_id
+         WHERE ss.run_id = ? ORDER BY g.seq`
+      )
+      .all(runId) as unknown as Array<{ id: number; seq: number }>;
+    const shotRows = this.database
+      .prepare(
+        `SELECT s.id, s.group_id FROM shots s JOIN storyboard_scripts ss ON ss.id = s.storyboard_script_id
+         WHERE ss.run_id = ? AND s.group_id IS NOT NULL ORDER BY s.seq`
+      )
+      .all(runId) as unknown as Array<{ id: number; group_id: number }>;
+    return groupRows.map((group) => ({
+      id: group.id,
+      seq: group.seq,
+      shotIds: shotRows.filter((shot) => shot.group_id === group.id).map((shot) => shot.id)
+    }));
+  }
+
+  applyGroupLayout(runId: number, layout: readonly GroupLayoutEntry[], timestamp: string): void {
+    runInTransaction(this.database, () => {
+      const script = this.find(runId);
+      if (script === undefined) {
+        throw new Error(`阶段记录 ${runId} 还没有分镜脚本。`);
+      }
+      const existing = new Set(
+        (this.database.prepare('SELECT id FROM shot_groups WHERE storyboard_script_id = ?').all(script.id) as unknown as Array<{ id: number }>).map(
+          (row) => row.id
+        )
+      );
+      const kept = new Set<number>();
+      for (const entry of layout) {
+        if (entry.groupId !== null) {
+          if (!existing.has(entry.groupId)) {
+            throw new Error(`镜头组 ${entry.groupId} 不属于阶段记录 ${runId}。`);
+          }
+          kept.add(entry.groupId);
+        }
+      }
+      // 没有出现在布局里的组连同它的生成记录一起删除。
+      for (const id of existing) {
+        if (!kept.has(id)) {
+          this.database.prepare('DELETE FROM shot_groups WHERE id = ?').run(id);
+        }
+      }
+      // 序号有唯一约束，先整体移出范围，再按布局顺序重新编号。
+      this.database.prepare('UPDATE shot_groups SET seq = seq + ? WHERE storyboard_script_id = ?').run(SEQ_SHIFT, script.id);
+      this.database.prepare('UPDATE shots SET group_id = NULL WHERE storyboard_script_id = ?').run(script.id);
+      layout.forEach((entry, index) => {
+        let groupId = entry.groupId;
+        if (groupId === null) {
+          const inserted = this.database
+            .prepare('INSERT INTO shot_groups (storyboard_script_id, seq, created_at) VALUES (?, ?, ?)')
+            .run(script.id, index + 1, timestamp);
+          groupId = Number(inserted.lastInsertRowid);
+        } else {
+          this.database.prepare('UPDATE shot_groups SET seq = ? WHERE id = ?').run(index + 1, groupId);
+        }
+        for (const shotId of entry.shotIds) {
+          this.database.prepare('UPDATE shots SET group_id = ? WHERE id = ? AND storyboard_script_id = ?').run(groupId, shotId, script.id);
+        }
+      });
     });
   }
 

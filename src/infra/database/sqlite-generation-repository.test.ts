@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：sqlite-generation-repository.test.ts
-// 说明：生成任务仓库的自动化测试：新增与尝试次数、状态变更只作用于进行中的任务、成功写结果并自动采用、失败原因往返、素材读取、迁移 7 的升级。
+// 说明：生成任务仓库的自动化测试：新增与尝试次数、状态变更只作用于进行中的任务、成功写结果并自动采用、失败原因往返、素材读取、镜头组删除的连带清除、迁移 8 的升级。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
@@ -21,6 +21,7 @@ const T2 = '2026-10-02T02:00:00.000Z';
 
 const SNAPSHOT: JobSnapshot = {
   storyboardRunId: 1,
+  shotIds: [1],
   providerCode: 'fake',
   modelCode: 'fake-video',
   prompt: '提示词',
@@ -36,19 +37,19 @@ function createFixture() {
   const database = openDatabase(IN_MEMORY_DATABASE_PATH);
   const seed = seedGeneration(database);
   const repository = new SqliteGenerationRepository(database);
-  const insert = (shotId = seed.shotIds[0]) => repository.insertJob({ shotId, modelId: seed.modelId, status: 'queued', snapshot: SNAPSHOT, prevJobId: null }, T1);
+  const insert = (groupId = seed.groupIds[0]) => repository.insertJob({ groupId, modelId: seed.modelId, status: 'queued', snapshot: SNAPSHOT, prevJobId: null }, T1);
   return { database, seed, repository, insert };
 }
 
-test('新增任务：快照往返，同一镜头的提交次数递增，不同镜头各自计数', () => {
+test('新增任务：快照往返，同一镜头组的提交次数递增，不同组各自计数', () => {
   const { database, seed, repository, insert } = createFixture();
   try {
     const first = insert();
     assert.deepEqual([first.status, first.attempt, first.remoteJobId, first.failure, first.submittedAt, first.snapshot], ['queued', 1, null, null, null, SNAPSHOT]);
     assert.equal(insert().attempt, 2);
-    assert.equal(insert(seed.shotIds[1]).attempt, 1);
-    assert.deepEqual(repository.listJobsByShots([seed.shotIds[0]]).map((job) => job.attempt), [2, 1], '最新的在前');
-    assert.deepEqual(repository.listJobsByShots([]), []);
+    assert.equal(insert(seed.groupIds[1]).attempt, 1);
+    assert.deepEqual(repository.listJobsByGroups([seed.groupIds[0]]).map((job) => job.attempt), [2, 1], '最新的在前');
+    assert.deepEqual(repository.listJobsByGroups([]), []);
     assert.equal(repository.findJob(999), undefined);
   } finally {
     database.close();
@@ -59,7 +60,7 @@ test('状态流转：排队 → 生成中 → 成功；已结束的任务不能�
   const { database, repository, insert } = createFixture();
   try {
     const job = insert();
-    assert.equal(repository.hasActiveJob(job.shotId), true);
+    assert.equal(repository.hasActiveJob(job.groupId), true);
     assert.deepEqual(repository.listJobsByStatus(['queued']).map((item) => item.id), [job.id]);
 
     assert.equal(repository.markSubmitted(job.id, 'remote-1', T2), true);
@@ -68,22 +69,22 @@ test('状态流转：排队 → 生成中 → 成功；已结束的任务不能�
     assert.deepEqual([running?.status, running?.remoteJobId, running?.submittedAt], ['running', 'remote-1', T2]);
 
     const result = repository.markSucceeded(job.id, RESULT, T2);
-    assert.ok(result !== undefined && result.isSelected, '镜头首个成功结果自动采用');
+    assert.ok(result !== undefined && result.isSelected, '镜头组首个成功结果自动采用');
     assert.deepEqual([result.hasAudio, result.width, result.sizeBytes], [true, null, 100]);
     assert.equal(repository.findJob(job.id)?.status, 'succeeded');
-    assert.equal(repository.hasActiveJob(job.shotId), false);
+    assert.equal(repository.hasActiveJob(job.groupId), false);
 
     assert.equal(repository.markFailed(job.id, { category: 'server', code: null, message: 'x' }, T2), false);
     assert.equal(repository.markCanceled(job.id, T2), false);
     assert.equal(repository.markSucceeded(job.id, RESULT, T2), undefined);
-    assert.deepEqual(repository.listResultsByShots([job.shotId]).map((item) => item.id), [result.id]);
+    assert.deepEqual(repository.listResultsByGroups([job.groupId]).map((item) => item.id), [result.id]);
     assert.equal(repository.findResult(result.id)?.filePath, RESULT.filePath);
   } finally {
     database.close();
   }
 });
 
-test('同一镜头的第二个成功结果不抢占已采用的版本', () => {
+test('同一镜头组的第二个成功结果不抢占已采用的版本', () => {
   const { database, repository, insert } = createFixture();
   try {
     const [a, b] = [insert(), insert()];
@@ -110,17 +111,17 @@ test('失败：原因（分类、错误码、原文）往返；取消后不能�
     assert.equal(repository.markCanceled(canceled.id, T2), true);
     assert.equal(repository.markFailed(canceled.id, { category: 'server', code: null, message: 'x' }, T2), false);
     assert.equal(repository.findJob(canceled.id)?.failure, null);
-    assert.equal(repository.hasActiveJob(canceled.shotId), false);
+    assert.equal(repository.hasActiveJob(canceled.groupId), false);
   } finally {
     database.close();
   }
 });
 
-test('镜头所在位置与素材内容读取', () => {
+test('镜头组所在位置与素材内容读取', () => {
   const { database, seed, repository } = createFixture();
   try {
-    assert.deepEqual(repository.getShotLocation(seed.shotIds[0]), { projectId: seed.projectId, workId: seed.workId, episodeId: seed.episodeId });
-    assert.equal(repository.getShotLocation(999), undefined);
+    assert.deepEqual(repository.getGroupLocation(seed.groupIds[0]), { projectId: seed.projectId, workId: seed.workId, episodeId: seed.episodeId });
+    assert.equal(repository.getGroupLocation(999), undefined);
 
     database.prepare("INSERT INTO assets (project_id, kind, name, created_at, updated_at) VALUES (?, 'character', '角色', 't', 't')").run(seed.projectId);
     const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 1]);
@@ -139,24 +140,31 @@ test('镜头所在位置与素材内容读取', () => {
   }
 });
 
-test('删除镜头时连带清除任务和结果', () => {
+test('删除镜头组时连带清除任务和结果，组内镜头保留且回到未分组；删除分镜脚本时组一并清除', () => {
   const { database, seed, repository, insert } = createFixture();
   try {
     const job = insert();
     repository.markSubmitted(job.id, 'r', T2);
     repository.markSucceeded(job.id, RESULT, T2);
-    database.prepare('DELETE FROM shots WHERE id = ?').run(seed.shotIds[0]);
+    database.prepare('DELETE FROM shot_groups WHERE id = ?').run(seed.groupIds[0]);
     assert.equal(repository.findJob(job.id), undefined);
-    assert.deepEqual(repository.listResultsByShots([seed.shotIds[0]]), []);
+    assert.deepEqual(repository.listResultsByGroups([seed.groupIds[0]]), []);
+    const shot = database.prepare('SELECT group_id FROM shots WHERE id = ?').get(seed.shotIds[0]) as unknown as { group_id: number | null };
+    assert.equal(shot.group_id, null);
+
+    const other = insert(seed.groupIds[1]);
+    database.prepare('DELETE FROM storyboard_scripts WHERE run_id = ?').run(seed.runId);
+    assert.equal(repository.findJob(other.id), undefined);
+    assert.equal((database.prepare('SELECT COUNT(*) AS total FROM shot_groups').get() as unknown as { total: number }).total, 0);
   } finally {
     database.close();
   }
 });
 
-test('从版本 6 升级到 7：任务表按新结构重建，错误分类与服务商一致', () => {
-  const legacy = openDatabase(IN_MEMORY_DATABASE_PATH, MIGRATIONS.slice(0, 6));
+test('从版本 7 升级到 8：任务表改为挂在镜头组上，错误分类与服务商一致', () => {
+  const legacy = openDatabase(IN_MEMORY_DATABASE_PATH, MIGRATIONS.slice(0, 7));
   try {
-    assert.equal(readSchemaVersion(legacy), 6);
+    assert.equal(readSchemaVersion(legacy), 7);
   } finally {
     legacy.close();
   }
@@ -166,12 +174,12 @@ test('从版本 6 升级到 7：任务表按新结构重建，错误分类与服
     const seed = seedGeneration(database, 1);
     const insertFailed = (category: string) =>
       database
-        .prepare("INSERT INTO video_jobs (shot_id, model_id, status, request_snapshot_json, error_category, created_at) VALUES (?, ?, 'failed', '{}', ?, 't')")
-        .run(seed.shotIds[0], seed.modelId, category);
+        .prepare("INSERT INTO video_jobs (group_id, model_id, status, request_snapshot_json, error_category, created_at) VALUES (?, ?, 'failed', '{}', ?, 't')")
+        .run(seed.groupIds[0], seed.modelId, category);
     insertFailed('content_rejected');
     assert.throws(() => insertFailed('rate_limit'), '旧的分类名称不再允许');
     assert.throws(
-      () => database.prepare("INSERT INTO video_jobs (shot_id, model_id, status, request_snapshot_json, error_category, created_at) VALUES (?, ?, 'queued', '{}', 'server', 't')").run(seed.shotIds[0], seed.modelId),
+      () => database.prepare("INSERT INTO video_jobs (group_id, model_id, status, request_snapshot_json, error_category, created_at) VALUES (?, ?, 'queued', '{}', 'server', 't')").run(seed.groupIds[0], seed.modelId),
       '只有失败的任务才能有错误分类'
     );
   } finally {

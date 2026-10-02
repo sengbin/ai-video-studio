@@ -21,6 +21,7 @@ import { JobChange, JobQueue } from './job-queue';
 
 const SNAPSHOT: JobSnapshot = {
   storyboardRunId: 1,
+  shotIds: [1],
   providerCode: 'fake',
   modelCode: 'fake-video',
   prompt: '提示词',
@@ -93,8 +94,8 @@ function createFixture(options: { maxConcurrent?: number; maxSubmitAttempts?: nu
     submitRetryDelayMs: 1000,
     ...options
   });
-  const enqueue = (shotIndex = 0, snapshot: JobSnapshot = SNAPSHOT) =>
-    jobs.insertJob({ shotId: seed.shotIds[shotIndex], modelId: seed.modelId, status: 'queued', snapshot, prevJobId: null }, new Date(clock.time).toISOString());
+  const enqueue = (groupIndex = 0, snapshot: JobSnapshot = SNAPSHOT) =>
+    jobs.insertJob({ groupId: seed.groupIds[groupIndex], modelId: seed.modelId, status: 'queued', snapshot, prevJobId: null }, new Date(clock.time).toISOString());
   return { database, seed, jobs, provider, clock, changes, saved, saveBehavior, callBehavior, queue, enqueue };
 }
 
@@ -113,9 +114,9 @@ test('提交与完成：排队 → 生成中 → 成功，结果文件保存并�
     const done = jobs.findJob(job.id);
     assert.equal(done?.status, 'succeeded');
     assert.deepEqual(saved, ['https://fake.example.com/video.mp4']);
-    const [result] = jobs.listResultsByShots([job.shotId]);
-    assert.deepEqual([result.filePath, result.sizeBytes, result.durationSeconds, result.hasAudio, result.isSelected], [`videos/${job.shotId}-${job.id}.mp4`, 1234, 5, true, true]);
-    assert.deepEqual(changes, [{ jobId: job.id, shotId: job.shotId }, { jobId: job.id, shotId: job.shotId }]);
+    const [result] = jobs.listResultsByGroups([job.groupId]);
+    assert.deepEqual([result.filePath, result.sizeBytes, result.durationSeconds, result.hasAudio, result.isSelected], [`videos/${job.groupId}-${job.id}.mp4`, 1234, 5, true, true]);
+    assert.deepEqual(changes, [{ jobId: job.id, groupId: job.groupId }, { jobId: job.id, groupId: job.groupId }]);
   } finally {
     database.close();
   }
@@ -135,7 +136,7 @@ test('生成失败：保存平台返回的分类、错误码和原文，可再�
     const failed = jobs.findJob(job.id);
     assert.equal(failed?.status, 'failed');
     assert.deepEqual(failed?.failure, { category: 'content_rejected', code: 'DataInspectionFailed', message: PLATFORM_REJECTION });
-    assert.equal(jobs.hasActiveJob(job.shotId), false, '失败后镜头可以再次提交');
+    assert.equal(jobs.hasActiveJob(job.groupId), false, '失败后这一组可以再次提交');
 
     const again = enqueue();
     assert.equal(again.attempt, 2);

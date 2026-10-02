@@ -31,6 +31,7 @@ import {
   readRecord,
   readText
 } from './field-readers';
+import { DEFAULT_GROUP_MAX_SECONDS, GROUP_SECONDS_MAX, GROUP_SECONDS_MIN, groupMaxSecondsOf } from './shot-group-rules';
 
 /** 镜头总数上限的取值范围；不填时取最大值。 */
 export const MAX_SHOTS_LIMIT = 200;
@@ -154,6 +155,19 @@ export function normalizeStoryboardParams(rawInput: unknown): StoryboardParams {
   if (minShotSeconds !== null && maxShotSeconds !== null && maxShotSeconds < minShotSeconds) {
     errors.maxShotSeconds = '单镜头最长时长不能小于最短时长。';
   }
+  const rawGroupMax = source.groupMaxSeconds;
+  const hasGroupMax = !(rawGroupMax === undefined || rawGroupMax === null || (typeof rawGroupMax === 'string' && rawGroupMax.trim() === ''));
+  const groupMaxSeconds = hasGroupMax
+    ? readInteger(source, { key: 'groupMaxSeconds', label: '单组最长时长', required: true, min: GROUP_SECONDS_MIN, max: GROUP_SECONDS_MAX }, errors)
+    : DEFAULT_GROUP_MAX_SECONDS;
+  if (errors.groupMaxSeconds === undefined) {
+    if (maxShotSeconds !== null && maxShotSeconds > groupMaxSeconds && errors.maxShotSeconds === undefined) {
+      errors.maxShotSeconds = `单镜头最长时长不能大于单组最长时长（${groupMaxSeconds} 秒），一个镜头必须能放进一组。`;
+    }
+    if (minShotSeconds !== null && minShotSeconds > groupMaxSeconds && errors.minShotSeconds === undefined) {
+      errors.minShotSeconds = `单镜头最短时长不能大于单组最长时长（${groupMaxSeconds} 秒）。`;
+    }
+  }
   const rawMaxShots = source.maxShots;
   const hasMaxShots = !(rawMaxShots === undefined || rawMaxShots === null || (typeof rawMaxShots === 'string' && rawMaxShots.trim() === ''));
   const maxShots = hasMaxShots
@@ -175,6 +189,7 @@ export function normalizeStoryboardParams(rawInput: unknown): StoryboardParams {
     visualStyle,
     minShotSeconds,
     maxShotSeconds,
+    groupMaxSeconds,
     maxShots,
     continuity,
     audioMode,
@@ -338,7 +353,7 @@ function parseShot(item: unknown, index: number, context: StoryboardContext, iss
   const promptEn = readShotText(record, 'promptEn', label, SHOT_PROMPT_MAX_LENGTH, true, issues);
 
   const minSeconds = params.minShotSeconds ?? SHOT_SECONDS_MIN;
-  const maxSeconds = params.maxShotSeconds ?? SHOT_SECONDS_MAX;
+  const maxSeconds = Math.min(params.maxShotSeconds ?? SHOT_SECONDS_MAX, groupMaxSecondsOf(params));
   const rawDuration = record.durationSeconds;
   let durationSeconds = minSeconds;
   if (typeof rawDuration !== 'number' || !Number.isFinite(rawDuration) || rawDuration < minSeconds || rawDuration > maxSeconds) {

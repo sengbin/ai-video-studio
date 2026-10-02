@@ -57,6 +57,7 @@ test('字段：多集作品可选集，单个短视频或指定了集时不显�
       'visualStyle',
       'minShotSeconds',
       'maxShotSeconds',
+      'groupMaxSeconds',
       'maxShots',
       'continuity',
       'audioMode',

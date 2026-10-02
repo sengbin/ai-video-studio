@@ -36,6 +36,9 @@ function createFixture() {
       calls.push(['cancel', payload]);
       return { remoteCanceled: false };
     },
+    regroup: (payload: unknown) => void calls.push(['regroup', payload]),
+    splitGroup: (payload: unknown) => void calls.push(['splitGroup', payload]),
+    mergeGroup: (payload: unknown) => void calls.push(['mergeGroup', payload]),
     getResultPath: (payload: unknown) => {
       calls.push(['resultPath', payload]);
       return '/store/videos/1.mp4';
@@ -63,17 +66,23 @@ function createFixture() {
   return { calls, opened, send, callOk };
 }
 
-test('清单、集视图、提交、取消都转发给生成服务', async () => {
+test('清单、集视图、提交、重新分组、拆分、合并、取消都转发给生成服务', async () => {
   const { calls, callOk } = createFixture();
   assert.deepEqual(await callOk(WORKBENCH_REQUESTS.catalog), { works: [], models: [] });
   assert.deepEqual(await callOk(WORKBENCH_REQUESTS.episode, { workId: 1, episodeId: 2 }), { workId: 1, episodeId: 2 });
 
-  const body = { workId: 1, episodeId: 2, shotIds: [3], params: { modelId: 4 } };
+  const body = { workId: 1, episodeId: 2, groupIds: [3], params: { modelId: 4 } };
   await callOk(WORKBENCH_REQUESTS.submit, body);
+  assert.deepEqual(await callOk(WORKBENCH_REQUESTS.regroup, { workId: 1, episodeId: 2, maxSeconds: 20 }), { done: true });
+  await callOk(WORKBENCH_REQUESTS.splitGroup, { workId: 1, episodeId: 2, shotId: 6 });
+  await callOk(WORKBENCH_REQUESTS.mergeGroup, { workId: 1, episodeId: 2, groupId: 7 });
   await callOk(WORKBENCH_REQUESTS.cancel, { jobId: 5 });
   assert.deepEqual(calls, [
     ['episode', [1, 2]],
     ['submit', body],
+    ['regroup', { workId: 1, episodeId: 2, maxSeconds: 20 }],
+    ['splitGroup', { workId: 1, episodeId: 2, shotId: 6 }],
+    ['mergeGroup', { workId: 1, episodeId: 2, groupId: 7 }],
     ['cancel', { jobId: 5 }]
   ]);
 });

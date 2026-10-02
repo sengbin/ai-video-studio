@@ -7,7 +7,7 @@
 // 备注：同步调用；每个阶段记录最多一份分镜脚本，重复写入会覆盖。
 // ------------------------------------------------------------------------
 
-import { ShotDraft, ShotEdit, ShotRecord, StoryboardScript } from '../models/storyboard';
+import { GroupLayoutEntry, ShotDraft, ShotEdit, ShotGroup, ShotRecord, StoryboardScript } from '../models/storyboard';
 
 /** 分镜脚本的数据访问接口。 */
 export interface StoryboardRepository {
@@ -33,4 +33,11 @@ export interface StoryboardRepository {
    * 镜头不属于该记录时返回 false。
    */
   deleteShot(runId: number, shotId: number, timestamp: string): boolean;
+  /** 列出分镜脚本的镜头组，按组序号升序；还没有分组时为空。 */
+  listGroups(runId: number): ShotGroup[];
+  /**
+   * 按布局重写分组：布局中有标识的组保留并更新成员，没有标识的新建，没有出现的已有组被删除（连同它的生成记录）；组序号按布局顺序重排。在同一事务内完成。
+   * @throws Error 分镜脚本不存在。
+   */
+  applyGroupLayout(runId: number, layout: readonly GroupLayoutEntry[], timestamp: string): void;
 }

@@ -66,14 +66,43 @@
   margin: 0 0 8px;
 }
 
-/* 镜头内容：动作最多显示三行，完整内容在悬停提示里 */
-.wb-shot__action {
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  margin: 0 0 2px;
+/* 镜头组：标题行、组内镜头列表（每行一个镜头，可在某个镜头前拆开） */
+.wb-group__title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+  margin: 0 0 4px;
+}
+
+.wb-shots {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.wb-shot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 0;
+}
+
+.wb-shot__text {
+  min-width: 0;
   overflow-wrap: anywhere;
+}
+
+.wb-regroup {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.wb-regroup__input {
+  width: 64px;
 }
 
 .wb-chips {

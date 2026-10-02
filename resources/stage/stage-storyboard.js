@@ -70,6 +70,9 @@
       if (view.shots.length === 0) return null;
       const params = view.params;
       const parts = [`共 ${view.shots.length} 个镜头，总时长 ${formatSeconds(view.totalSeconds)}。`];
+      if (view.groups && view.groups.length > 0) {
+        parts.push(`分成 ${view.groups.length} 组，在生成工作台里一组一次生成一个视频（生成时设定每组最长 ${view.groupMaxSeconds} 秒，可在工作台里重新分组、拆分或合并）。`);
+      }
       if (params) {
         const sound = params.audioMode === 'none' ? '无声' : '含声音条目';
         parts.push(`${sound}；镜头连贯：${{ none: '无', prev_tail: '尾帧接首帧', ai: '由 AI 判断' }[params.continuity] || ''}。`);
@@ -87,9 +90,10 @@
     }
 
     /** 左侧列表中的一个镜头。 */
-    function renderItem(shot) {
+    function renderItem(shot, view) {
       const isSelected = shot.id === selectedId;
-      const meta = [shot.shotSize, formatSeconds(shot.durationSeconds), shot.sounds.length > 0 ? `${shot.sounds.length} 条声音` : ''].filter(Boolean);
+      const group = (view.groups || []).find((item) => item.shotIds.includes(shot.id));
+      const meta = [group ? `第 ${group.seq} 组` : '', shot.shotSize, formatSeconds(shot.durationSeconds), shot.sounds.length > 0 ? `${shot.sounds.length} 条声音` : ''].filter(Boolean);
       return aiUi.h(
         'button',
         {
@@ -114,7 +118,7 @@
           aiUi.h('p', { class: 'stage-list__heading', text: `镜头（${view.shots.length}）` }),
           view.actions.canEdit ? aiUi.button({ kind: 'add', text: ADD_TEXT, compact: true, onClick: () => void select(NEW_SHOT) }).element : null
         ),
-        view.shots.map(renderItem),
+        view.shots.map((shot) => renderItem(shot, view)),
         isNew
           ? aiUi.h(
               'button',

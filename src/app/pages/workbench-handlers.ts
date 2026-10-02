@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：workbench-handlers.ts
-// 说明：生成工作台（P5）的请求处理：读取作品与可用模型清单、读取一集的镜头与任务历史、提交生成、取消任务、用系统播放器打开结果视频；并提供分镜脚本阶段产出层需要的请求。
+// 说明：生成工作台（P5）的请求处理：读取作品与可用模型清单、读取一集的镜头组与任务历史、提交生成、重新分组与拆分合并镜头组、取消任务、用系统播放器打开结果视频；并提供分镜脚本阶段产出层需要的请求。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
@@ -21,6 +21,9 @@ export const WORKBENCH_REQUESTS = {
   catalog: 'workbench.catalog',
   episode: 'workbench.episode',
   submit: 'workbench.submit',
+  regroup: 'workbench.regroup',
+  splitGroup: 'workbench.splitGroup',
+  mergeGroup: 'workbench.mergeGroup',
   cancel: 'workbench.cancel',
   openResult: 'workbench.openResult'
 } as const;
@@ -62,6 +65,19 @@ export function registerWorkbenchHandlers(router: MessageRouter, services: Workb
   });
 
   router.register(WORKBENCH_REQUESTS.submit, (payload) => generation.submit(payload));
+
+  router.register(WORKBENCH_REQUESTS.regroup, (payload) => {
+    generation.regroup(payload);
+    return { done: true };
+  });
+  router.register(WORKBENCH_REQUESTS.splitGroup, (payload) => {
+    generation.splitGroup(payload);
+    return { done: true };
+  });
+  router.register(WORKBENCH_REQUESTS.mergeGroup, (payload) => {
+    generation.mergeGroup(payload);
+    return { done: true };
+  });
 
   router.register(WORKBENCH_REQUESTS.cancel, (payload) => generation.cancel(payload));
 

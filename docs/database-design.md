@@ -33,6 +33,7 @@
 | | `script_entities` | 脚本实体（角色、场景、道具、特效） |
 | 分镜脚本 | `storyboard_scripts` | 某一集的分镜脚本 |
 | | `shots` | 镜头 |
+| | `shot_groups` | 镜头组：相邻镜头打包成的一次视频生成单位 |
 | | `shot_entities` | 镜头与出场实体的关系 |
 | | `shot_sounds` | 镜头的声音条目：对白、旁白、音效、配乐 |
 | 资产 | `assets` | 项目资产 |
@@ -42,14 +43,14 @@
 | | `models` | 模型 |
 | | `model_capabilities` | 模型能力描述 |
 | | `generation_profiles` | 三级生成参数（作品、集、镜头） |
-| 生成 | `video_jobs` | 镜头生成任务 |
+| 生成 | `video_jobs` | 镜头组生成任务 |
 | | `video_results` | 生成结果视频 |
 | | `result_frames` | 结果视频的尾帧图片 |
 | | `episode_audio_tracks` | 集的独立音轨（预留，本阶段不开发） |
 | | `asset_jobs` | 图片、音频资产的生成任务（预留，接入图像、音频模型时新增） |
 | | `asset_candidates` | 资产生成结果候选，检查后才采用为资产文件（预留） |
 
-共 25 张表，其中 `episode_audio_tracks`、`asset_jobs`、`asset_candidates` 为预留，实际创建 22 张。
+共 26 张表，其中 `episode_audio_tracks`、`asset_jobs`、`asset_candidates` 为预留，实际创建 23 张。
 
 ## 3. 关系图
 
@@ -69,6 +70,8 @@ erDiagram
   asset_jobs ||--o{ asset_candidates : 候选（预留）
   episodes ||--o{ storyboard_scripts : 分镜脚本
   storyboard_scripts ||--o{ shots : 镜头
+  storyboard_scripts ||--o{ shot_groups : 分组
+  shot_groups ||--o{ shots : 成员
   shots ||--o{ shot_entities : 出场
   script_entities ||--o{ shot_entities : 被引用
   shots ||--o{ shot_sounds : 声音
@@ -85,7 +88,7 @@ erDiagram
   episodes ||--o| generation_profiles : 集参数
   shots ||--o| generation_profiles : 镜头参数
   models ||--o{ generation_profiles : 指定
-  shots ||--o{ video_jobs : 提交
+  shot_groups ||--o{ video_jobs : 提交
   models ||--o{ video_jobs : 执行
   video_jobs ||--o{ video_results : 产出
   video_jobs }o--o| video_jobs : 前序镜头
@@ -269,6 +272,7 @@ erDiagram
 | `continuity_note` | 文本 | 是 | 空串 | 连续性要求 |
 | `first_frame_mode` | 文本 | 是 | `none` | `none`、`prev_tail`、`asset` |
 | `first_frame_asset_file_id` | 整数 | 否 | | `asset` 模式下的首帧图，外键 `asset_files.id`，删除时置空 |
+| `group_id` | 整数 | 否 | | 所属镜头组，外键 `shot_groups.id`，组被删除时置空；空表示尚未分组（新增镜头、旧数据），读取时自动补全 |
 | `prompt_zh` | 文本 | 是 | 空串 | 中文视频提示词 |
 | `prompt_en` | 文本 | 是 | 空串 | 英文视频提示词 |
 | `created_at` | 文本 | 是 | | |
@@ -280,6 +284,25 @@ erDiagram
 - 对白、旁白、音效、配乐不在镜头表中，由 `shot_sounds` 保存。
 - `first_frame_mode = 'asset'` 时 `first_frame_asset_file_id` 必须有值，由业务层校验；不做数据库 CHECK，因为删除资产文件时该列会被置空。
 - `first_frame_mode = 'prev_tail'` 时该镜头不能是集内的第 1 个镜头（由业务校验，不做 CHECK）。
+
+#### `shot_groups` 镜头组
+
+平台按“生成次数”计费，不论视频多短都算一次，且多参考图生成不能同时用首尾帧。因此把序号相邻的镜头打包成组，一组一次生成一个多镜头视频（组内自然连贯，不需要首尾帧衔接），生成任务、结果视频都挂在组上。
+
+| 字段 | 类型 | 必填 | 默认 | 说明 |
+|---|---|---|---|---|
+| `id` | 整数 | 是 | 自增 | |
+| `storyboard_script_id` | 整数 | 是 | | 外键 `storyboard_scripts.id`，级联删除 |
+| `seq` | 整数 | 是 | | 组序号，从 1 开始 |
+| `created_at` | 文本 | 是 | | |
+
+约束与规则：
+
+- `(storyboard_script_id, seq)` 唯一；组的成员由 `shots.group_id` 表示，组内镜头序号连续。
+- **单组最长时长**：生成分镜脚本时设定（默认 15 秒，2 至 120 的整数，保存在阶段记录 `input_json.params.groupMaxSeconds`），应不超过目标视频模型单次最长时长（15、20、30 秒…）。单个镜头时长不能超过它。
+- **自动分组**：生成成功后、新增或删除镜头后、读取时发现有未分组镜头时，保留已有的组，把未分组的镜头按顺序补在最后：先并入最后一组（放得下时），否则新开一组；空组自动删除。打包按顺序装满一组再开下一组；超限时若是在同一场次中间断开，且退回到场次变化处后前面的部分不少于上限的一半、退回的部分加上新镜头仍放得下，就退回。
+- **手动调整**（生成工作台）：“重新分组”（可指定新的每组最长时长，丢弃全部旧组和它们的生成记录）、“从某镜头前拆开”、“并入上一组”。拆分和合并只允许在没有任何生成记录的组上进行；重新分组在有进行中的任务时被拒绝。
+- 重新生成分镜脚本会产生新的阶段记录与分镜脚本，旧版本的组和记录随旧版本保留。
 
 #### `shot_entities` 镜头出场实体
 
@@ -518,14 +541,14 @@ erDiagram
 
 ### 4.7 生成任务与结果
 
-#### `video_jobs` 镜头生成任务
+#### `video_jobs` 镜头组生成任务
 
-每次提交一个镜头产生一条记录；重试产生新记录。任务只在提交时创建，“草稿”“就绪”是校验阶段的界面状态，不入库。
+每次提交一个镜头组产生一条记录，对应一次平台生成（一个多镜头视频）；重试产生新记录。任务只在提交时创建，“草稿”“就绪”是校验阶段的界面状态，不入库。
 
 | 字段 | 类型 | 必填 | 默认 | 说明 |
 |---|---|---|---|---|
 | `id` | 整数 | 是 | 自增 | |
-| `shot_id` | 整数 | 是 | | 外键 `shots.id`，级联删除 |
+| `group_id` | 整数 | 是 | | 外键 `shot_groups.id`，级联删除 |
 | `model_id` | 整数 | 是 | | 外键 `models.id`，限制删除 |
 | `status` | 文本 | 是 | | `waiting`、`queued`、`running`、`succeeded`、`failed`、`canceled` |
 | `request_snapshot_json` | 文本（JSON） | 是 | | 提交时的完整请求快照，见下表 |
@@ -533,7 +556,7 @@ erDiagram
 | `error_category` | 文本 | 否 | | 仅 `failed` 时有值：`auth`（密钥或账号）、`rate_limited`（限流）、`invalid_request`（参数）、`content_rejected`（内容审核未通过）、`server`（服务端）、`network`（网络），与 `ProviderError` 的分类一致 |
 | `error_code` | 文本 | 否 | | 服务商返回的错误码，如 `DataInspectionFailed` |
 | `error_message` | 文本 | 否 | | 服务商返回的原始说明，原样保存并显示给用户，用于判断如何修改后再次生成 |
-| `attempt` | 整数 | 是 | 1 | 同一镜头的第几次提交 |
+| `attempt` | 整数 | 是 | 1 | 同一镜头组的第几次提交 |
 | `prev_job_id` | 整数 | 否 | | 依赖的前序镜头任务，外键 `video_jobs.id`，删除时置空 |
 | `first_frame_id` | 整数 | 否 | | 作为首帧的尾帧，外键 `result_frames.id`，删除时置空 |
 | `created_at` | 文本 | 是 | | |
@@ -545,9 +568,10 @@ erDiagram
 | 键 | 含义 |
 |---|---|
 | `providerCode`、`modelCode` | 服务商与模型标识 |
-| `params` | 合并后的最终参数：`aspectRatio`、`resolution`、`durationSeconds`、`audioMode`、`seed`、`extraParams` |
-| `prompt` | 编译后的提示词：镜头中文提示词、启用的声音条目、参考图编号说明 |
-| `referenceImageFileIds` | 使用的资产图片文件 ID 列表（只存引用，提交给服务商前才读取内容） |
+| `shotIds` | 本次生成包含的镜头（组内全部），按序号排列 |
+| `params` | 合并后的最终参数：`aspectRatio`、`resolution`、`durationSeconds`（组总时长，按模型能力向上对齐）、`audioMode`、`seed`、`extraParams` |
+| `prompt` | 编译后的提示词：参考图编号说明开头；多镜头时每个镜头写成“(开始 - 结束) 镜头提示词 声音：…”的时间段（如 `(0:00 - 0:04)`），单镜头不加时间段 |
+| `referenceImageFileIds` | 组内出场实体（去重）使用的资产图片文件 ID 列表（只存引用，提交给服务商前才读取内容） |
 | `referenceAudioFileIds` | 使用的资产音频文件 ID 列表（含角色音色参考） |
 | `storyboardRunId` | 使用的分镜脚本版本 |
 | `warnings` | 提交时的提醒，如“尾帧衔接暂未支持，已忽略”“某实体没有绑定资产” |
@@ -560,7 +584,7 @@ erDiagram
 |---|---|---|---|---|
 | `id` | 整数 | 是 | 自增 | |
 | `job_id` | 整数 | 是 | | 外键 `video_jobs.id`，级联删除 |
-| `shot_id` | 整数 | 是 | | 冗余保存，便于按镜头查询，外键 `shots.id`，级联删除 |
+| `group_id` | 整数 | 是 | | 冗余保存，便于按镜头组查询，外键 `shot_groups.id`，级联删除 |
 | `file_path` | 文本 | 是 | | 相对扩展存储目录的路径 |
 | `remote_url` | 文本 | 否 | | 服务商返回的临时地址；地址带签名且约 24 小时失效，当前不保存，结果在完成时就下载到本地 |
 | `remote_expires_at` | 文本 | 否 | | 临时地址过期时间 |
@@ -572,9 +596,9 @@ erDiagram
 | `is_selected` | 整数 | 是 | 0 | 是否为该镜头采用的版本 |
 | `created_at` | 文本 | 是 | | |
 
-约束：同一 `shot_id` 下最多一条 `is_selected = 1`（部分唯一索引）。
+约束：同一 `group_id` 下最多一条 `is_selected = 1`（部分唯一索引）。
 
-视频文件路径规则：`videos/{project_id}/{work_id}/{episode_id}/{shot_id}-{job_id}.mp4`。
+视频文件路径规则：`videos/{project_id}/{work_id}/{episode_id}/{group_id}-{job_id}.mp4`。
 
 #### `result_frames` 尾帧图片
 
@@ -591,7 +615,7 @@ erDiagram
 
 ### 4.8 独立音轨（预留）
 
-用于“声音与视频分开生成、再合成”的方式。**本阶段只设计结构，不开发功能，也不建表**；开发时新增迁移 `009-audio-tracks`。
+用于“声音与视频分开生成、再合成”的方式。**本阶段只设计结构，不开发功能，也不建表**；开发时新增迁移 `010-audio-tracks`。
 
 #### `episode_audio_tracks` 集的独立音轨
 
@@ -611,7 +635,7 @@ erDiagram
 
 ### 4.9 资产生成任务与候选（预留）
 
-用于“提示词发送给图像或音频模型生成资产文件”。**本阶段只设计结构，不建表**；接入图像、音频模型时新增迁移 `008-asset-generation`。
+用于“提示词发送给图像或音频模型生成资产文件”。**本阶段只设计结构，不建表**；接入图像、音频模型时新增迁移 `009-asset-generation`。
 
 #### `asset_jobs` 资产生成任务
 
@@ -659,10 +683,12 @@ erDiagram
 | `entity_bindings` | `(episode_id, entity_id, asset_id)` 唯一 | 防重复绑定 |
 | `entity_bindings` | 部分唯一 `(episode_id, entity_id, purpose) WHERE is_primary = 1` | 每个实体每种用途一个主资产 |
 | `generation_profiles` | 部分唯一 `(work_id) WHERE scope = 'work'`；`(episode_id)`、`(shot_id)` 同理 | 每个目标一条参数 |
-| `video_jobs` | `(shot_id, created_at DESC)` | 镜头的提交历史 |
+| `video_jobs` | `(group_id, created_at DESC)` | 镜头组的提交历史 |
 | `video_jobs` | `(status)` | 队列扫描、启动恢复 |
 | `video_jobs` | `(prev_job_id)` | 释放后续镜头 |
-| `video_results` | 部分唯一 `(shot_id) WHERE is_selected = 1` | 每个镜头一个采用版本 |
+| `video_results` | 部分唯一 `(group_id) WHERE is_selected = 1` | 每个镜头组一个采用版本 |
+| `shot_groups` | `(storyboard_script_id, seq)` 唯一 | 组顺序 |
+| `shots` | `(group_id)` | 按组查询镜头 |
 | `shot_sounds` | `(shot_id, seq)` 唯一 | 镜头内声音顺序 |
 | `shot_sounds` | `(speaker_entity_id)` | 按角色查看对白 |
 | `episode_audio_tracks`（预留） | `(episode_id, start_seconds, sort_order)` | 按时间轴读取音轨 |
@@ -720,10 +746,11 @@ erDiagram
 | 5 | `005-generation` | `video_jobs`、`video_results`、`result_frames` | 已实现 |
 | 6 | `006-text-generation` | `stage_runs` 增加“已取消”状态、确认状态、修订号、上游记录、模型、进度、原始输出（重建该表，允许丢弃现有数据）；`screenplays` 增加 `structure_json`；`models` 增加 `kind` | 已实现 |
 | 7 | `007-job-failures` | 重建 `video_jobs`、`video_results`、`result_frames`：失败分类与服务商分类一致并增加 `error_code`，结果视频的时长、宽高允许为空（测试阶段丢弃旧数据） | 已实现（步骤 8） |
-| 8 | `008-asset-generation` | `asset_jobs`、`asset_candidates`（预留） | 接入图像、音频模型时 |
-| 9 | `009-audio-tracks` | `episode_audio_tracks`（预留，开发独立音轨时再新增） | 后续 |
+| 8 | `008-shot-groups` | 新增 `shot_groups`，`shots` 增加 `group_id`；重建 `video_jobs`、`video_results`、`result_frames`，任务与结果改为挂在镜头组上（测试阶段丢弃旧数据） | 已实现（步骤 8） |
+| 9 | `009-asset-generation` | `asset_jobs`、`asset_candidates`（预留） |  接入图像、音频模型时 |
+| 10 | `010-audio-tracks` | `episode_audio_tracks`（预留，开发独立音轨时再新增） | 后续 |
 
-拆分说明：镜头引用资产文件，因此资产在分镜之前建立；全部 22 张表已在前五个迁移中创建，各功能的仓库随功能实现逐步补全。
+拆分说明：镜头引用资产文件，因此资产在分镜之前建立；前五个迁移创建了 22 张表，迁移 8 再增加镜头组表，各功能的仓库随功能实现逐步补全。
 
 已发布的脚本不再修改；结构变更一律新增下一个编号的脚本。测试阶段不考虑已有数据，需要重建表（例如修改 CHECK 约束）时，新增的迁移可以直接丢弃该表及其下游表的数据，不做数据搬迁，正式发布后不再允许。升级前先复制数据库文件作为备份。
 

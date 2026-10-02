@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：workbench.js
-// 说明：生成工作台页脚本：选择作品的一集和视频模型参数，逐个或批量提交镜头生成视频；显示每个镜头的任务状态与历史，失败时显示平台返回的具体原因，支持取消、编辑镜头后再次生成、打开结果视频。
+// 说明：生成工作台页脚本：选择作品的一集和视频模型参数，按镜头组提交生成（一组一次生成一个多镜头视频）；显示每组的镜头、总时长、任务状态与历史，失败时显示平台返回的具体原因；支持重新分组、拆分与合并镜头组、取消、编辑镜头后再次生成、打开结果视频。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
@@ -13,6 +13,9 @@
   const REQUEST_CATALOG = 'workbench.catalog';
   const REQUEST_EPISODE = 'workbench.episode';
   const REQUEST_SUBMIT = 'workbench.submit';
+  const REQUEST_REGROUP = 'workbench.regroup';
+  const REQUEST_SPLIT_GROUP = 'workbench.splitGroup';
+  const REQUEST_MERGE_GROUP = 'workbench.mergeGroup';
   const REQUEST_CANCEL = 'workbench.cancel';
   const REQUEST_OPEN_RESULT = 'workbench.openResult';
   const EVENT_CHANGED = 'workbench.changed';
@@ -33,6 +36,7 @@
   };
   const KILOBYTE = 1024;
   const MEGABYTE = 1024 * KILOBYTE;
+  const ACTION_PREVIEW_LENGTH = 40;
 
   const { formatRelativeTime, stageStatusLabel } = window.pageFormat;
 
@@ -48,8 +52,10 @@
   let loadError = '';
   let isLoading = true;
   let refreshTimer = 0;
-  /** 正在提交的镜头标识，避免重复点击。 */
+  /** 正在提交的镜头组标识，避免重复点击。 */
   const submitting = new Set();
+  /** 重新分组时填写的单组最长时长；用户没改过时跟随当前模型与分镜脚本设定。 */
+  let regroupSeconds = '';
   /** 工具栏当前对应的选项标记，选项变化时才重建，避免后台刷新关闭用户打开的下拉。 */
   let toolbarKey = null;
   let toolbarElement = null;
@@ -173,22 +179,43 @@
     return bytes >= MEGABYTE ? `${(bytes / MEGABYTE).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / KILOBYTE))} KB`;
   }
 
+  /** 截取动作文字用于列表显示。 */
+  function preview(text) {
+    return text.length > ACTION_PREVIEW_LENGTH ? `${text.slice(0, ACTION_PREVIEW_LENGTH)}…` : text;
+  }
+
   /** 弹出分镜脚本产出层，用来编辑镜头或确认采用。 */
   function openStoryboard() {
     const { workId, episodeId } = parseEpisodeKey(episodeKey);
     aiStage.open(workId, STAGE_STORYBOARD, episodeId);
   }
 
-  /** 提交镜头；成功后汇总已提交的镜头、被拒绝的原因和提醒。 */
-  async function submit(shots) {
-    if (!view || shots.length === 0) return;
+  function hasActiveJob(group) {
+    return group.jobs.some((job) => ACTIVE_STATUSES.includes(job.status));
+  }
+
+  /** 所选模型单次最长时长；没有上限信息时为 null。 */
+  function modelMaxSeconds() {
+    const model = selectedModel();
+    return model ? model.maxGroupSeconds : null;
+  }
+
+  /** 这一组是否超过所选模型单次最长时长。 */
+  function exceedsModel(group) {
+    const max = modelMaxSeconds();
+    return max !== null && group.totalSeconds > max;
+  }
+
+  /** 提交镜头组；成功后汇总已提交的组、被拒绝的原因和提醒。 */
+  async function submit(groups) {
+    if (!view || groups.length === 0) return;
     const { workId, episodeId } = parseEpisodeKey(episodeKey);
-    shots.forEach((shot) => submitting.add(shot.id));
+    groups.forEach((group) => submitting.add(group.id));
     render();
     const result = await runAction(REQUEST_SUBMIT, {
       workId,
       episodeId,
-      shotIds: shots.map((shot) => shot.id),
+      groupIds: groups.map((group) => group.id),
       params: {
         modelId: Number(params.modelId),
         aspectRatio: params.aspectRatio,
@@ -196,12 +223,12 @@
         audioMode: params.audioMode
       }
     });
-    shots.forEach((shot) => submitting.delete(shot.id));
+    groups.forEach((group) => submitting.delete(group.id));
     if (result) {
       const lines = [];
-      if (result.submitted.length > 0) lines.push(`已提交 ${result.submitted.length} 个镜头，生成需要几分钟，完成后会自动更新。`);
-      for (const item of result.submitted) for (const warning of item.warnings) lines.push(`镜头 ${item.seq}：${warning}`);
-      for (const item of result.rejected) lines.push(`镜头 ${item.seq || item.shotId} 未提交：${item.issues.join('；')}`);
+      if (result.submitted.length > 0) lines.push(`已提交 ${result.submitted.length} 个镜头组，生成需要几分钟，完成后会自动更新。`);
+      for (const item of result.submitted) for (const warning of item.warnings) lines.push(`第 ${item.seq} 组：${warning}`);
+      for (const item of result.rejected) lines.push(`第 ${item.seq || item.groupId} 组未提交：${item.issues.join('；')}`);
       showMessage(lines.join('\n'), result.submitted.length === 0);
     }
     await loadEpisode(false);
@@ -229,6 +256,39 @@
 
   async function openResult(result) {
     await runAction(REQUEST_OPEN_RESULT, { resultId: result.id });
+  }
+
+  /** 在某个镜头之前拆开所在的组。 */
+  async function splitBefore(shot) {
+    const { workId, episodeId } = parseEpisodeKey(episodeKey);
+    if (await runAction(REQUEST_SPLIT_GROUP, { workId, episodeId, shotId: shot.id })) await loadEpisode(false);
+  }
+
+  /** 把一个组并入上一组。 */
+  async function mergeIntoPrevious(group) {
+    const { workId, episodeId } = parseEpisodeKey(episodeKey);
+    if (await runAction(REQUEST_MERGE_GROUP, { workId, episodeId, groupId: group.id })) await loadEpisode(false);
+  }
+
+  /** 按填写的单组最长时长重新分组；已有生成记录时先确认会被清除。 */
+  async function regroup(secondsText) {
+    const seconds = /^\d+$/.test(secondsText.trim()) ? Number(secondsText.trim()) : Number.NaN;
+    if (!Number.isInteger(seconds)) {
+      showMessage('单组最长时长必须是整数（秒）。', true);
+      return;
+    }
+    if (view.groups.some((group) => group.jobs.length > 0)) {
+      const confirmed = await aiUi.confirm({
+        title: '重新分组',
+        message: '重新分组会丢弃本集现有的镜头组，并清除各组已有的生成记录和失败原因（已保存的视频文件不会删除）。确认继续？',
+        confirmText: '重新分组',
+        cancelText: '取消',
+        variant: 'danger'
+      });
+      if (!confirmed) return;
+    }
+    const { workId, episodeId } = parseEpisodeKey(episodeKey);
+    if (await runAction(REQUEST_REGROUP, { workId, episodeId, maxSeconds: seconds })) await loadEpisode(false);
   }
 
   /** 失败原因：分类名称、平台返回的原文、错误码和处理建议。 */
@@ -270,10 +330,10 @@
     return aiUi.h('div', { class: 'wb-job' }, parts);
   }
 
-  /** 镜头的生成状态：最新一次任务，更早的任务折叠在“历史”里。 */
-  function renderShotStatus(shot) {
-    if (shot.jobs.length === 0) return aiUi.h('span', { class: 'description', text: '尚未生成' });
-    const [latest, ...older] = shot.jobs;
+  /** 镜头组的生成状态：最新一次任务，更早的任务折叠在“历史”里。 */
+  function renderGroupStatus(group) {
+    if (group.jobs.length === 0) return aiUi.h('span', { class: 'description', text: '尚未生成' });
+    const [latest, ...older] = group.jobs;
     return aiUi.h(
       'div',
       {},
@@ -289,55 +349,78 @@
     );
   }
 
-  /** 镜头内容：画面动作、时长与声音数量、出场实体（未绑定资产的会标明）。 */
-  function renderShotContent(shot) {
-    return aiUi.h(
-      'div',
-      { class: 'wb-shot' },
-      aiUi.h('div', { class: 'wb-shot__action', text: shot.action, attrs: { title: shot.action } }),
-      aiUi.h('div', { class: 'description', text: `${shot.durationSeconds} 秒 · ${shot.soundCount} 条声音` }),
-      shot.entities.length > 0
-        ? aiUi.h(
-            'div',
-            { class: 'wb-chips' },
-            shot.entities.map((entity) => aiUi.chip({ text: entity.bound ? entity.name : `${entity.name} · 未绑定资产` }))
+  /** 镜头组内容：标题（镜头数与总时长、超出模型上限的警告）、组内镜头列表、出场实体。 */
+  function renderGroupContent(group) {
+    const max = modelMaxSeconds();
+    const lines = [
+      aiUi.h(
+        'div',
+        { class: 'wb-group__title' },
+        aiUi.h('strong', { text: `第 ${group.seq} 组` }),
+        aiUi.h('span', { class: 'description', text: `${group.shots.length} 个镜头 · 共 ${group.totalSeconds} 秒` })
+      )
+    ];
+    if (exceedsModel(group)) {
+      lines.push(aiUi.h('div', { class: 'status-warning', text: `超过所选模型单次最长 ${max} 秒，请拆分这一组或换一个模型。` }));
+    }
+    const canSplit = group.jobs.length === 0;
+    lines.push(
+      aiUi.h(
+        'ol',
+        { class: 'wb-shots' },
+        group.shots.map((shot, index) =>
+          aiUi.h(
+            'li',
+            { class: 'wb-shot' },
+            aiUi.h(
+              'span',
+              { class: 'wb-shot__text', attrs: { title: shot.action } },
+              `${[`镜头 ${shot.seq}`, shot.shotSize, shot.sceneLabel, `${shot.durationSeconds} 秒`].filter(Boolean).join(' · ')}　${preview(shot.action)}`
+            ),
+            index > 0 && canSplit && !submitting.has(group.id)
+              ? aiUi.button({ text: '从这里拆开', compact: true, ariaLabel: `在镜头 ${shot.seq} 之前拆开这一组`, onClick: () => void splitBefore(shot) }).element
+              : null
           )
-        : null
+        )
+      )
     );
-  }
-
-  /** 镜头的操作：任务进行中显示“取消”，否则显示“生成”或“重新生成”；始终可以编辑镜头。 */
-  function renderShotActions(shot) {
-    const active = shot.jobs.find((job) => ACTIVE_STATUSES.includes(job.status));
-    const canSubmit = view.canGenerate && Boolean(selectedModel()) && !submitting.has(shot.id);
-    const buttons = [];
-    if (active) {
-      buttons.push(aiUi.button({ text: '取消', compact: true, variant: 'danger', ariaLabel: `取消镜头 ${shot.seq} 的任务`, onClick: () => void cancelJob(active) }));
-    } else {
-      buttons.push(
-        aiUi.button({
-          text: shot.jobs.length === 0 ? '生成' : '重新生成',
-          compact: true,
-          variant: 'primary',
-          disabled: !canSubmit,
-          ariaLabel: `${shot.jobs.length === 0 ? '生成' : '重新生成'}镜头 ${shot.seq}`,
-          onClick: () => void submit([shot])
-        })
+    if (group.entities.length > 0) {
+      lines.push(
+        aiUi.h(
+          'div',
+          { class: 'wb-chips' },
+          group.entities.map((entity) => aiUi.chip({ text: entity.bound ? entity.name : `${entity.name} · 未绑定资产` }))
+        )
       );
     }
-    buttons.push(aiUi.button({ text: '编辑镜头', compact: true, ariaLabel: `编辑镜头 ${shot.seq}`, onClick: openStoryboard }));
+    return aiUi.h('div', { class: 'wb-group' }, lines);
+  }
+
+  /** 镜头组的操作：任务进行中显示“取消”，否则显示“生成”或“重新生成”；可并入上一组；始终可以编辑镜头。 */
+  function renderGroupActions(group, index) {
+    const active = group.jobs.find((job) => ACTIVE_STATUSES.includes(job.status));
+    const canSubmit = view.canGenerate && Boolean(selectedModel()) && !submitting.has(group.id) && !exceedsModel(group);
+    const buttons = [];
+    if (active) {
+      buttons.push(aiUi.button({ text: '取消', compact: true, variant: 'danger', ariaLabel: `取消第 ${group.seq} 组的任务`, onClick: () => void cancelJob(active) }));
+    } else {
+      const text = group.jobs.length === 0 ? '生成' : '重新生成';
+      buttons.push(
+        aiUi.button({ text, compact: true, variant: 'primary', disabled: !canSubmit, ariaLabel: `${text}第 ${group.seq} 组`, onClick: () => void submit([group]) })
+      );
+    }
+    const previous = view.groups[index - 1];
+    if (previous && group.jobs.length === 0 && previous.jobs.length === 0 && !submitting.has(group.id)) {
+      buttons.push(aiUi.button({ text: '并入上一组', compact: true, ariaLabel: `把第 ${group.seq} 组并入上一组`, onClick: () => void mergeIntoPrevious(group) }));
+    }
+    buttons.push(aiUi.button({ text: '编辑镜头', compact: true, ariaLabel: `编辑第 ${group.seq} 组的镜头`, onClick: openStoryboard }));
     return buttons.map((button) => button.element);
   }
 
-  const SHOT_COLUMNS = [
-    {
-      title: '镜头',
-      width: 140,
-      render: (shot) => aiUi.tableMainCell({ text: `镜头 ${shot.seq}`, description: [shot.shotSize, shot.sceneLabel].filter(Boolean).join(' · ') })
-    },
-    { title: '内容', minWidth: 220, render: renderShotContent },
-    { title: '生成状态', minWidth: 260, render: renderShotStatus },
-    { title: '操作', type: 'actions', render: renderShotActions }
+  const GROUP_COLUMNS = [
+    { title: '镜头组', minWidth: 320, render: renderGroupContent },
+    { title: '生成状态', minWidth: 260, render: renderGroupStatus },
+    { title: '操作', type: 'actions', render: renderGroupActions }
   ];
 
   /** 空状态和错误状态。 */
@@ -364,22 +447,34 @@
     return notices;
   }
 
-  /** 批量操作：提交还没有结果也没有进行中任务的镜头。 */
+  /** 批量操作与重新分组：提交还没有结果也没有进行中任务的组；按填写的时长重新分组。 */
   function renderBatchBar() {
-    const pending = view.shots.filter(
-      (shot) => !submitting.has(shot.id) && !shot.jobs.some((job) => ACTIVE_STATUSES.includes(job.status) || job.status === 'succeeded')
+    const pending = view.groups.filter(
+      (group) => !submitting.has(group.id) && !exceedsModel(group) && !group.jobs.some((job) => ACTIVE_STATUSES.includes(job.status) || job.status === 'succeeded')
     );
     const enabled = view.canGenerate && Boolean(selectedModel()) && pending.length > 0;
+    const max = modelMaxSeconds();
+    if (regroupSeconds === '') regroupSeconds = String(max !== null && max <= 120 ? max : view.groupMaxSeconds);
+    const secondsInput = aiUi.textInput({ value: regroupSeconds, ariaLabel: '重新分组时每组最长（秒）', onChange: (value) => (regroupSeconds = value) });
+    const regroupDisabled = view.groups.some(hasActiveJob);
     return aiUi.h(
       'div',
       { class: 'wb-batch' },
       aiUi.button({
-        text: `生成未完成的镜头（${pending.length}）`,
+        text: `生成未完成的镜头组（${pending.length}）`,
         variant: 'primary',
         disabled: !enabled,
         onClick: () => void submit(pending)
       }).element,
-      aiUi.button({ text: '查看分镜脚本', onClick: openStoryboard }).element
+      aiUi.button({ text: '查看分镜脚本', onClick: openStoryboard }).element,
+      aiUi.h(
+        'div',
+        { class: 'wb-regroup' },
+        aiUi.h('span', { class: 'description', text: '每组最长' }),
+        aiUi.h('div', { class: 'wb-regroup__input' }, secondsInput.element),
+        aiUi.h('span', { class: 'description', text: '秒' }),
+        aiUi.button({ text: '重新分组', disabled: regroupDisabled, onClick: () => void regroup(secondsInput.getValue()) }).element
+      )
     );
   }
 
@@ -402,7 +497,7 @@
     if (!view) return;
     contentElement.append(
       renderBatchBar(),
-      view.shots.length === 0 ? renderState('这一集没有镜头。') : aiUi.table({ columns: SHOT_COLUMNS, rows: view.shots, ariaLabel: '镜头' }).element
+      view.groups.length === 0 ? renderState('这一集没有镜头。') : aiUi.table({ columns: GROUP_COLUMNS, rows: view.groups, ariaLabel: '镜头组' }).element
     );
   }
 

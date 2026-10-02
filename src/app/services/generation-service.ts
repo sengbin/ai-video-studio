@@ -1,24 +1,17 @@
 // ------------------------------------------------------------------------
 // 名称：generation-service.ts
-// 说明：视频生成应用服务：提供工作台的作品、集、模型与镜头任务视图；按镜头编译请求并校验后提交；取消任务；定位结果文件。
+// 说明：视频生成应用服务：提供工作台的作品、集、模型与镜头组任务视图；按镜头组编译请求并校验后提交；重新分组、拆分与合并镜头组；取消任务；定位结果文件。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
-// 备注：不依赖 VS Code；只有已确认采用的分镜脚本才能生成；每次提交产生新任务，失败原因与历史都保留，修改镜头后可再次提交。
+// 备注：不依赖 VS Code；一个镜头组一次生成一个多镜头视频；只有已确认采用的分镜脚本才能生成；每次提交产生新任务，失败原因与历史都保留；已有生成记录的组不能拆分或合并。
 // ------------------------------------------------------------------------
 
 import { FORM_LEVEL_ERROR_KEY, NotFoundError, ProviderError, ValidationError } from '../../domain/errors';
-import {
-  JOB_STATUS_LABELS,
-  JobFailure,
-  JobStatus,
-  VideoJobRecord,
-  VideoResultRecord
-} from '../../domain/models/generation';
-import { VideoCapability, VideoAudioMode } from '../../domain/models/model-capability';
-import { ENTITY_KIND_LABELS, EntityKind } from '../../domain/models/screenplay';
-import { StageDisplayStatus } from '../../domain/models/stage-run';
-import { ShotRecord } from '../../domain/models/storyboard';
+import { JOB_STATUS_LABELS, JobFailure, JobStatus, VideoJobRecord, VideoResultRecord } from '../../domain/models/generation';
+import { VideoAudioMode, VideoCapability } from '../../domain/models/model-capability';
+import { EntityKind, ENTITY_KIND_LABELS } from '../../domain/models/screenplay';
+import { StageDisplayStatus, StageRun } from '../../domain/models/stage-run';
 import { AssetRepository } from '../../domain/ports/asset-repository';
 import { BindingRepository } from '../../domain/ports/binding-repository';
 import { GenerationRepository, JobMediaReader, ResultStore } from '../../domain/ports/generation-repository';
@@ -27,18 +20,27 @@ import { ProviderRepository } from '../../domain/ports/provider-repository';
 import { ScreenplayRepository } from '../../domain/ports/screenplay-repository';
 import { StageRunRepository } from '../../domain/ports/stage-run-repository';
 import { StoryboardRepository } from '../../domain/ports/storyboard-repository';
-import { EntityReferences, describeJobFailure, planShotRequest, readSubmitInput } from '../../domain/rules/generation-rules';
-import { readEntityId, readRecord } from '../../domain/rules/field-readers';
+import { FieldErrors, assertNoFieldErrors, readEntityId, readInteger, readRecord } from '../../domain/rules/field-readers';
+import { EntityReferences, describeJobFailure, maxGroupSeconds, planGroupRequest, readSubmitInput } from '../../domain/rules/generation-rules';
+import {
+  GROUP_SECONDS_MAX,
+  GROUP_SECONDS_MIN,
+  groupMaxSecondsOf,
+  mergeLayoutIntoPrevious,
+  splitLayoutBefore,
+  sumSeconds
+} from '../../domain/rules/shot-group-rules';
 import { JobChange } from '../queue/job-queue';
 import { buildVideoRequest } from '../queue/video-request';
 import { ChangeNotifier } from './change-notifier';
 import { ProjectService } from './project-service';
 import { ProviderService } from './provider-service';
-import { StoryboardService, storyboardTarget } from './storyboard-service';
+import { readGroupLayout, regroupShots, syncShotGroups } from './shot-grouping';
+import { StoryboardService, readStoryboardParams, storyboardTarget } from './storyboard-service';
 import { WorkService } from './work-service';
 
-/** 每个镜头在视图中最多显示的任务数（最新的在前）。 */
-const MAX_JOBS_PER_SHOT = 10;
+/** 每个镜头组在视图中最多显示的任务数（最新的在前）。 */
+const MAX_JOBS_PER_GROUP = 10;
 
 /** 工作台里的一集。 */
 export interface WorkbenchEpisode {
@@ -65,6 +67,8 @@ export interface WorkbenchModel {
   readonly aspectRatios: readonly string[];
   readonly resolutions: readonly string[];
   readonly audioModes: readonly VideoAudioMode[];
+  /** 单次最多可生成的时长（秒）；没有上限信息时为 null。镜头组超过它就不能用该模型生成。 */
+  readonly maxGroupSeconds: number | null;
 }
 
 /** 工作台的作品与模型清单。 */
@@ -113,16 +117,25 @@ export interface ShotEntityView {
   readonly bound: boolean;
 }
 
-/** 一个镜头的界面视图：内容摘要与它的任务历史（最新的在前）。 */
-export interface ShotView {
+/** 组内一个镜头的界面视图。 */
+export interface GroupShotView {
   readonly id: number;
   readonly seq: number;
   readonly sceneLabel: string;
   readonly shotSize: string;
   readonly action: string;
   readonly durationSeconds: number;
-  readonly firstFrameMode: ShotRecord['firstFrameMode'];
   readonly soundCount: number;
+}
+
+/** 一个镜头组的界面视图：组内镜头、出场实体与任务历史（最新的在前）。 */
+export interface GroupView {
+  readonly id: number;
+  readonly seq: number;
+  readonly shots: readonly GroupShotView[];
+  /** 组内镜头时长之和（秒）。 */
+  readonly totalSeconds: number;
+  /** 组内出场的实体（去重）。 */
   readonly entities: readonly ShotEntityView[];
   readonly jobs: readonly JobView[];
 }
@@ -136,20 +149,22 @@ export interface EpisodeWorkbenchView {
   readonly canGenerate: boolean;
   /** 不能生成时的原因；能生成时为 null。 */
   readonly blockReason: string | null;
-  readonly shots: readonly ShotView[];
+  /** 分镜脚本生成时设定的单组最长时长（秒）。 */
+  readonly groupMaxSeconds: number;
+  readonly groups: readonly GroupView[];
 }
 
-/** 一个被拒绝提交的镜头及其原因。 */
-export interface RejectedShot {
-  readonly shotId: number;
+/** 一个被拒绝提交的镜头组及其原因。 */
+export interface RejectedGroup {
+  readonly groupId: number;
   readonly seq: number;
   readonly issues: readonly string[];
 }
 
-/** 提交结果：已入队的镜头、被拒绝的镜头与提醒。 */
+/** 提交结果：已入队的镜头组、被拒绝的镜头组与提醒。 */
 export interface SubmitResult {
-  readonly submitted: ReadonlyArray<{ readonly shotId: number; readonly seq: number; readonly jobId: number; readonly warnings: readonly string[] }>;
-  readonly rejected: readonly RejectedShot[];
+  readonly submitted: ReadonlyArray<{ readonly groupId: number; readonly seq: number; readonly jobId: number; readonly warnings: readonly string[] }>;
+  readonly rejected: readonly RejectedGroup[];
 }
 
 /** 提交后通知队列开始处理，以及取消任务；由 JobQueue 实现。 */
@@ -176,6 +191,12 @@ export interface GenerationServiceDependencies {
   readonly scheduler: JobScheduler;
   readonly changes: ChangeNotifier<JobChange>;
   readonly now?: () => Date;
+}
+
+/** 工作台使用的分镜脚本版本：已确认采用的当前版本，没有时取最新版本（只读）。 */
+interface WorkbenchRun {
+  readonly run: StageRun;
+  readonly isCurrent: boolean;
 }
 
 /** 视频生成应用服务。 */
@@ -210,31 +231,29 @@ export class GenerationService {
         providerName,
         aspectRatios: capability.aspectRatios,
         resolutions: capability.resolutions,
-        audioModes: capability.audioModes
+        audioModes: capability.audioModes,
+        maxGroupSeconds: maxGroupSeconds(capability.duration)
       };
     });
     return { works: workItems, models };
   }
 
   /**
-   * 读取一集的工作台视图：镜头及其任务历史。
+   * 读取一集的工作台视图：镜头组、组内镜头及任务历史。读取时会补全还没有分组的镜头。
    * @param workId 作品标识。
    * @param episodeId 集标识。
    * @throws NotFoundError 作品或集不存在，或这一集还没有分镜脚本。
    */
   getEpisode(workId: number, episodeId: number): EpisodeWorkbenchView {
-    const { works, storyboardService, runs, screenplays, storyboards, bindings, jobs } = this.dependencies;
+    const { works, storyboardService, screenplays, storyboards, bindings, jobs } = this.dependencies;
     works.getWork(workId);
     const episode = storyboardService.listEpisodeStatuses(workId).find((status) => status.episodeId === episodeId);
     if (episode === undefined) {
       throw new NotFoundError('集不存在。');
     }
-    const target = storyboardTarget(workId, episodeId);
-    const current = runs.findCurrent(target);
-    const run = current ?? runs.listVersions(target)[0];
-    if (run === undefined) {
-      throw new NotFoundError('这一集还没有分镜脚本。');
-    }
+    const { run, isCurrent } = this.resolveRun(workId, episodeId);
+    const groupMax = groupMaxSecondsOf(readStoryboardParams(run));
+    syncShotGroups(storyboards, run.id, groupMax, this.timestamp());
 
     const entities = new Map(screenplays.listEntities(workId).map((entity) => [entity.id, entity]));
     const visualBound = new Set(
@@ -243,50 +262,60 @@ export class GenerationService {
         .filter((binding) => binding.purpose === 'visual' && binding.isPrimary)
         .map((binding) => binding.entityId)
     );
-    const shots = storyboards.listShots(run.id);
-    const shotIds = shots.map((shot) => shot.id);
-    const results = new Map<number, VideoResultRecord>(jobs.listResultsByShots(shotIds).map((result) => [result.jobId, result]));
-    const jobsByShot = new Map<number, VideoJobRecord[]>();
-    for (const job of jobs.listJobsByShots(shotIds)) {
-      jobsByShot.set(job.shotId, [...(jobsByShot.get(job.shotId) ?? []), job]);
+    const shots = new Map(storyboards.listShots(run.id).map((shot) => [shot.id, shot]));
+    const groups = storyboards.listGroups(run.id);
+    const groupIds = groups.map((group) => group.id);
+    const results = new Map<number, VideoResultRecord>(jobs.listResultsByGroups(groupIds).map((result) => [result.jobId, result]));
+    const jobsByGroup = new Map<number, VideoJobRecord[]>();
+    for (const job of jobs.listJobsByGroups(groupIds)) {
+      jobsByGroup.set(job.groupId, [...(jobsByGroup.get(job.groupId) ?? []), job]);
     }
 
     return {
       workId,
       episodeId,
       episodeTitle: episode.title,
-      canGenerate: current !== undefined,
-      blockReason: current === undefined ? describeBlockReason(run.status, run.reviewStatus) : null,
-      shots: shots.map((shot) => ({
-        id: shot.id,
-        seq: shot.seq,
-        sceneLabel: shot.sceneLabel,
-        shotSize: shot.shotSize,
-        action: shot.action,
-        durationSeconds: shot.durationSeconds,
-        firstFrameMode: shot.firstFrameMode,
-        soundCount: shot.sounds.filter((sound) => sound.isEnabled).length,
-        entities: shot.entityIds.flatMap((id) => {
-          const entity = entities.get(id);
-          return entity === undefined ? [] : [{ id, name: entity.name, kindLabel: ENTITY_KIND_LABELS[entity.kind], bound: visualBound.has(id) }];
-        }),
-        jobs: (jobsByShot.get(shot.id) ?? []).slice(0, MAX_JOBS_PER_SHOT).map((job) => this.toJobView(job, results.get(job.id)))
-      }))
+      canGenerate: isCurrent,
+      blockReason: isCurrent ? null : describeBlockReason(run.status, run.reviewStatus),
+      groupMaxSeconds: groupMax,
+      groups: groups.map((group) => {
+        const members = group.shotIds.flatMap((id) => shots.get(id) ?? []);
+        const entityIds = [...new Set(members.flatMap((shot) => shot.entityIds))];
+        return {
+          id: group.id,
+          seq: group.seq,
+          shots: members.map((shot) => ({
+            id: shot.id,
+            seq: shot.seq,
+            sceneLabel: shot.sceneLabel,
+            shotSize: shot.shotSize,
+            action: shot.action,
+            durationSeconds: shot.durationSeconds,
+            soundCount: shot.sounds.filter((sound) => sound.isEnabled).length
+          })),
+          totalSeconds: sumSeconds(members),
+          entities: entityIds.flatMap((id) => {
+            const entity = entities.get(id);
+            return entity === undefined ? [] : [{ id, name: entity.name, kindLabel: ENTITY_KIND_LABELS[entity.kind], bound: visualBound.has(id) }];
+          }),
+          jobs: (jobsByGroup.get(group.id) ?? []).slice(0, MAX_JOBS_PER_GROUP).map((job) => this.toJobView(job, results.get(job.id)))
+        };
+      })
     };
   }
 
   /**
-   * 提交若干镜头生成视频：逐个镜头编译请求并按模型能力校验，通过的写入任务并入队，不通过的连同原因一起返回，不影响其他镜头。
+   * 提交若干镜头组生成视频：逐组编译请求并按模型能力校验，通过的写入任务并入队，不通过的连同原因一起返回，不影响其他组。
    * @param rawInput 界面提交的原始内容。
    * @throws ValidationError 内容不合法、分镜脚本尚未确认采用，或所选模型不可用。
    * @throws NotFoundError 作品不存在。
    */
   async submit(rawInput: unknown): Promise<SubmitResult> {
-    const { works, runs, storyboards, jobs, media, providers, scheduler, changes } = this.dependencies;
+    const { works, storyboards, jobs, media, providers, scheduler, changes } = this.dependencies;
     const input = readSubmitInput(rawInput);
     works.getWork(input.workId);
-    const current = runs.findCurrent(storyboardTarget(input.workId, input.episodeId));
-    if (current === undefined) {
+    const { run, isCurrent } = this.resolveRun(input.workId, input.episodeId);
+    if (!isCurrent) {
       throw new ValidationError({ [FORM_LEVEL_ERROR_KEY]: '分镜脚本还没有确认采用，请先确认后再生成。' });
     }
 
@@ -304,28 +333,41 @@ export class GenerationService {
     if (capability === undefined) {
       throw new ValidationError({ modelId: '所选模型不可用。' });
     }
+    const modelMax = maxGroupSeconds(capability.duration);
 
-    const shotsById = new Map(storyboards.listShots(current.id).map((shot) => [shot.id, shot]));
+    syncShotGroups(storyboards, run.id, groupMaxSecondsOf(readStoryboardParams(run)), this.timestamp());
+    const shotsById = new Map(storyboards.listShots(run.id).map((shot) => [shot.id, shot]));
+    const groupsById = new Map(storyboards.listGroups(run.id).map((group) => [group.id, group]));
     const submitted: Array<SubmitResult['submitted'][number]> = [];
-    const rejected: RejectedShot[] = [];
-    for (const shotId of input.shotIds) {
-      const shot = shotsById.get(shotId);
-      if (shot === undefined) {
-        rejected.push({ shotId, seq: 0, issues: ['镜头不属于当前已确认的分镜脚本。'] });
+    const rejected: RejectedGroup[] = [];
+    for (const groupId of input.groupIds) {
+      const group = groupsById.get(groupId);
+      if (group === undefined) {
+        rejected.push({ groupId, seq: 0, issues: ['镜头组不属于当前已确认的分镜脚本。'] });
         continue;
       }
-      if (jobs.hasActiveJob(shot.id)) {
-        rejected.push({ shotId, seq: shot.seq, issues: ['这个镜头正在生成，完成或取消后才能再次提交。'] });
+      if (jobs.hasActiveJob(group.id)) {
+        rejected.push({ groupId, seq: group.seq, issues: ['这一组正在生成，完成或取消后才能再次提交。'] });
         continue;
       }
-      const snapshot = planShotRequest({
-        shot,
-        storyboardRunId: current.id,
+      const members = group.shotIds.flatMap((id) => shotsById.get(id) ?? []);
+      const total = sumSeconds(members);
+      if (modelMax !== null && total > modelMax) {
+        rejected.push({
+          groupId,
+          seq: group.seq,
+          issues: [`这一组共 ${total} 秒，超过所选模型单次最长 ${modelMax} 秒。请拆分这一组、重新分组，或换一个支持更长时长的模型。`]
+        });
+        continue;
+      }
+      const snapshot = planGroupRequest({
+        shots: members,
+        storyboardRunId: run.id,
         providerCode: usable.providerCode,
         modelCode: call.modelCode,
         capability,
         params: input.params,
-        entities: this.collectEntityReferences(input.workId, input.episodeId, shot)
+        entities: this.collectEntityReferences(input.workId, input.episodeId, [...new Set(members.flatMap((shot) => shot.entityIds))])
       });
       let issues: readonly string[];
       try {
@@ -334,17 +376,74 @@ export class GenerationService {
         issues = [error instanceof Error ? error.message : String(error)];
       }
       if (issues.length > 0) {
-        rejected.push({ shotId, seq: shot.seq, issues });
+        rejected.push({ groupId, seq: group.seq, issues });
         continue;
       }
-      const job = jobs.insertJob({ shotId: shot.id, modelId: usable.model.id, status: 'queued', snapshot, prevJobId: null }, this.timestamp());
-      submitted.push({ shotId, seq: shot.seq, jobId: job.id, warnings: snapshot.warnings });
-      changes.notify({ jobId: job.id, shotId });
+      const job = jobs.insertJob({ groupId: group.id, modelId: usable.model.id, status: 'queued', snapshot, prevJobId: null }, this.timestamp());
+      submitted.push({ groupId, seq: group.seq, jobId: job.id, warnings: snapshot.warnings });
+      changes.notify({ jobId: job.id, groupId });
     }
     if (submitted.length > 0) {
       void scheduler.pump().catch((error: unknown) => console.error('处理生成队列时出现未预期的错误：', error));
     }
     return { submitted, rejected };
+  }
+
+  /**
+   * 丢弃这一集现有的镜头组，按单组最长时长重新分组。已有的生成记录会随旧的组一起清除，已保存的视频文件不删除。
+   * @param rawInput { workId, episodeId, maxSeconds? }，maxSeconds 缺省用分镜脚本生成时设定的值。
+   * @throws ValidationError 内容不合法，或有正在生成的组。
+   * @throws NotFoundError 作品、集不存在或还没有分镜脚本。
+   */
+  regroup(rawInput: unknown): void {
+    const { storyboards, jobs } = this.dependencies;
+    const source = readRecord(rawInput);
+    const { run } = this.resolveEpisodeRun(source);
+    let maxSeconds = groupMaxSecondsOf(readStoryboardParams(run));
+    if (source.maxSeconds !== undefined && source.maxSeconds !== null) {
+      const errors: FieldErrors = {};
+      maxSeconds = readInteger(source, { key: 'maxSeconds', label: '单组最长时长', required: true, min: GROUP_SECONDS_MIN, max: GROUP_SECONDS_MAX }, errors);
+      assertNoFieldErrors(errors);
+    }
+    const groups = storyboards.listGroups(run.id);
+    if (groups.some((group) => jobs.hasActiveJob(group.id))) {
+      throw new ValidationError({ [FORM_LEVEL_ERROR_KEY]: '有镜头组正在生成，完成或取消后才能重新分组。' });
+    }
+    regroupShots(storyboards, run.id, maxSeconds, this.timestamp());
+  }
+
+  /**
+   * 在某个镜头之前拆开所在的组（该镜头及后面的镜头成为新组）。
+   * @param rawInput { workId, episodeId, shotId }。
+   * @throws ValidationError 镜头已是组内第一个，或所在的组已有生成记录。
+   */
+  splitGroup(rawInput: unknown): void {
+    const { storyboards } = this.dependencies;
+    const source = readRecord(rawInput);
+    const { run } = this.resolveEpisodeRun(source);
+    const shotId = readEntityId({ id: source.shotId }, '镜头');
+    const layout = readGroupLayout(storyboards, run.id);
+    const next = splitLayoutBefore(layout, shotId);
+    const affected = layout.find((entry) => entry.shotIds.includes(shotId))?.groupId;
+    this.assertNoJobs(affected === undefined || affected === null ? [] : [affected]);
+    storyboards.applyGroupLayout(run.id, next, this.timestamp());
+  }
+
+  /**
+   * 把一个组并入上一组。
+   * @param rawInput { workId, episodeId, groupId }。
+   * @throws ValidationError 已是第一组，或这两组有生成记录。
+   */
+  mergeGroup(rawInput: unknown): void {
+    const { storyboards } = this.dependencies;
+    const source = readRecord(rawInput);
+    const { run } = this.resolveEpisodeRun(source);
+    const groupId = readEntityId({ id: source.groupId }, '镜头组');
+    const layout = readGroupLayout(storyboards, run.id);
+    const next = mergeLayoutIntoPrevious(layout, groupId);
+    const index = layout.findIndex((entry) => entry.groupId === groupId);
+    this.assertNoJobs([groupId, layout[index - 1].groupId as number]);
+    storyboards.applyGroupLayout(run.id, next, this.timestamp());
   }
 
   /**
@@ -370,13 +469,42 @@ export class GenerationService {
     return this.dependencies.results.resolvePath(result.filePath);
   }
 
-  /** 收集镜头出场实体的绑定：每个实体取形象主资产与音色主资产的第一个参考文件。 */
-  private collectEntityReferences(workId: number, episodeId: number, shot: ShotRecord): EntityReferences[] {
+  /** 工作台使用的分镜脚本版本；这一集还没有分镜脚本时报错。 */
+  private resolveRun(workId: number, episodeId: number): WorkbenchRun {
+    const { runs } = this.dependencies;
+    const target = storyboardTarget(workId, episodeId);
+    const current = runs.findCurrent(target);
+    const run = current ?? runs.listVersions(target)[0];
+    if (run === undefined) {
+      throw new NotFoundError('这一集还没有分镜脚本。');
+    }
+    return { run, isCurrent: current !== undefined };
+  }
+
+  /** 读取请求中的作品与集，返回对应的分镜脚本版本。 */
+  private resolveEpisodeRun(source: Record<string, unknown>): WorkbenchRun {
+    const workId = readEntityId({ id: source.workId }, '作品');
+    const episodeId = readEntityId({ id: source.episodeId }, '集');
+    this.dependencies.works.getWork(workId);
+    return this.resolveRun(workId, episodeId);
+  }
+
+  /** 这些镜头组已有生成记录时不能调整成员。 */
+  private assertNoJobs(groupIds: readonly number[]): void {
+    if (this.dependencies.jobs.listJobsByGroups(groupIds).length > 0) {
+      throw new ValidationError({
+        [FORM_LEVEL_ERROR_KEY]: '这一组已经有生成记录，不能拆分或合并。需要调整时请使用“重新分组”（会清除本集已有的生成记录）。'
+      });
+    }
+  }
+
+  /** 收集出场实体的绑定：每个实体取形象主资产与音色主资产的第一个参考文件，顺序与给定的标识一致。 */
+  private collectEntityReferences(workId: number, episodeId: number, entityIds: readonly number[]): EntityReferences[] {
     const { screenplays, bindings, assets } = this.dependencies;
     const entities = new Map(screenplays.listEntities(workId).map((entity) => [entity.id, entity]));
     const episodeBindings = bindings.listByEpisode(episodeId).filter((binding) => binding.isPrimary);
     const firstFileId = (assetId: number): number | null => assets.listReferenceFiles(assetId)[0]?.id ?? null;
-    return shot.entityIds.flatMap((entityId) => {
+    return entityIds.flatMap((entityId) => {
       const entity = entities.get(entityId);
       if (entity === undefined) return [];
       const visual = episodeBindings.find((binding) => binding.entityId === entityId && binding.purpose === 'visual');

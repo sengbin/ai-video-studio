@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：seed-generation.ts
-// 说明：生成任务相关测试共用的种子数据：项目、作品、集、分镜脚本、若干镜头和一个视频模型。
+// 说明：生成任务相关测试共用的种子数据：项目、作品、集、分镜脚本、若干镜头、镜头组和一个视频模型。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
@@ -19,15 +19,18 @@ export interface GenerationSeed {
   readonly episodeId: number;
   readonly runId: number;
   readonly shotIds: readonly number[];
+  /** 镜头组标识，按组序号排列。 */
+  readonly groupIds: readonly number[];
   readonly modelId: number;
 }
 
 /**
- * 写入一个项目、一个作品、一集、一份分镜脚本、若干镜头和一个视频模型。
+ * 写入一个项目、一个作品、一集、一份分镜脚本、若干镜头、镜头组和一个视频模型。
  * @param database 内存数据库。
  * @param shotCount 镜头数量。
+ * @param groupSizes 每组的镜头数；缺省时每个镜头单独一组，其和应等于镜头数。
  */
-export function seedGeneration(database: DatabaseSync, shotCount = 2): GenerationSeed {
+export function seedGeneration(database: DatabaseSync, shotCount = 2, groupSizes?: readonly number[]): GenerationSeed {
   const insert = (sql: string, ...params: Array<string | number>): number => Number(database.prepare(sql).run(...params).lastInsertRowid);
   const project = new SqliteProjectRepository(database).insert(
     { name: '项目甲', description: '', visualStyle: null, defaultAspectRatio: null, defaultResolution: null },
@@ -50,8 +53,19 @@ export function seedGeneration(database: DatabaseSync, shotCount = 2): Generatio
       `镜头${index + 1}的提示词`
     )
   );
+  // 按给定的组大小依次把镜头分组；缺省时每个镜头一组。
+  const sizes = groupSizes ?? shotIds.map(() => 1);
+  let offset = 0;
+  const groupIds = sizes.map((size, index) => {
+    const groupId = insert("INSERT INTO shot_groups (storyboard_script_id, seq, created_at) VALUES (?, ?, 't')", scriptId, index + 1);
+    for (const shotId of shotIds.slice(offset, offset + size)) {
+      database.prepare('UPDATE shots SET group_id = ? WHERE id = ?').run(groupId, shotId);
+    }
+    offset += size;
+    return groupId;
+  });
   const providers = new SqliteProviderRepository(database);
   const provider = providers.insertProvider({ code: 'fake', displayName: '假服务商', settings: {} }, 't');
   const model = providers.upsertModel(provider.id, { code: 'fake-video', displayName: '假视频模型', kind: 'video', capability: FAKE_VIDEO_CAPABILITY }, 't');
-  return { projectId: project.id, workId, episodeId, runId, shotIds, modelId: model.id };
+  return { projectId: project.id, workId, episodeId, runId, shotIds, groupIds, modelId: model.id };
 }

@@ -61,6 +61,8 @@ test('生成：剧本未确认时拒绝；确认后为这一集生成镜头、�
     assert.equal(view.params?.continuity, 'ai');
     assert.equal(view.shots.length, 2);
     assert.equal(view.totalSeconds, 8);
+    assert.equal(view.groupMaxSeconds, 15);
+    assert.deepEqual(view.groups.map((group) => [group.seq, group.shotIds.length, group.totalSeconds]), [[1, 2, 8]], '8 秒的两个镜头打包成一组');
     assert.equal(view.stale, false);
     assert.deepEqual(view.actions, { canApprove: true, canCancel: false, canRetry: false, canEdit: true, editNeedsConfirm: false });
 
@@ -76,6 +78,22 @@ test('生成：剧本未确认时拒绝；确认后为这一集生成镜头、�
     assert.ok(request?.user.includes('今晚会下雨') && request.user.includes('角色：守夜人（别名：老陈）'));
     assert.ok(request?.user.includes('没有指定'), '项目没有设置风格');
     assert.equal(fixture.storyboards.getLastParams(fixture.work.id)?.audioMode, 'native');
+  } finally {
+    fixture.database.close();
+  }
+});
+
+test('生成：单组最长时长写入输入快照并决定分组；单镜头最长时长不能超过它', async () => {
+  const fixture = await createFixture();
+  try {
+    const episodeId = firstEpisodeId(fixture);
+    await assert.rejects(fixture.storyboards.start(fixture.work.id, [episodeId], { groupMaxSeconds: '6', maxShotSeconds: '8' }), (error) => error instanceof ValidationError && error.fieldErrors.maxShotSeconds !== undefined);
+    await fixture.storyboards.start(fixture.work.id, [episodeId], { groupMaxSeconds: '6' });
+    await fixture.runner.whenIdle();
+    const view = fixture.storyboards.getView(fixture.work.id, episodeId);
+    assert.equal(view.params?.groupMaxSeconds, 6);
+    assert.deepEqual(view.groups.map((group) => group.shotIds.length), [1, 1], '两个 4 秒的镜头放不进 6 秒的一组');
+    assert.ok(fixture.text.requests.at(-1)?.user.includes('每组总时长不超过 6 秒'), '提示词告诉模型分组上限');
   } finally {
     fixture.database.close();
   }

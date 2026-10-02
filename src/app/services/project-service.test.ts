@@ -184,15 +184,16 @@ test('删除影响统计包含作品、资产和视频结果，删除后级联�
     database
       .prepare("INSERT INTO shots (storyboard_script_id, seq, action, duration_seconds, created_at, updated_at) VALUES (1, 1, '远景', 5, ?, ?)")
       .run(timestamp, timestamp);
+    database.prepare('INSERT INTO shot_groups (storyboard_script_id, seq, created_at) VALUES (1, 1, ?)').run(timestamp);
     database
       .prepare("INSERT INTO providers (code, display_name, created_at, updated_at) VALUES ('p', 'P', ?, ?)")
       .run(timestamp, timestamp);
     database.prepare("INSERT INTO models (provider_id, code, display_name, created_at) VALUES (1, 'm', 'M', ?)").run(timestamp);
     database
-      .prepare("INSERT INTO video_jobs (shot_id, model_id, status, request_snapshot_json, created_at) VALUES (1, 1, 'succeeded', '{}', ?)")
+      .prepare("INSERT INTO video_jobs (group_id, model_id, status, request_snapshot_json, created_at) VALUES (1, 1, 'succeeded', '{}', ?)")
       .run(timestamp);
     const insertResult = database.prepare(
-      "INSERT INTO video_results (job_id, shot_id, file_path, duration_seconds, width, height, size_bytes, created_at) VALUES (1, 1, 'a.mp4', 5, 1280, 720, 10, ?)"
+      "INSERT INTO video_results (job_id, group_id, file_path, duration_seconds, width, height, size_bytes, created_at) VALUES (1, 1, 'a.mp4', 5, 1280, 720, 10, ?)"
     );
     insertResult.run(timestamp);
     insertResult.run(timestamp);

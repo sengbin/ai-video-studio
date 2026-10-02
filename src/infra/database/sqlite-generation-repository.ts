@@ -11,12 +11,12 @@ import type { DatabaseSync } from 'node:sqlite';
 import { ProviderFailure } from '../../domain/errors';
 import {
   ACTIVE_JOB_STATUSES,
+  GroupLocation,
   JobFailure,
   JobSnapshot,
   JobStatus,
   NewVideoJob,
   NewVideoResult,
-  ShotLocation,
   VideoJobRecord,
   VideoResultRecord
 } from '../../domain/models/generation';
@@ -27,7 +27,7 @@ import { runInTransaction } from './transaction';
 /** video_jobs 表的一行。 */
 interface JobRow {
   readonly id: number;
-  readonly shot_id: number;
+  readonly group_id: number;
   readonly model_id: number;
   readonly status: JobStatus;
   readonly request_snapshot_json: string;
@@ -47,7 +47,7 @@ interface JobRow {
 interface ResultRow {
   readonly id: number;
   readonly job_id: number;
-  readonly shot_id: number;
+  readonly group_id: number;
   readonly file_path: string;
   readonly remote_url: string | null;
   readonly duration_seconds: number | null;
@@ -65,7 +65,7 @@ const ACTIVE_STATUS_SQL = ACTIVE_JOB_STATUSES.map((status) => `'${status}'`).joi
 function toJob(row: JobRow): VideoJobRecord {
   return {
     id: row.id,
-    shotId: row.shot_id,
+    groupId: row.group_id,
     modelId: row.model_id,
     status: row.status,
     snapshot: JSON.parse(row.request_snapshot_json) as JobSnapshot,
@@ -84,7 +84,7 @@ function toResult(row: ResultRow): VideoResultRecord {
   return {
     id: row.id,
     jobId: row.job_id,
-    shotId: row.shot_id,
+    groupId: row.group_id,
     filePath: row.file_path,
     remoteUrl: row.remote_url,
     durationSeconds: row.duration_seconds,
@@ -110,10 +110,10 @@ export class SqliteGenerationRepository implements GenerationRepository, JobMedi
     const id = runInTransaction(this.database, () => {
       const result = this.database
         .prepare(
-          `INSERT INTO video_jobs (shot_id, model_id, status, request_snapshot_json, attempt, prev_job_id, created_at)
-           VALUES (?, ?, ?, ?, (SELECT COALESCE(MAX(attempt), 0) + 1 FROM video_jobs WHERE shot_id = ?), ?, ?)`
+          `INSERT INTO video_jobs (group_id, model_id, status, request_snapshot_json, attempt, prev_job_id, created_at)
+           VALUES (?, ?, ?, ?, (SELECT COALESCE(MAX(attempt), 0) + 1 FROM video_jobs WHERE group_id = ?), ?, ?)`
         )
-        .run(job.shotId, job.modelId, job.status, JSON.stringify(job.snapshot), job.shotId, job.prevJobId, timestamp);
+        .run(job.groupId, job.modelId, job.status, JSON.stringify(job.snapshot), job.groupId, job.prevJobId, timestamp);
       return Number(result.lastInsertRowid);
     });
     return this.requireJob(id);
@@ -124,11 +124,11 @@ export class SqliteGenerationRepository implements GenerationRepository, JobMedi
     return row === undefined ? undefined : toJob(row);
   }
 
-  listJobsByShots(shotIds: readonly number[]): VideoJobRecord[] {
-    if (shotIds.length === 0) return [];
+  listJobsByGroups(groupIds: readonly number[]): VideoJobRecord[] {
+    if (groupIds.length === 0) return [];
     const rows = this.database
-      .prepare(`SELECT * FROM video_jobs WHERE shot_id IN (${placeholders(shotIds.length)}) ORDER BY created_at DESC, id DESC`)
-      .all(...shotIds) as unknown as JobRow[];
+      .prepare(`SELECT * FROM video_jobs WHERE group_id IN (${placeholders(groupIds.length)}) ORDER BY created_at DESC, id DESC`)
+      .all(...groupIds) as unknown as JobRow[];
     return rows.map(toJob);
   }
 
@@ -140,8 +140,8 @@ export class SqliteGenerationRepository implements GenerationRepository, JobMedi
     return rows.map(toJob);
   }
 
-  hasActiveJob(shotId: number): boolean {
-    const row = this.database.prepare(`SELECT 1 AS found FROM video_jobs WHERE shot_id = ? AND status IN (${ACTIVE_STATUS_SQL}) LIMIT 1`).get(shotId);
+  hasActiveJob(groupId: number): boolean {
+    const row = this.database.prepare(`SELECT 1 AS found FROM video_jobs WHERE group_id = ? AND status IN (${ACTIVE_STATUS_SQL}) LIMIT 1`).get(groupId);
     return row !== undefined;
   }
 
@@ -154,16 +154,16 @@ export class SqliteGenerationRepository implements GenerationRepository, JobMedi
 
   markSucceeded(id: number, result: NewVideoResult, timestamp: string): VideoResultRecord | undefined {
     const resultId = runInTransaction(this.database, () => {
-      const job = this.database.prepare(`SELECT shot_id FROM video_jobs WHERE id = ? AND status IN (${ACTIVE_STATUS_SQL})`).get(id) as unknown as
-        | { shot_id: number }
+      const job = this.database.prepare(`SELECT group_id FROM video_jobs WHERE id = ? AND status IN (${ACTIVE_STATUS_SQL})`).get(id) as unknown as
+        | { group_id: number }
         | undefined;
       if (job === undefined) return undefined;
       const inserted = this.database
         .prepare(
-          `INSERT INTO video_results (job_id, shot_id, file_path, remote_url, duration_seconds, width, height, size_bytes, has_audio, is_selected, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOT EXISTS (SELECT 1 FROM video_results WHERE shot_id = ? AND is_selected = 1), ?)`
+          `INSERT INTO video_results (job_id, group_id, file_path, remote_url, duration_seconds, width, height, size_bytes, has_audio, is_selected, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOT EXISTS (SELECT 1 FROM video_results WHERE group_id = ? AND is_selected = 1), ?)`
         )
-        .run(id, job.shot_id, result.filePath, result.remoteUrl, result.durationSeconds, result.width, result.height, result.sizeBytes, result.hasAudio ? 1 : 0, job.shot_id, timestamp);
+        .run(id, job.group_id, result.filePath, result.remoteUrl, result.durationSeconds, result.width, result.height, result.sizeBytes, result.hasAudio ? 1 : 0, job.group_id, timestamp);
       this.database.prepare("UPDATE video_jobs SET status = 'succeeded', finished_at = ? WHERE id = ?").run(timestamp, id);
       return Number(inserted.lastInsertRowid);
     });
@@ -187,11 +187,11 @@ export class SqliteGenerationRepository implements GenerationRepository, JobMedi
     return Number(result.changes) > 0;
   }
 
-  listResultsByShots(shotIds: readonly number[]): VideoResultRecord[] {
-    if (shotIds.length === 0) return [];
+  listResultsByGroups(groupIds: readonly number[]): VideoResultRecord[] {
+    if (groupIds.length === 0) return [];
     const rows = this.database
-      .prepare(`SELECT * FROM video_results WHERE shot_id IN (${placeholders(shotIds.length)}) ORDER BY created_at DESC, id DESC`)
-      .all(...shotIds) as unknown as ResultRow[];
+      .prepare(`SELECT * FROM video_results WHERE group_id IN (${placeholders(groupIds.length)}) ORDER BY created_at DESC, id DESC`)
+      .all(...groupIds) as unknown as ResultRow[];
     return rows.map(toResult);
   }
 
@@ -200,17 +200,17 @@ export class SqliteGenerationRepository implements GenerationRepository, JobMedi
     return row === undefined ? undefined : toResult(row);
   }
 
-  getShotLocation(shotId: number): ShotLocation | undefined {
+  getGroupLocation(groupId: number): GroupLocation | undefined {
     const row = this.database
       .prepare(
         `SELECT w.project_id, e.work_id, ss.episode_id
-           FROM shots s
-           JOIN storyboard_scripts ss ON ss.id = s.storyboard_script_id
+           FROM shot_groups g
+           JOIN storyboard_scripts ss ON ss.id = g.storyboard_script_id
            JOIN episodes e ON e.id = ss.episode_id
            JOIN works w ON w.id = e.work_id
-          WHERE s.id = ?`
+          WHERE g.id = ?`
       )
-      .get(shotId) as unknown as { project_id: number; work_id: number; episode_id: number } | undefined;
+      .get(groupId) as unknown as { project_id: number; work_id: number; episode_id: number } | undefined;
     return row === undefined ? undefined : { projectId: row.project_id, workId: row.work_id, episodeId: row.episode_id };
   }
 

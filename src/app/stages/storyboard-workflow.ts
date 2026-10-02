@@ -17,6 +17,8 @@ import { FieldErrors, assertNoFieldErrors, readOptionalText, readRecord, readTex
 import { PROJECT_VISUAL_STYLE_MAX_LENGTH } from '../../domain/rules/project-rules';
 import { WORK_NAME_MAX_LENGTH } from '../../domain/rules/work-rules';
 import { MAX_SHOTS_LIMIT, normalizeStoryboardParams, parseStoryboard } from '../../domain/rules/storyboard-rules';
+import { groupMaxSecondsOf } from '../../domain/rules/shot-group-rules';
+import { syncShotGroups } from '../services/shot-grouping';
 import { askModel } from './ask-model';
 import { createStoryboardTool } from './output-tools/storyboard-output-tools';
 import { wrapMaterial } from './prompt-templates';
@@ -55,6 +57,10 @@ function describeShotRules(params: StoryboardParams): string {
     const max = params.maxShotSeconds === null ? '' : `不超过 ${params.maxShotSeconds} 秒`;
     parts.push(`每个镜头时长${[min, max].filter((part) => part.length > 0).join('、')}。`);
   }
+  const groupMax = groupMaxSecondsOf(params);
+  parts.push(
+    `相邻镜头会按顺序合并成组，一组一次生成一个视频，每组总时长不超过 ${groupMax} 秒，因此单个镜头不能超过 ${groupMax} 秒；建议每个镜头 4 到 6 秒，同一场次的镜头尽量连续排列。`
+  );
   return parts.join('');
 }
 
@@ -154,6 +160,8 @@ export class StoryboardWorkflow implements StageWorkflow {
       (json) => parseStoryboard(json, { params, entities }),
       { overflowHint: '本集剧本过长，请在剧本阶段把这一集拆短后重新生成。', tool: createStoryboardTool(params) }
     );
-    storyboards.save(run.id, run.episodeId, shots, (this.dependencies.now?.() ?? new Date()).toISOString());
+    const now = (this.dependencies.now?.() ?? new Date()).toISOString();
+    storyboards.save(run.id, run.episodeId, shots, now);
+    syncShotGroups(storyboards, run.id, groupMaxSecondsOf(params), now);
   }
 }

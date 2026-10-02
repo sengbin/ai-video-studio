@@ -36,6 +36,8 @@ export interface StoryboardParams {
   /** 单镜头最短、最长时长（秒），null 表示不限制。 */
   readonly minShotSeconds: number | null;
   readonly maxShotSeconds: number | null;
+  /** 单个镜头组的总时长上限（秒）：相邻镜头按顺序打包成一组，一组一次生成一个视频；应不超过目标视频模型的单次最长时长。 */
+  readonly groupMaxSeconds: number;
   /** 镜头总数上限，null 表示使用系统上限。 */
   readonly maxShots: number | null;
   readonly continuity: ContinuityStrategy;
@@ -96,6 +98,20 @@ export interface StoryboardScript {
 
 /** 用户编辑一个镜头后提交的内容：镜头序号不能修改，声音整体替换。 */
 export type ShotEdit = Omit<ShotDraft, 'seq'>;
+
+/** 镜头组：序号相邻的若干镜头，作为一次视频生成的单位。 */
+export interface ShotGroup {
+  readonly id: number;
+  readonly seq: number;
+  /** 组内镜头标识，按镜头序号升序。 */
+  readonly shotIds: readonly number[];
+}
+
+/** 分组布局中的一组：groupId 为 null 表示新建的组；布局中没有出现的已有组会被删除。 */
+export interface GroupLayoutEntry {
+  readonly groupId: number | null;
+  readonly shotIds: readonly number[];
+}
 
 /** 生成分镜脚本时可供镜头引用的实体。 */
 export interface StoryboardEntity {

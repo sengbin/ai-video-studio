@@ -105,8 +105,8 @@ export class SqliteProjectRepository implements ProjectRepository {
                 (SELECT COUNT(*) FROM assets WHERE project_id = ?) AS asset_count,
                 (SELECT COUNT(*)
                    FROM video_results vr
-                   JOIN shots s ON s.id = vr.shot_id
-                   JOIN storyboard_scripts ss ON ss.id = s.storyboard_script_id
+                   JOIN shot_groups g ON g.id = vr.group_id
+                   JOIN storyboard_scripts ss ON ss.id = g.storyboard_script_id
                    JOIN episodes e ON e.id = ss.episode_id
                    JOIN works w ON w.id = e.work_id
                   WHERE w.project_id = ?) AS video_result_count`

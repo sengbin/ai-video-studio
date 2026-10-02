@@ -23,6 +23,7 @@ const PARAMS: StoryboardParams = {
   visualStyle: null,
   minShotSeconds: null,
   maxShotSeconds: null,
+  groupMaxSeconds: 15,
   maxShots: null,
   continuity: 'ai',
   audioMode: 'native',
@@ -62,6 +63,7 @@ test('参数：空输入取默认值（由 AI 判断、模型原生声音、全�
     visualStyle: null,
     minShotSeconds: null,
     maxShotSeconds: null,
+    groupMaxSeconds: 15,
     maxShots: null,
     continuity: 'ai',
     audioMode: 'native',
@@ -75,6 +77,7 @@ test('参数：接受界面文字与表单提交的 JSON 数组，数字可为�
     visualStyle: ' 水彩 ',
     minShotSeconds: '2.5',
     maxShotSeconds: 8,
+    groupMaxSeconds: '20',
     maxShots: '30',
     continuity: '尾帧接首帧',
     audioMode: '模型原生生成',
@@ -85,6 +88,7 @@ test('参数：接受界面文字与表单提交的 JSON 数组，数字可为�
     visualStyle: '水彩',
     minShotSeconds: 2.5,
     maxShotSeconds: 8,
+    groupMaxSeconds: 20,
     maxShots: 30,
     continuity: 'prev_tail',
     audioMode: 'native',
@@ -113,6 +117,24 @@ test('参数：不合法的字段一并报错', () => {
   );
   assert.throws(() => normalizeStoryboardParams({ minShotSeconds: '1.25' }), ValidationError);
   assert.throws(() => normalizeStoryboardParams({ audioElements: '["口哨"]' }), ValidationError);
+});
+
+test('参数：单组最长时长为整数且在范围内，单镜头时长不能超过它', () => {
+  assert.equal(normalizeStoryboardParams({ groupMaxSeconds: '30' }).groupMaxSeconds, 30);
+  for (const groupMaxSeconds of ['1', '121', '12.5', 'x']) {
+    assert.throws(() => normalizeStoryboardParams({ groupMaxSeconds }), (error) => error instanceof ValidationError && error.fieldErrors.groupMaxSeconds !== undefined, groupMaxSeconds);
+  }
+  assert.throws(
+    () => normalizeStoryboardParams({ groupMaxSeconds: '10', maxShotSeconds: '12' }),
+    (error) => error instanceof ValidationError && /不能大于单组最长时长/.test(error.fieldErrors.maxShotSeconds ?? '')
+  );
+  assert.throws(() => normalizeStoryboardParams({ groupMaxSeconds: '10', minShotSeconds: '11' }), (error) => error instanceof ValidationError && error.fieldErrors.minShotSeconds !== undefined);
+});
+
+test('解析：镜头时长不能超过单组最长时长，否则放不进任何一组', () => {
+  const params = { ...PARAMS, groupMaxSeconds: 10 };
+  assert.deepEqual(issuesOf({ shots: [shot({ durationSeconds: 11 })] }, params), ['第 1 个镜头的 durationSeconds 必须是 0.1 到 10 之间的数字。']);
+  assert.deepEqual(issuesOf({ shots: [shot({ durationSeconds: 10 })] }, params), []);
 });
 
 test('解析：镜头序号由顺序决定，实体按（类型，名称或别名）映射为标识，说话人自动加入出场实体', () => {

@@ -19,6 +19,7 @@ import {
   STORYBOARD_EXTRA_MAX_LENGTH,
   STORYBOARD_STYLE_MAX_LENGTH
 } from '../../domain/rules/storyboard-rules';
+import { DEFAULT_GROUP_MAX_SECONDS, GROUP_SECONDS_MAX, GROUP_SECONDS_MIN, groupMaxSecondsOf } from '../../domain/rules/shot-group-rules';
 import { ProjectService } from '../services/project-service';
 import { StoryboardService } from '../services/storyboard-service';
 import { WorkService } from '../services/work-service';
@@ -57,6 +58,7 @@ function paramsToValues(params: StoryboardParams): FormValues {
     visualStyle: params.visualStyle ?? '',
     minShotSeconds: params.minShotSeconds === null ? '' : String(params.minShotSeconds),
     maxShotSeconds: params.maxShotSeconds === null ? '' : String(params.maxShotSeconds),
+    groupMaxSeconds: String(groupMaxSecondsOf(params)),
     maxShots: params.maxShots === null ? '' : String(params.maxShots),
     continuity: CONTINUITY_LABELS[params.continuity],
     audioMode: AUDIO_MODE_LABELS[params.audioMode],
@@ -69,6 +71,7 @@ function paramsToValues(params: StoryboardParams): FormValues {
 /** 没有上次参数时的初始值。 */
 function defaultValues(): FormValues {
   return {
+    groupMaxSeconds: String(DEFAULT_GROUP_MAX_SECONDS),
     continuity: CONTINUITY_LABELS.ai,
     audioMode: AUDIO_MODE_LABELS.native,
     audioElements: JSON.stringify(SOUND_KINDS.map((kind) => SOUND_KIND_LABELS[kind]))
@@ -124,7 +127,14 @@ function createStartForm(dependencies: StoryboardFormDependencies, workId: numbe
     {
       key: 'maxShotSeconds',
       label: '单镜头最长时长（秒）',
-      description: '可选，不小于最短时长；应根据目标视频模型的单次生成时长设置',
+      description: '可选，不小于最短时长，且不大于单组最长时长；建议 4 到 6 秒',
+      control: 'text',
+      required: false
+    },
+    {
+      key: 'groupMaxSeconds',
+      label: '单组最长时长（秒）',
+      description: `${GROUP_SECONDS_MIN} 至 ${GROUP_SECONDS_MAX} 的整数，默认 ${DEFAULT_GROUP_MAX_SECONDS}。相邻镜头会按顺序打包成组、一组一次生成一个视频，应不超过目标视频模型的单次最长时长（如 15、20、30 秒）`,
       control: 'text',
       required: false
     },

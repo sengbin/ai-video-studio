@@ -30,7 +30,7 @@ const INTERRUPTED_MESSAGE = '扩展重启，已中断。';
 /** 任务变化通知。 */
 export interface JobChange {
   readonly jobId: number;
-  readonly shotId: number;
+  readonly groupId: number;
 }
 
 /** 解析视频模型的调用凭据。 */
@@ -151,7 +151,7 @@ export class JobQueue {
     }
     if (jobs.markCanceled(jobId, this.timestamp())) {
       this.forget(jobId);
-      this.dependencies.notify({ jobId, shotId: job.shotId });
+      this.dependencies.notify({ jobId, groupId: job.groupId });
     }
     return { remoteCanceled };
   }
@@ -201,7 +201,7 @@ export class JobQueue {
       const ref = await call.adapter.submit(request, call.context);
       if (this.dependencies.jobs.markSubmitted(job.id, ref.remoteJobId, this.timestamp())) {
         this.submitRetries.delete(job.id);
-        this.dependencies.notify({ jobId: job.id, shotId: job.shotId });
+        this.dependencies.notify({ jobId: job.id, groupId: job.groupId });
       }
       return true;
     } catch (error) {
@@ -243,7 +243,7 @@ export class JobQueue {
           });
           return;
         case 'canceled':
-          if (this.dependencies.jobs.markCanceled(job.id, this.timestamp())) this.dependencies.notify({ jobId: job.id, shotId: job.shotId });
+          if (this.dependencies.jobs.markCanceled(job.id, this.timestamp())) this.dependencies.notify({ jobId: job.id, groupId: job.groupId });
           return;
         case 'expired':
           this.fail(job, { category: 'server', code: null, message: '平台已不再保留这个任务（通常保留 24 小时），请重新生成。' });
@@ -259,12 +259,12 @@ export class JobQueue {
   /** 下载结果视频并保存；下载失败按暂时性失败处理。 */
   private async saveResult(job: VideoJobRecord, videoUrl: string, durationSeconds: number | null): Promise<void> {
     const { jobs, results } = this.dependencies;
-    const location = jobs.getShotLocation(job.shotId);
+    const location = jobs.getGroupLocation(job.groupId);
     if (location === undefined) {
       return;
     }
     try {
-      const saved = await results.save(location, job.shotId, job.id, videoUrl);
+      const saved = await results.save(location, job.groupId, job.id, videoUrl);
       const result = jobs.markSucceeded(
         job.id,
         { filePath: saved.filePath, remoteUrl: null, durationSeconds, width: null, height: null, sizeBytes: saved.sizeBytes, hasAudio: job.snapshot.params.audioMode === 'native' },
@@ -272,7 +272,7 @@ export class JobQueue {
       );
       if (result !== undefined) {
         this.forget(job.id);
-        this.dependencies.notify({ jobId: job.id, shotId: job.shotId });
+        this.dependencies.notify({ jobId: job.id, groupId: job.groupId });
       }
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
@@ -295,7 +295,7 @@ export class JobQueue {
     const written = this.dependencies.jobs.markFailed(job.id, failure, this.timestamp());
     this.forget(job.id);
     if (written) {
-      this.dependencies.notify({ jobId: job.id, shotId: job.shotId });
+      this.dependencies.notify({ jobId: job.id, groupId: job.groupId });
     }
     return written;
   }
