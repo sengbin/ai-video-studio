@@ -31,6 +31,10 @@ export interface ProviderSettingField {
   /** 用户没有修改时使用的值。 */
   readonly defaultValue: string;
   readonly format?: ProviderSettingFormat;
+  /** 文本控件的额外格式约束：正则表达式源码，规范化后的值必须匹配。 */
+  readonly pattern?: string;
+  /** 不匹配 pattern 时的修正提示。 */
+  readonly patternMessage?: string;
 }
 
 /** 适配器声明的服务商信息；同一服务商的不同类型适配器必须声明相同的内容。 */

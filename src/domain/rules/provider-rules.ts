@@ -127,10 +127,17 @@ function readSettingValue(field: ProviderSettingField, value: unknown, target: R
     if (normalized === null) {
       return `${field.label}必须是以 https:// 开头的有效地址，且不能包含账号信息。`;
     }
-    target[field.key] = normalized;
-    return null;
+    return acceptTextValue(field, normalized, target);
   }
-  target[field.key] = text;
+  return acceptTextValue(field, text, target);
+}
+
+/** 按字段声明的 pattern 检查文本值，通过时写入 target 并返回 null，否则返回修正提示。 */
+function acceptTextValue(field: ProviderSettingField, value: string, target: Record<string, string>): string | null {
+  if (field.pattern !== undefined && !new RegExp(field.pattern).test(value)) {
+    return field.patternMessage ?? `${field.label}格式不正确。`;
+  }
+  target[field.key] = value;
   return null;
 }
 

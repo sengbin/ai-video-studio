@@ -13,7 +13,7 @@ import { ProviderError } from '../../../domain/errors';
 import { MediaInput, ProviderCallContext, VideoGenerationRequest } from '../../../domain/ports/provider-adapters';
 import { QianwenVideoProvider } from './qianwen-video-provider';
 
-const CONTEXT: ProviderCallContext = { apiKey: 'sk-test', settings: { endpoint: 'https://api.test/v1' } };
+const CONTEXT: ProviderCallContext = { apiKey: 'sk-test', settings: { endpoint: 'https://api.test/api/v1' } };
 
 /** 一次记录下来的网络请求。 */
 interface RecordedCall {
@@ -136,7 +136,7 @@ test('提交：构造请求体与请求头，素材以 Base64 内联，返回任
   assert.deepEqual(ref, { modelCode: 'wan3.0-video', remoteJobId: 'T-1' });
   assert.equal(calls.length, 1);
   const [call] = calls;
-  assert.equal(call.url, 'https://api.test/v1/services/aigc/video-generation/video-synthesis');
+  assert.equal(call.url, 'https://api.test/api/v1/services/aigc/video-generation/video-synthesis');
   assert.equal(call.method, 'POST');
   assert.equal(call.headers.Authorization, 'Bearer sk-test');
   assert.equal(call.headers['X-DashScope-Async'], 'enable');
@@ -163,12 +163,26 @@ test('提交：校验不通过时不发请求，以参数错误抛出', async ()
   assert.equal(calls.length, 0);
 });
 
-test('提交：没有任务标识、没有接口地址时报错', async () => {
+test('提交：没有任务标识、没有或填错接口地址时报错，填错的地址不发请求', async () => {
   const noTask = createFakeFetch([{ body: { output: {} } }]);
   assert.equal((await rejectedWith(noTask.provider.submit(request(), CONTEXT))).category, 'server');
   const noEndpoint = createFakeFetch([]);
   const error = await rejectedWith(noEndpoint.provider.submit(request(), { apiKey: 'k', settings: {} }));
   assert.match(error.message, /接口地址/);
+
+  for (const endpoint of ['https://maas.qianwenaiapi.com/compatible-mode/v1', 'https://maas.qianwenaiapi.com/api/v1/services/aigc/video-generation/video-synthesis']) {
+    const wrong = createFakeFetch([]);
+    const wrongError = await rejectedWith(wrong.provider.submit(request(), { apiKey: 'k', settings: { endpoint } }));
+    assert.equal(wrongError.category, 'invalid_request');
+    assert.match(wrongError.message, /以 \/api\/v1 结尾/);
+    assert.equal(wrong.calls.length, 0);
+  }
+});
+
+test('默认接口地址符合自身的格式约束', () => {
+  const { provider } = createFakeFetch([]);
+  const field = provider.provider.settingFields[0];
+  assert.ok(new RegExp(field.pattern ?? '').test(field.defaultValue));
 });
 
 test('提交：HTTP 错误按状态和错误码分类，错误信息不含密钥', async () => {
@@ -221,7 +235,7 @@ test('查询：各状态映射为统一状态；成功带视频地址与时长',
   });
   assert.equal((await provider.query(ref, CONTEXT)).status, 'canceled');
   assert.equal((await provider.query(ref, CONTEXT)).status, 'expired');
-  assert.equal(calls[0].url, 'https://api.test/v1/tasks/T%2F1', '任务标识需要转义');
+  assert.equal(calls[0].url, 'https://api.test/api/v1/tasks/T%2F1', '任务标识需要转义');
   assert.equal(calls[0].method, 'GET');
   assert.equal(calls[0].body, null);
 });

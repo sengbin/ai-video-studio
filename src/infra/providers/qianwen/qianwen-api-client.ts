@@ -9,7 +9,7 @@
 
 import { ProviderError, ProviderFailure } from '../../../domain/errors';
 import { ProviderCallContext } from '../../../domain/ports/provider-adapters';
-import { QIANWEN_ENDPOINT_SETTING_KEY } from './qianwen-catalog';
+import { QIANWEN_ENDPOINT_MESSAGE, QIANWEN_ENDPOINT_PATTERN, QIANWEN_ENDPOINT_SETTING_KEY } from './qianwen-catalog';
 
 /** 可注入的 fetch 函数类型。 */
 export type FetchFunction = typeof fetch;
@@ -83,6 +83,10 @@ export class QianwenApiClient {
     const endpoint = context.settings[QIANWEN_ENDPOINT_SETTING_KEY];
     if (endpoint === undefined || endpoint === '') {
       throw new ProviderError('invalid_request', '尚未配置千问AI平台的接口地址。');
+    }
+    // 设置页会校验，这里再检查一次，避免早先保存的错误地址让请求发往错误的路径。
+    if (!new RegExp(QIANWEN_ENDPOINT_PATTERN).test(endpoint)) {
+      throw new ProviderError('invalid_request', QIANWEN_ENDPOINT_MESSAGE);
     }
 
     let response: Response;

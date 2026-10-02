@@ -19,6 +19,10 @@ export const QIANWEN_ENDPOINT_SETTING_KEY = 'endpoint';
 /** 接口地址的默认值。 */
 const QIANWEN_DEFAULT_ENDPOINT = 'https://maas.qianwenaiapi.com/api/v1';
 
+/** 接口地址必须以 /api/v1 结尾：视频、图像生成用平台原生接口，不是 compatible-mode，也不含具体接口路径。 */
+export const QIANWEN_ENDPOINT_PATTERN = '/api/v1$';
+export const QIANWEN_ENDPOINT_MESSAGE = '接口地址必须以 /api/v1 结尾（如 https://maas.qianwenaiapi.com/api/v1），不要填 compatible-mode 地址或具体接口路径。';
+
 /** 千问AI平台的服务商声明。 */
 export const QIANWEN_PROVIDER: ProviderDescriptor = {
   code: QIANWEN_PROVIDER_CODE,
@@ -27,10 +31,12 @@ export const QIANWEN_PROVIDER: ProviderDescriptor = {
     {
       key: QIANWEN_ENDPOINT_SETTING_KEY,
       label: '接口地址',
-      description: '千问AI平台的 API 地址，必须以 https:// 开头。',
+      description: '千问AI平台的原生 API 地址，必须以 https:// 开头、/api/v1 结尾，不是 compatible-mode 地址。',
       control: 'text',
       defaultValue: QIANWEN_DEFAULT_ENDPOINT,
-      format: 'https-url'
+      format: 'https-url',
+      pattern: QIANWEN_ENDPOINT_PATTERN,
+      patternMessage: QIANWEN_ENDPOINT_MESSAGE
     }
   ]
 };

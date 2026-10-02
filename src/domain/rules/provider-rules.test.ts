@@ -71,6 +71,14 @@ test('设置项校验：文本规范化、https 地址、下拉选项、未声�
   assert.ok(fieldErrorsOf(() => normalizeProviderSettings({ endpoint: `https://a.com/${'x'.repeat(300)}` }, FIELDS)).endpoint);
 });
 
+test('设置项的 pattern 约束：规范化后的值必须匹配，提示取声明的文字', () => {
+  const fields = [{ ...FIELDS[0], pattern: '/api/v1$', patternMessage: '必须以 /api/v1 结尾。' }];
+  assert.deepEqual(normalizeProviderSettings({ endpoint: 'https://a.com/api/v1/' }, fields), { endpoint: 'https://a.com/api/v1' }, '先去掉末尾斜杠再匹配');
+  assert.equal(fieldErrorsOf(() => normalizeProviderSettings({ endpoint: 'https://a.com/compatible-mode/v1' }, fields)).endpoint, '必须以 /api/v1 结尾。');
+  const withoutMessage = [{ ...FIELDS[0], pattern: '/api/v1$' }];
+  assert.match(fieldErrorsOf(() => normalizeProviderSettings({ endpoint: 'https://a.com/x' }, withoutMessage)).endpoint, /格式不正确/);
+});
+
 test('访问密钥校验：去除首尾空白，拒绝空、含空白和过长', () => {
   assert.deepEqual(readApiKeyInput({ providerId: 2, apiKey: '  sk-abc  ' }), { providerId: 2, apiKey: 'sk-abc' });
   assert.ok(fieldErrorsOf(() => readApiKeyInput({ providerId: 2, apiKey: '' })).apiKey);

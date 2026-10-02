@@ -342,7 +342,7 @@ classDiagram
 
 - 领域层只产出与模型无关的生成请求（`VideoGenerationRequest`、`ImageGenerationRequest`、`AudioGenerationRequest`）；素材以文件内容（类型加字节）传入。每个适配器负责转换为自家 API 的字段，决定素材的传输方式，并处理各家对参考图数量、时长、比例的差异。
 - 新增模型只需新增一个适配器并在 `builtin-providers.ts` 登记，不改动服务层和界面。
-- **千问AI平台视频适配器**（`infra/providers/qianwen/`）：接口地址默认 `https://maas.qianwenaiapi.com/api/v1`，可在设置页修改（必须是 https）；提供 `wan3.0-video` 和高速版 `wan3.0-video-prime`。提交：`POST /services/aigc/video-generation/video-synthesis`，请求头 `X-DashScope-Async: enable`；查询：`GET /tasks/{task_id}`，状态 `PENDING`、`RUNNING`、`SUCCEEDED`、`FAILED`、`CANCELED`、`UNKNOWN`（任务已过期）依次对应排队、处理中、成功、失败、已取消、已过期。
+- **千问AI平台视频适配器**（`infra/providers/qianwen/`）：接口地址默认 `https://maas.qianwenaiapi.com/api/v1`，可在设置页修改（必须是 https，且以 `/api/v1` 结尾，不能填 compatible-mode 地址或具体接口路径，调用时也会再检查一次）；提供 `wan3.0-video` 和高速版 `wan3.0-video-prime`。提交：`POST /services/aigc/video-generation/video-synthesis`，请求头 `X-DashScope-Async: enable`；查询：`GET /tasks/{task_id}`，状态 `PENDING`、`RUNNING`、`SUCCEEDED`、`FAILED`、`CANCELED`、`UNKNOWN`（任务已过期）依次对应排队、处理中、成功、失败、已取消、已过期。
   - 素材（首帧、尾帧、参考图、参考音频）以 Base64 内联（`data:{MIME};base64,…`），不需要图床；平台也支持公网地址和 `oss://` 临时地址，遇到体积过大的素材时再考虑。
   - 素材组合由 `validate` 校验：首帧、尾帧只能与彼此组合，不能再带参考图、参考音频；尾帧必须同时有首帧；参考图最多 10 张（单张 ≤20 MB），参考音频最多 5 段（单段 ≤15 MB）。
   - 时长 2 至 30 秒的整数，`-1` 表示由模型自动决定（`AUTO_DURATION_SECONDS`）；画幅不指定时由模型按输入素材自适应；声音默认开启，对应声音模式 `native`，`none` 关闭；随机种子 0 至 2147483647。
