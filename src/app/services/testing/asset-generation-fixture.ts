@@ -7,6 +7,7 @@
 // 备注：仅供自动化测试使用，随 out/**/testing 一起被打包排除；服务的调度器不自动处理，测试调用 queue.pump() 驱动，避免与后台处理竞争。
 // ------------------------------------------------------------------------
 
+import { AssetKind, AssetRecord } from '../../../domain/models/asset';
 import { ProviderRegistry } from '../../../domain/ports/provider-registry';
 import {
   FAKE_ASSET_IMAGE_CAPABILITY,
@@ -37,6 +38,12 @@ export const IMAGE_URL = 'https://fake.example.com/image.png';
 /** 音频结果的下载地址。 */
 export const AUDIO_URL = 'https://fake.example.com/audio.wav';
 
+/** 创建资产；输入里的 promptZh、promptEn 通过手动保存提示词写入（资产表单本身不含提示词）。 */
+export function createAssetWithPrompts(assets: AssetService, kind: AssetKind, input: Record<string, unknown>): AssetRecord {
+  const { promptZh, promptEn, ...content } = input;
+  const asset = assets.createAsset(kind, content);
+  return promptZh === undefined && promptEn === undefined ? asset : assets.updatePrompts(asset.id, { promptZh, promptEn });
+}
 /** 创建夹具；provider 参数控制是否配置了访问密钥。 */
 export async function createAssetGenerationFixture(
   options: { withApiKey?: boolean; queue?: Partial<AssetGenerationQueueDependencies> } = {}

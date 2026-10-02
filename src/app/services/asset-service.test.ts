@@ -70,8 +70,6 @@ test('创建图片类资产：保存描述字段、选项与文件，列表带�
       background: '纯白背景',
       referenceAspectRatio: '2:3',
       extra: '偏冷色调',
-      promptZh: '中文提示词',
-      promptEn: 'english prompt',
       files: files(imageItem('a.png'), imageItem('b.jpg', JPEG))
     });
 
@@ -79,7 +77,7 @@ test('创建图片类资产：保存描述字段、选项与文件，列表带�
     assert.equal(asset.name, '林夏');
     assert.deepEqual(asset.attributes, { character_type: '人类', appearance: '短发' });
     assert.deepEqual([asset.composition, asset.style, asset.background, asset.referenceAspectRatio], ['正面全身像', null, '纯白背景', '2:3']);
-    assert.deepEqual([asset.extraRequirements, asset.promptZh, asset.promptEn], ['偏冷色调', '中文提示词', 'english prompt']);
+    assert.deepEqual([asset.extraRequirements, asset.promptZh, asset.promptEn], ['偏冷色调', '', '']);
     assert.equal(asset.sourceEntityId, null);
 
     const [item] = service.listAssets('character');
@@ -98,6 +96,34 @@ test('创建图片类资产：保存描述字段、选项与文件，列表带�
     ]);
     assert.ok(references[0].content.equals(PNG));
     assert.equal(database.prepare("SELECT COUNT(*) AS n FROM asset_files WHERE role = 'thumbnail'").get()?.n, 2);
+  } finally {
+    database.close();
+  }
+});
+
+test('提示词：创建与编辑表单都不含提示词，编辑保留已有提示词；手动保存提示词校验长度、生成中拒绝，保存即确认', () => {
+  const { database, service } = createFixture();
+  try {
+    const asset = service.createAsset('prop', { projectName: '项目甲', name: '钥匙', appearance: '黄铜', promptZh: '会被忽略' });
+    assert.deepEqual([asset.promptZh, asset.promptEn, asset.promptRevision, asset.promptContentRevision], ['', '', 0, 0]);
+
+    const saved = service.updatePrompts(asset.id, { promptZh: ' 中文提示词 ', promptEn: 'english prompt' });
+    assert.deepEqual([saved.promptZh, saved.promptEn, saved.promptRevision, saved.promptContentRevision, saved.promptStatus], ['中文提示词', 'english prompt', 1, 1, 'none']);
+
+    // 编辑内容字段不会动提示词，表单字段变化后提示词需更新；手动保存（文本没变）即确认。
+    const edited = service.updateAsset(asset.id, { name: '钥匙', appearance: '银质', promptZh: '被忽略' });
+    assert.deepEqual([edited.promptZh, edited.promptEn, edited.contentRevision, edited.promptRevision, edited.promptContentRevision], ['中文提示词', 'english prompt', 2, 1, 1]);
+    const confirmed = service.updatePrompts(asset.id, { promptZh: '中文提示词', promptEn: 'english prompt' });
+    assert.deepEqual([confirmed.promptRevision, confirmed.promptContentRevision], [1, 2]);
+
+    // 清空后不再有依据。
+    const cleared = service.updatePrompts(asset.id, { promptZh: '', promptEn: '' });
+    assert.deepEqual([cleared.promptRevision, cleared.promptContentRevision], [2, 0]);
+
+    assert.throws(() => service.updatePrompts(asset.id, { promptZh: '长'.repeat(2001) }), (error) => error instanceof ValidationError && 'promptZh' in error.fieldErrors);
+    database.prepare("UPDATE assets SET prompt_status = 'running' WHERE id = ?").run(asset.id);
+    assert.throws(() => service.updatePrompts(asset.id, { promptZh: '新' }), (error) => error instanceof ValidationError && 'promptZh' in error.fieldErrors);
+    assert.throws(() => service.updatePrompts(9999, {}), NotFoundError);
   } finally {
     database.close();
   }

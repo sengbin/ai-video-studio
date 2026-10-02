@@ -23,7 +23,7 @@ import {
   PromptStatus
 } from '../../domain/models/asset';
 import { AssetRepository, GeneratedPrompts } from '../../domain/ports/asset-repository';
-import { AssetRevisionUpdate } from '../../domain/rules/asset-generation-rules';
+import { AssetRevisionUpdate, PromptRevisionUpdate } from '../../domain/rules/asset-generation-rules';
 import { runInTransaction } from './transaction';
 
 /** assets 表的一行。 */
@@ -274,6 +274,17 @@ export class SqliteAssetRepository implements AssetRepository {
       this.insertFiles(id, files, timestamp);
       return true;
     });
+  }
+
+  updatePrompts(id: number, prompts: GeneratedPrompts, revision: PromptRevisionUpdate, timestamp: string): boolean {
+    const result = this.database
+      .prepare(
+        `UPDATE assets SET prompt_zh = ?, prompt_en = ?, prompt_revision = ?, prompt_content_revision = ?,
+           prompt_status = 'none', prompt_error = NULL, updated_at = ?
+         WHERE id = ? AND prompt_status <> 'running'`
+      )
+      .run(prompts.promptZh, prompts.promptEn, revision.promptRevision, revision.promptContentRevision, timestamp, id);
+    return Number(result.changes) > 0;
   }
 
   beginPrompt(id: number, timestamp: string): boolean {

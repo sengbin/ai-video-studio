@@ -417,7 +417,7 @@
     async function confirmSubmitOverwrite(action) {
       const overwrite = action.confirmOverwrite;
       if (!overwrite) return true;
-      const filled = overwrite.fields.some((key) => entries.has(key) && String(entries.get(key).control.getValue()).trim() !== '');
+      const filled = overwrite.fields.length === 0 || overwrite.fields.some((key) => entries.has(key) && String(entries.get(key).control.getValue()).trim() !== '');
       if (!filled) return true;
       return aiUi.confirm({
         title: overwrite.title,

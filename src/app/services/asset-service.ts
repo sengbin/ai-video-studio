@@ -11,8 +11,8 @@ import { ConflictError, NotFoundError, ValidationError } from '../../domain/erro
 import { AssetFileRecord, AssetKind, AssetListItem, AssetRecord, AssetUsageSummary } from '../../domain/models/asset';
 import { ProjectSummary } from '../../domain/models/project';
 import { AssetRepository } from '../../domain/ports/asset-repository';
-import { normalizeAssetContent } from '../../domain/rules/asset-rules';
-import { computeRevisionUpdate, sameReferenceFiles } from '../../domain/rules/asset-generation-rules';
+import { normalizeAssetContent, normalizeAssetPrompts } from '../../domain/rules/asset-rules';
+import { computePromptRevision, computeRevisionUpdate, sameReferenceFiles } from '../../domain/rules/asset-generation-rules';
 import { FieldErrors, readRecord } from '../../domain/rules/field-readers';
 import { ChangeNotifier } from './change-notifier';
 import { ProjectService } from './project-service';
@@ -136,15 +136,29 @@ export class AssetService {
     if (asset.kind === 'audio' && normalized.content.attributes.audio_kind !== asset.attributes.audio_kind && this.isInUse(id)) {
       throw new ValidationError({ audioKind: AUDIO_KIND_LOCKED_MESSAGE });
     }
-    if (
-      asset.promptStatus === 'running' &&
-      (normalized.content.promptZh !== asset.promptZh || normalized.content.promptEn !== asset.promptEn)
-    ) {
+    // 表单不包含提示词，保留已有的。
+    const content = { ...normalized.content, promptZh: asset.promptZh, promptEn: asset.promptEn };
+    const filesChanged = !sameReferenceFiles(this.repository.listReferenceFiles(id), normalized.files);
+    const revision = computeRevisionUpdate(asset, content, filesChanged);
+    if (!this.repository.update(id, content, normalized.files, this.timestamp(), revision)) {
+      throw new NotFoundError(`资产 ${id} 不存在。`);
+    }
+    this.changeNotifier.notify();
+    return this.getAsset(id);
+  }
+
+  /**
+   * 手动保存中英文提示词；保存即视为已确认，不再显示“需更新”。
+   * @throws ValidationError 提示词不合法，或提示词正在生成。
+   * @throws NotFoundError 资产不存在。
+   */
+  updatePrompts(id: number, rawInput: unknown): AssetRecord {
+    const asset = this.getAsset(id);
+    const prompts = normalizeAssetPrompts(rawInput);
+    if (asset.promptStatus === 'running') {
       throw new ValidationError({ promptZh: PROMPT_RUNNING_MESSAGE });
     }
-    const filesChanged = !sameReferenceFiles(this.repository.listReferenceFiles(id), normalized.files);
-    const revision = computeRevisionUpdate(asset, normalized.content, filesChanged);
-    if (!this.repository.update(id, normalized.content, normalized.files, this.timestamp(), revision)) {
+    if (!this.repository.updatePrompts(id, prompts, computePromptRevision(asset, prompts), this.timestamp())) {
       throw new NotFoundError(`资产 ${id} 不存在。`);
     }
     this.changeNotifier.notify();

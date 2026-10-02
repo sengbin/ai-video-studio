@@ -57,15 +57,34 @@ export function sameReferenceFiles(existing: readonly AssetFileRecord[], incomin
  * @param filesChanged 参考文件是否被手动改动。
  */
 export function computeRevisionUpdate(previous: AssetRecord, next: AssetContent, filesChanged: boolean): AssetRevisionUpdate {
-  const contentRevision = previous.contentRevision + (contentFieldsChanged(previous, next) ? 1 : 0);
-  const promptChanged = previous.promptZh !== next.promptZh || previous.promptEn !== next.promptEn;
-  const hasPrompt = next.promptZh !== '' || next.promptEn !== '';
+  // 提示词不随表单保存而改变，修订号保持原样；手动改提示词见 computePromptRevision。
   return {
-    contentRevision,
-    promptRevision: previous.promptRevision + (promptChanged ? 1 : 0),
-    // 用户保存时改了提示词，视为已确认；清空提示词则不再有依据。
-    promptContentRevision: promptChanged ? (hasPrompt ? contentRevision : 0) : previous.promptContentRevision,
+    contentRevision: previous.contentRevision + (contentFieldsChanged(previous, next) ? 1 : 0),
+    promptRevision: previous.promptRevision,
+    promptContentRevision: previous.promptContentRevision,
     clearAdopted: filesChanged
+  };
+}
+
+/** 手动保存提示词时要写入的修订信息。 */
+export interface PromptRevisionUpdate {
+  readonly promptRevision: number;
+  readonly promptContentRevision: number;
+}
+
+/**
+ * 计算手动保存提示词的修订信息：文本有变化才增加修订号；用户亲自保存即视为已确认基于当前表单内容（文本没变也一样），清空则不再有依据。
+ * @param previous 保存前的资产。
+ * @param next 提交的提示词。
+ */
+export function computePromptRevision(
+  previous: Pick<AssetRecord, 'promptZh' | 'promptEn' | 'promptRevision' | 'contentRevision'>,
+  next: { readonly promptZh: string; readonly promptEn: string }
+): PromptRevisionUpdate {
+  const changed = previous.promptZh !== next.promptZh || previous.promptEn !== next.promptEn;
+  return {
+    promptRevision: previous.promptRevision + (changed ? 1 : 0),
+    promptContentRevision: next.promptZh !== '' || next.promptEn !== '' ? previous.contentRevision : 0
   };
 }
 

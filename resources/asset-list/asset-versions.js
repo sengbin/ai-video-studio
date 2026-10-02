@@ -18,7 +18,7 @@
   const REQUEST_DELETE_VERSION = 'assets.deleteVersion';
   const REQUEST_CANCEL_VERSION = 'assets.cancelVersion';
   const REQUEST_RETRY_VERSION = 'assets.retryVersion';
-  const FORM_EDIT = 'asset.edit';
+  const FORM_PROMPT = 'asset.prompt';
 
   const THUMBNAIL_MAX_SIDE = 256;
   const THUMBNAIL_QUALITY = 0.82;
@@ -381,9 +381,9 @@
     });
   }
 
-  /** 弹出资产编辑表单修改提示词。 */
+  /** 弹出提示词表单修改提示词。 */
   function editPrompt() {
-    void window.aiForm.open({ form: FORM_EDIT, params: { assetId: session.assetId } });
+    void window.aiForm.open({ form: FORM_PROMPT, params: { assetId: session.assetId } });
   }
 
   /**

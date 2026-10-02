@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：asset-form.ts
-// 说明：资产表单（F6）的定义：新建与编辑角色、场景、道具、特效、音频资产；字段、选项与上传限制随类型变化。
+// 说明：资产表单（F6）的定义：新建与编辑角色、场景、道具、特效、音频资产；字段、选项与上传限制随类型变化；同一目录还登记提示词表单（F14，见 asset-prompt-form.ts）。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
@@ -32,21 +32,23 @@ import {
   ASSET_IMAGE_MAX_BYTES,
   ASSET_IMAGE_MAX_FILES,
   ASSET_NAME_MAX_LENGTH,
-  ASSET_PROMPT_MAX_LENGTH,
   ASSET_STYLE_MAX_LENGTH
 } from '../../domain/rules/asset-rules';
 import { buildAssetPrefill } from '../../domain/rules/entity-asset-prefill';
+import { hasPrompt } from '../../domain/rules/asset-generation-rules';
 import { readEntityId, readRecord } from '../../domain/rules/field-readers';
 import { ASSET_PROJECT_FIELD_KEY, AssetService, DUPLICATE_ASSET_NAME_MESSAGE } from '../services/asset-service';
 import { AssetPromptService } from '../services/asset-prompt-service';
 import { ProjectService } from '../services/project-service';
 import { FormCatalog, FormDefinition, FormFactory, FormValues } from './form-definition';
 import { FormFieldSchema, FormSubmitActionSchema } from './form-schema';
+import { ASSET_PROMPT_FORM_NAME, createAssetPromptForm } from './asset-prompt-form';
 
 /** 资产表单在表单目录中的名称，页面据此请求打开。 */
 export const ASSET_FORM_NAMES = {
   create: 'asset.create',
-  edit: 'asset.edit'
+  edit: 'asset.edit',
+  prompt: ASSET_PROMPT_FORM_NAME
 } as const;
 
 /** 提交按钮的键：仅创建、创建并生成提示词、保存、保存并重新生成提示词。 */
@@ -60,11 +62,8 @@ export const ASSET_SUBMIT_KEYS = {
 const NO_PROJECT_MESSAGE = '还没有项目，请先在“所有项目”中创建项目。';
 const PROMPT_RUNNING_MESSAGE = '提示词正在生成中，完成后再重新生成。';
 const MEGABYTE = 1024 * 1024;
-const PROMPT_MAX_ROWS = 6;
 /** 参考图以外的长文本描述最多长到的行数。 */
 const ATTRIBUTE_MAX_ROWS = 4;
-/** 提示词字段的键。 */
-const PROMPT_FIELD_KEYS = ['promptZh', 'promptEn'] as const;
 
 /** 新建表单的提交按钮：仅创建，或创建后在后台生成提示词（主按钮）。 */
 const CREATE_SUBMIT_ACTIONS: readonly FormSubmitActionSchema[] = [
@@ -72,16 +71,20 @@ const CREATE_SUBMIT_ACTIONS: readonly FormSubmitActionSchema[] = [
   { key: ASSET_SUBMIT_KEYS.createAndPrompt, label: '创建并生成提示词', primary: true }
 ];
 
-/** 编辑表单的提交按钮：仅保存，或保存后重新生成提示词（主按钮，提示词已有内容时先确认覆盖）。 */
-const EDIT_SUBMIT_ACTIONS: readonly FormSubmitActionSchema[] = [
-  { key: ASSET_SUBMIT_KEYS.save, label: '保存' },
-  {
-    key: ASSET_SUBMIT_KEYS.saveAndPrompt,
-    label: '保存并重新生成提示词',
-    primary: true,
-    confirmOverwrite: { fields: PROMPT_FIELD_KEYS, title: '覆盖现有提示词', message: '将用重新生成的提示词覆盖现有提示词，确定吗？', confirmText: '覆盖' }
-  }
-];
+/** 编辑表单的提交按钮：仅保存，或保存后重新生成提示词（主按钮；资产已有提示词时先确认覆盖）。 */
+function createEditSubmitActions(hasExistingPrompt: boolean): FormSubmitActionSchema[] {
+  return [
+    { key: ASSET_SUBMIT_KEYS.save, label: '保存' },
+    {
+      key: ASSET_SUBMIT_KEYS.saveAndPrompt,
+      label: '保存并重新生成提示词',
+      primary: true,
+      ...(hasExistingPrompt
+        ? { confirmOverwrite: { fields: [], title: '覆盖现有提示词', message: '将用重新生成的提示词覆盖现有提示词，确定吗？', confirmText: '覆盖' } }
+        : {})
+    }
+  ];
+}
 
 /** 入口传来的资产类型，必须是五种之一。 */
 function readKind(value: unknown): AssetKind {
@@ -129,18 +132,8 @@ function createExtraField(): FormFieldSchema {
   };
 }
 
-/** 中英文提示词字段；提示词生成中只读。 */
-function createPromptFields(kind: AssetKind, promptLocked: boolean): FormFieldSchema[] {
-  const purpose = kind === 'audio' ? '音频生成提示词' : '图像生成提示词';
-  const note = promptLocked ? '提示词生成中，完成后再修改' : `${purpose}，可手动编辑，最多 ${ASSET_PROMPT_MAX_LENGTH} 字`;
-  return [
-    { key: 'promptZh', label: '中文提示词', description: note, control: 'textarea', required: false, maxLength: ASSET_PROMPT_MAX_LENGTH, maxRows: PROMPT_MAX_ROWS, disabled: promptLocked },
-    { key: 'promptEn', label: '英文提示词', description: note, control: 'textarea', required: false, maxLength: ASSET_PROMPT_MAX_LENGTH, maxRows: PROMPT_MAX_ROWS, disabled: promptLocked }
-  ];
-}
-
 /** 图像类资产（角色、场景、道具、特效）的字段。 */
-function createImageFields(kind: Exclude<AssetKind, 'audio'>, promptLocked: boolean): FormFieldSchema[] {
+function createImageFields(kind: Exclude<AssetKind, 'audio'>): FormFieldSchema[] {
   const options = ASSET_OPTION_SETS[kind];
   const fields: FormFieldSchema[] = [
     {
@@ -205,7 +198,6 @@ function createImageFields(kind: Exclude<AssetKind, 'audio'>, promptLocked: bool
             }
     ),
     createExtraField(),
-    ...createPromptFields(kind, promptLocked),
     {
       key: ASSET_FILE_FIELD_KEY,
       label: '参考图',
@@ -224,7 +216,7 @@ function createImageFields(kind: Exclude<AssetKind, 'audio'>, promptLocked: bool
 }
 
 /** 音频资产的字段；音频文件可以暂时为空（之后上传或由模型生成）。 */
-function createAudioFields(promptLocked: boolean): FormFieldSchema[] {
+function createAudioFields(): FormFieldSchema[] {
   return [
     {
       key: 'audioKind',
@@ -252,7 +244,6 @@ function createAudioFields(promptLocked: boolean): FormFieldSchema[] {
       options: AUDIO_LANGUAGE_OPTIONS
     },
     createExtraField(),
-    ...createPromptFields('audio', promptLocked),
     {
       key: ASSET_FILE_FIELD_KEY,
       label: '音频文件',
@@ -268,16 +259,11 @@ function createAudioFields(promptLocked: boolean): FormFieldSchema[] {
 }
 
 /** 按类型组装表单字段；新建时带所属项目。 */
-function createFields(
-  kind: AssetKind,
-  projectNames: readonly string[] | undefined,
-  checkUnique: boolean,
-  promptLocked = false
-): FormFieldSchema[] {
+function createFields(kind: AssetKind, projectNames: readonly string[] | undefined, checkUnique: boolean): FormFieldSchema[] {
   return [
     ...(projectNames === undefined ? [] : [createProjectField(projectNames)]),
     createNameField(kind, checkUnique),
-    ...(kind === 'audio' ? createAudioFields(promptLocked) : createImageFields(kind, promptLocked))
+    ...(kind === 'audio' ? createAudioFields() : createImageFields(kind))
   ];
 }
 
@@ -293,8 +279,6 @@ function toFormValues(asset: AssetRecord, files: readonly AssetFileRecord[]): Fo
   const values: Record<string, string> = {
     name: asset.name,
     extra: asset.extraRequirements,
-    promptZh: asset.promptZh,
-    promptEn: asset.promptEn,
     [ASSET_FILE_FIELD_KEY]: filesToValue(files)
   };
   if (asset.kind === 'audio') {
@@ -426,29 +410,26 @@ function createEntityAssetForm(dependencies: AssetFormDependencies, source: Reco
 /** 创建“编辑资产”表单的定义；所属项目与类型不能修改，因此不显示项目字段。 */
 function createEditAssetForm(assets: AssetService, prompts: AssetPromptService, assetId: number): FormDefinition {
   const asset = assets.getAsset(assetId);
-  const promptLocked = asset.promptStatus === 'running';
+  const editActions = createEditSubmitActions(hasPrompt(asset));
   return {
     schema: {
       title: `编辑${ASSET_KIND_LABELS[asset.kind]}`,
-      submitLabel: EDIT_SUBMIT_ACTIONS[1].label,
-      fields: createFields(asset.kind, undefined, true, promptLocked),
-      submitActions: EDIT_SUBMIT_ACTIONS
+      submitLabel: editActions[1].label,
+      fields: createFields(asset.kind, undefined, true),
+      submitActions: editActions
     },
     initialValues: toFormValues(asset, assets.getReferenceFiles(assetId)),
     checkField: (key, value) =>
       key === 'name' && !assets.isNameAvailable(asset.projectId, asset.kind, value, asset.id) ? DUPLICATE_ASSET_NAME_MESSAGE : undefined,
     submit: (values, submitKey) => {
       const regenerate = submitKey === ASSET_SUBMIT_KEYS.saveAndPrompt;
-      const current = assets.getAsset(asset.id);
       if (regenerate) {
-        if (current.promptStatus === 'running') {
+        if (assets.getAsset(asset.id).promptStatus === 'running') {
           throw new ValidationError({ [FORM_LEVEL_ERROR_KEY]: PROMPT_RUNNING_MESSAGE });
         }
         prompts.assertCanGenerate(asset.kind, values, hasFiles(values));
       }
-      // 打开表单时提示词正在生成：提示词字段是只读的，保存时保留库里最新的内容，不拿打开时的旧值覆盖生成结果。
-      const submitted = promptLocked ? { ...values, promptZh: current.promptZh, promptEn: current.promptEn } : values;
-      assets.updateAsset(asset.id, submitted);
+      assets.updateAsset(asset.id, values);
       if (regenerate) {
         prompts.start(asset.id);
       }
@@ -471,6 +452,7 @@ export function createAssetFormCatalog(dependencies: AssetFormDependencies): For
           dependencies.prompts,
           readEntityId({ id: readRecord(params ?? {}).assetId }, '资产')
         )
-    ]
+    ],
+    [ASSET_FORM_NAMES.prompt, (params) => createAssetPromptForm(dependencies.assets, dependencies.prompts, readEntityId({ id: readRecord(params ?? {}).assetId }, '资产'))]
   ]);
 }

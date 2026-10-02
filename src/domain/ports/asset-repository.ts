@@ -18,7 +18,7 @@ import {
   NewAssetFile,
   PromptStatus
 } from '../models/asset';
-import { AssetRevisionUpdate } from '../rules/asset-generation-rules';
+import { AssetRevisionUpdate, PromptRevisionUpdate } from '../rules/asset-generation-rules';
 
 /** 后台生成成功后要写入的提示词。 */
 export interface GeneratedPrompts {
@@ -46,6 +46,8 @@ export interface AssetRepository {
   insert(input: AssetInput, files: readonly NewAssetFile[], timestamp: string): number;
   /** 修改资产内容，用 files 整体替换原有文件，并写入修订信息；资产不存在时返回 false。 */
   update(id: number, content: AssetContent, files: readonly NewAssetFile[], timestamp: string, revision: AssetRevisionUpdate): boolean;
+  /** 手动保存提示词并写入修订信息；资产不存在或提示词正在生成时返回 false。 */
+  updatePrompts(id: number, prompts: GeneratedPrompts, revision: PromptRevisionUpdate, timestamp: string): boolean;
   /** 删除资产（连同文件和绑定）；资产不存在时返回 false。 */
   remove(id: number): boolean;
   /** 统计资产被集内实体绑定和镜头声音使用的情况。 */

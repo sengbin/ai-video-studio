@@ -22,6 +22,7 @@
   const ACTION_CREATE = 'create';
   const FORM_CREATE = 'asset.create';
   const FORM_EDIT = 'asset.edit';
+  const FORM_PROMPT = 'asset.prompt';
   const KIND_AUDIO = 'audio';
 
   const GENERIC_ERROR_TEXT = '操作失败，请重试。';
@@ -137,6 +138,11 @@
   /** 弹出“编辑资产”表单。 */
   function openEditForm(asset) {
     void showForm({ form: FORM_EDIT, params: { assetId: asset.id } });
+  }
+
+  /** 弹出“提示词”表单：查看、手动修改或重新生成。 */
+  function openPromptForm(asset) {
+    void showForm({ form: FORM_PROMPT, params: { assetId: asset.id } });
   }
 
   /** 删除资产：先取使用情况，再用页内对话框确认，最后请求删除。 */
@@ -275,7 +281,8 @@
       buttons.push(generate.element);
     }
     buttons.push(
-      aiUi.button({ text: '查看', compact: true, ariaLabel: `查看版本：${asset.name}`, onClick: () => window.aiAssetVersions.open(asset) }).element,
+      aiUi.button({ text: '提示词', compact: true, ariaLabel: `查看或修改提示词：${asset.name}`, onClick: () => openPromptForm(asset) }).element,
+      aiUi.button({ text: '版本', compact: true, ariaLabel: `查看版本：${asset.name}`, onClick: () => window.aiAssetVersions.open(asset) }).element,
       aiUi.button({ kind: 'edit', compact: true, ariaLabel: `修改：${asset.name}`, onClick: () => openEditForm(asset) }).element,
       aiUi.button({ kind: 'delete', compact: true, ariaLabel: `删除：${asset.name}`, onClick: () => void deleteAsset(asset) }).element
     );

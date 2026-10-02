@@ -53,7 +53,7 @@ export interface FormSubmitActionSchema {
   readonly label: string;
   /** 主按钮：突出显示，并负责回车提交；没有标记时最后一个是主按钮。 */
   readonly primary?: boolean;
-  /** 提交前的覆盖确认：指定字段已有内容时询问。 */
+  /** 提交前的覆盖确认：指定字段已有内容时询问；fields 为空表示总是询问（宿主已知要覆盖的内容不在表单里）。 */
   readonly confirmOverwrite?: {
     readonly fields: readonly string[];
     readonly title: string;

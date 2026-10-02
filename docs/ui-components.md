@@ -578,7 +578,7 @@ await aiForm.open({ form: 'project.edit', params: { id: project.id } }); // 编�
 
 **字段动作**：`schema.actions` 描述显示在某个字段之前的动作按钮（`key`、`label`、`before`），点击后引擎把当前字段值发给宿主上 `definition.actions[key]` 指定的异步函数（可能较慢），返回的字段值回填到 `fills` 列出的字段。进行中按钮变为“取消”，失败原因显示在按钮右侧；目标字段已有内容时，回填前先用确认框询问是否覆盖。`imageField` 指定一个文件字段时，引擎只随请求发送它的前 `maxImages` 张图片，并先缩小到最长边 1024 像素（JPEG），其他文件字段不发送。动作不改变会话状态，也不写库，用户检查并保存后才生效。
 
-**多个提交按钮与只读字段**：`schema.submitActions` 描述底部的多个提交按钮（`key`、`label`、`primary`——主按钮突出并负责回车提交，没有标记时取最后一个；`confirmOverwrite`——提交前若指定字段已有内容，先用确认框询问是否覆盖，`fields`、`title`、`message`、`confirmText`）；提交请求带所选按钮的键 `submitKey`，宿主的 `definition.submit` 据此决定后续动作（例如资产表单的“创建并生成提示词”）。没有 `submitActions` 时仍是 `submitLabel` 对应的一个按钮。字段的 `disabled: true` 表示只读：显示当前值，不能修改，提交时仍带着该值。
+**多个提交按钮与只读字段**：`schema.submitActions` 描述底部的多个提交按钮（`key`、`label`、`primary`——主按钮突出并负责回车提交，没有标记时取最后一个；`confirmOverwrite`——提交前若指定字段已有内容，先用确认框询问是否覆盖，`fields`、`title`、`message`、`confirmText`；`fields` 为空表示总是询问，用于要覆盖的内容不在表单里的情况）；提交请求带所选按钮的键 `submitKey`，宿主的 `definition.submit` 据此决定后续动作（例如资产表单的“创建并生成提示词”）。没有 `submitActions` 时仍是 `submitLabel` 对应的一个按钮。字段的 `disabled: true` 表示只读：显示当前值，不能修改，提交时仍带着该值。
 
 ### 8.4 取消与关闭
 

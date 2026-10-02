@@ -11,13 +11,13 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { NotFoundError, ValidationError } from '../../domain/errors';
 import { AssetRecord } from '../../domain/models/asset';
-import { IMAGE_URL, PNG_BYTES, WAV_BYTES, createAssetGenerationFixture } from './testing/asset-generation-fixture';
+import { IMAGE_URL, PNG_BYTES, WAV_BYTES, createAssetGenerationFixture, createAssetWithPrompts } from './testing/asset-generation-fixture';
 
 type Fixture = Awaited<ReturnType<typeof createAssetGenerationFixture>>;
 
 /** 创建带中英文提示词的角色资产。 */
 function createCharacter(fixture: Fixture, overrides: Record<string, unknown> = {}): AssetRecord {
-  return fixture.assets.createAsset('character', {
+  return createAssetWithPrompts(fixture.assets, 'character', {
     projectName: '项目甲',
     name: '林夏',
     appearance: '短发',
@@ -28,16 +28,19 @@ function createCharacter(fixture: Fixture, overrides: Record<string, unknown> = 
   });
 }
 
-/** 按资产现有内容加改动保存（保存会整体替换内容，所以要带上原有字段）。 */
+/** 按资产现有内容加改动保存（保存会整体替换内容，所以要带上原有字段；提示词不在表单里）。 */
 function edit(fixture: Fixture, asset: AssetRecord, patch: Record<string, unknown>): AssetRecord {
   return fixture.assets.updateAsset(asset.id, {
     name: asset.name,
     appearance: asset.attributes.appearance,
     referenceAspectRatio: asset.referenceAspectRatio ?? '',
-    promptZh: asset.promptZh,
-    promptEn: asset.promptEn,
     ...patch
   });
+}
+
+/** 手动保存提示词。 */
+function editPrompts(fixture: Fixture, asset: AssetRecord, patch: Record<string, unknown>): AssetRecord {
+  return fixture.assets.updatePrompts(asset.id, { promptZh: asset.promptZh, promptEn: asset.promptEn, ...patch });
 }
 
 async function modelIdOf(fixture: Fixture, asset: AssetRecord): Promise<number> {
@@ -82,10 +85,10 @@ test('生成目录：没有提示词、没有可用模型时不能生成并说�
       useReferenceImages: false
     });
 
-    const voice = fixture.assets.createAsset('audio', { projectName: '项目甲', name: '声音', audioKind: '音色参考', language: '英文', promptZh: '声音' });
+    const voice = createAssetWithPrompts(fixture.assets, 'audio', { projectName: '项目甲', name: '声音', audioKind: '音色参考', language: '英文', promptZh: '声音' });
     const audioCatalog = await fixture.generation.getCatalog(voice.id);
     assert.deepEqual([audioCatalog.modelKind, audioCatalog.defaults.language, audioCatalog.models.length], ['audio', 'en', 1]);
-    const music = fixture.assets.createAsset('audio', { projectName: '项目甲', name: '配乐', audioKind: '背景音乐', promptZh: '紧张' });
+    const music = createAssetWithPrompts(fixture.assets, 'audio', { projectName: '项目甲', name: '配乐', audioKind: '背景音乐', promptZh: '紧张' });
     const musicCatalog = await fixture.generation.getCatalog(music.id);
     assert.equal(musicCatalog.models.length, 0, '假音频模型不支持配乐');
     assert.equal(musicCatalog.availability.available, false);
@@ -148,7 +151,7 @@ test('版本号只在提交时加 1；修改提示词或表单后显示“有改
     assert.deepEqual([list.versions.map((v) => [v.version, v.status, v.isOutdated]), list.hasUngeneratedChanges], [[[1, 'succeeded', false]], false]);
 
     // 只改提示词：图片有改动未生成，提示词不算过期。
-    const afterPrompt = edit(fixture, asset, { promptZh: '改过的提示词' });
+    const afterPrompt = editPrompts(fixture, asset, { promptZh: '改过的提示词' });
     assert.deepEqual([afterPrompt.contentRevision, afterPrompt.promptRevision, afterPrompt.promptContentRevision], [1, 2, 1]);
     list = await fixture.generation.listVersions(asset.id);
     assert.deepEqual([list.versions.length, list.hasUngeneratedChanges, list.isPromptOutdated, list.versions[0].isOutdated], [1, true, false, true]);
@@ -165,11 +168,15 @@ test('版本号只在提交时加 1；修改提示词或表单后显示“有改
     list = await fixture.generation.listVersions(asset.id);
     assert.deepEqual([list.versions.map((v) => v.version), list.versions[0].isOutdated, list.versions[1].isOutdated, list.hasUngeneratedChanges], [[2, 1], false, true, false]);
 
-    // 同时改了表单和提示词：视为已确认提示词；只改名称不算改动。
-    const both = edit(fixture, afterForm, { appearance: '卷发', promptZh: '卷发的女子' });
+    // 改了表单再手动保存提示词：视为已确认（文本没变也一样）；只改名称不算改动。
+    const formChanged = edit(fixture, afterForm, { appearance: '卷发' });
+    assert.deepEqual([formChanged.contentRevision, formChanged.promptRevision, formChanged.promptContentRevision], [3, 2, 1]);
+    const both = editPrompts(fixture, formChanged, { promptZh: '卷发的女子' });
     assert.deepEqual([both.contentRevision, both.promptRevision, both.promptContentRevision], [3, 3, 3]);
     const renamed = edit(fixture, both, { name: '林夏二号', appearance: '卷发' });
     assert.deepEqual([renamed.contentRevision, renamed.promptRevision], [3, 3]);
+    const confirmed = editPrompts(fixture, edit(fixture, renamed, { name: '林夏二号', appearance: '短发' }), {});
+    assert.deepEqual([confirmed.contentRevision, confirmed.promptRevision, confirmed.promptContentRevision], [4, 3, 4]);
   } finally {
     fixture.database.close();
   }
@@ -252,7 +259,7 @@ test('采用的版本不能删除，进行中的版本要先取消；其他版�
 test('音频：只能采用 1 个文件且不超过 60 秒，采用后音频资产有了文件；之后才能绑定为音色', async () => {
   const fixture = await createAssetGenerationFixture();
   try {
-    const voice = fixture.assets.createAsset('audio', { projectName: '项目甲', name: '声音', audioKind: '音色参考', promptZh: '清亮的女声' });
+    const voice = createAssetWithPrompts(fixture.assets, 'audio', { projectName: '项目甲', name: '声音', audioKind: '音色参考', promptZh: '清亮的女声' });
     assert.equal(fixture.assetRepository.countReferenceFiles(voice.id), 0);
     const versionId = await generate(fixture, voice);
     const detail = fixture.generation.getVersion(versionId);

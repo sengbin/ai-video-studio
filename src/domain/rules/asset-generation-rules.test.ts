@@ -12,6 +12,7 @@ import { test } from 'node:test';
 import { AssetContent, AssetFileRecord, AssetGenerationSummary, AssetRecord, NewAssetFile } from '../models/asset';
 import {
   checkGenerationAvailability,
+  computePromptRevision,
   computeRevisionUpdate,
   contentFieldsChanged,
   hasUngeneratedChanges,
@@ -57,13 +58,18 @@ test('影响生成的字段：名称、提示词不算；描述、构图、风�
   }
 });
 
-test('修订号：改表单加内容修订号；改提示词加提示词修订号并视为已确认；同时改以保存后的内容修订号为准；清空提示词没有依据', () => {
+test('修订号：改表单加内容修订号，提示词修订号不变；改参考文件清除采用', () => {
   const base = asset();
   assert.deepEqual(computeRevisionUpdate(base, content(base), false), { contentRevision: 2, promptRevision: 3, promptContentRevision: 2, clearAdopted: false });
   assert.deepEqual(computeRevisionUpdate(base, content(base, { composition: '全身像' }), false), { contentRevision: 3, promptRevision: 3, promptContentRevision: 2, clearAdopted: false });
-  assert.deepEqual(computeRevisionUpdate(base, content(base, { promptEn: 'new' }), true), { contentRevision: 2, promptRevision: 4, promptContentRevision: 2, clearAdopted: true });
-  assert.deepEqual(computeRevisionUpdate(base, content(base, { composition: '全身像', promptZh: '新' }), false), { contentRevision: 3, promptRevision: 4, promptContentRevision: 3, clearAdopted: false });
-  assert.deepEqual(computeRevisionUpdate(base, content(base, { promptZh: '', promptEn: '' }), false), { contentRevision: 2, promptRevision: 4, promptContentRevision: 0, clearAdopted: false });
+  assert.deepEqual(computeRevisionUpdate(base, content(base), true), { contentRevision: 2, promptRevision: 3, promptContentRevision: 2, clearAdopted: true });
+});
+
+test('手动保存提示词：文本变化加提示词修订号，保存即确认基于当前表单内容（文本没变也一样），清空没有依据', () => {
+  const base = asset({ contentRevision: 4, promptContentRevision: 2 });
+  assert.deepEqual(computePromptRevision(base, { promptZh: '提示', promptEn: 'new' }), { promptRevision: 4, promptContentRevision: 4 });
+  assert.deepEqual(computePromptRevision(base, { promptZh: '提示', promptEn: 'prompt' }), { promptRevision: 3, promptContentRevision: 4 });
+  assert.deepEqual(computePromptRevision(base, { promptZh: '', promptEn: '' }), { promptRevision: 4, promptContentRevision: 0 });
 });
 
 test('提示词需更新：有提示词且依据的内容修订号落后；没有提示词不算', () => {

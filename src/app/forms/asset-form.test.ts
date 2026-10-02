@@ -72,12 +72,12 @@ test('新建表单：字段随类型变化，文件字段按类型限制，音�
     const keysOf = (kind: string) => open(ASSET_FORM_NAMES.create, { kind }).schema.fields.map((field) => field.key);
     assert.deepEqual(keysOf('character'), [
       'projectName', 'name', 'composition', 'style', 'background', 'referenceAspectRatio',
-      'characterType', 'appearance', 'clothing', 'expressionPose', 'voiceDescription', 'extra', 'promptZh', 'promptEn', 'files'
+      'characterType', 'appearance', 'clothing', 'expressionPose', 'voiceDescription', 'extra', 'files'
     ]);
     assert.deepEqual(keysOf('prop'), [
-      'projectName', 'name', 'composition', 'style', 'background', 'referenceAspectRatio', 'appearance', 'state', 'extra', 'promptZh', 'promptEn', 'files'
+      'projectName', 'name', 'composition', 'style', 'background', 'referenceAspectRatio', 'appearance', 'state', 'extra', 'files'
     ]);
-    assert.deepEqual(keysOf('audio'), ['projectName', 'name', 'audioKind', 'description', 'language', 'extra', 'promptZh', 'promptEn', 'files']);
+    assert.deepEqual(keysOf('audio'), ['projectName', 'name', 'audioKind', 'description', 'language', 'extra', 'files']);
 
     const image = open(ASSET_FORM_NAMES.create, { kind: 'scene' });
     assert.equal(image.schema.title, '新建场景');
@@ -147,7 +147,6 @@ test('编辑表单：不含所属项目，带出已有内容与文件，重名�
       characterType: '人类',
       style: '水彩插画',
       referenceAspectRatio: '1:1',
-      promptZh: '提示词',
       files: JSON.stringify([file])
     });
     assets.createAsset('character', { projectName: '项目甲', name: '周远' });
@@ -158,7 +157,7 @@ test('编辑表单：不含所属项目，带出已有内容与文件，重名�
     assert.equal(form.schema.fields.find((field) => field.key === 'name')?.checkUnique, true);
     assert.deepEqual(
       [form.initialValues.name, form.initialValues.characterType, form.initialValues.style, form.initialValues.referenceAspectRatio, form.initialValues.promptZh],
-      ['林夏', '人类', '水彩插画', '1:1', '提示词']
+      ['林夏', '人类', '水彩插画', '1:1', undefined]
     );
     assert.deepEqual(JSON.parse(form.initialValues.files), [{ name: 'a.png', mimeType: 'image/png', size: PNG.length, data: PNG.toString('base64') }]);
 
@@ -209,7 +208,10 @@ test('提交按钮：新建与编辑表单各有两个按钮，主按钮生成�
     const edit = open(ASSET_FORM_NAMES.edit, { assetId: asset.id });
     const [save, regenerate] = edit.schema.submitActions ?? [];
     assert.deepEqual([save.key, regenerate.key, regenerate.primary], ['save', 'saveAndPrompt', true]);
-    assert.deepEqual(regenerate.confirmOverwrite?.fields, ['promptZh', 'promptEn']);
+    assert.equal(regenerate.confirmOverwrite, undefined, '没有提示词时不需要覆盖确认');
+    assets.updatePrompts(asset.id, { promptZh: '已有提示词' });
+    const withPrompt = open(ASSET_FORM_NAMES.edit, { assetId: asset.id }).schema.submitActions ?? [];
+    assert.deepEqual(withPrompt[1].confirmOverwrite?.fields, [], '提示词不在表单里，总是询问');
     assert.ok(created.length > 0);
   } finally {
     database.close();
@@ -313,23 +315,22 @@ test('提示词生成：取消记为已取消，不能重复启动；重启恢�
   }
 });
 
-test('编辑：保存并重新生成覆盖提示词；生成中提示词字段只读且保存时保留库里的内容；生成中不能再次生成', async () => {
+test('编辑：保存并重新生成覆盖提示词；生成中保存保留库里的提示词；生成中不能再次生成', async () => {
   let release: (value: unknown) => void = () => undefined;
   const gate = new Promise((resolve) => {
     release = resolve;
   });
   const { database, assets, prompts, open } = createFixture(['项目甲'], () => gate);
   try {
-    const asset = assets.createAsset('prop', { projectName: '项目甲', name: '钥匙', appearance: '黄铜', promptZh: '旧中文', promptEn: 'old english' });
+    const asset = assets.createAsset('prop', { projectName: '项目甲', name: '钥匙', appearance: '黄铜' });
+    assets.updatePrompts(asset.id, { promptZh: '旧中文', promptEn: 'old english' });
     const { done } = prompts.start(asset.id);
 
     const edit = open(ASSET_FORM_NAMES.edit, { assetId: asset.id });
-    const promptFields = edit.schema.fields.filter((field) => field.key === 'promptZh' || field.key === 'promptEn');
-    assert.deepEqual(promptFields.map((field) => field.disabled), [true, true]);
-    assert.match(promptFields[0].description, /提示词生成中/);
+    assert.ok(!edit.schema.fields.some((field) => field.key === 'promptZh' || field.key === 'promptEn'));
     await assert.rejects(submit(edit, { ...edit.initialValues }, 'saveAndPrompt'), (error) => error instanceof ValidationError && /正在生成中/.test(error.message));
 
-    // 打开时提示词在生成：只读字段带的旧值不会覆盖库里的内容；生成完成后看到的是新生成的提示词。
+    // 生成中保存其他字段：不动提示词，生成完成后是新生成的提示词。
     await submit(edit, { ...edit.initialValues, name: '钥匙二号' }, 'save');
     assert.equal(assets.getAsset(asset.id).name, '钥匙二号');
     release({ promptZh: '新中文', promptEn: 'new english' });
@@ -339,11 +340,51 @@ test('编辑：保存并重新生成覆盖提示词；生成中提示词字段�
 
     // 提示词已有内容时，“保存并重新生成”改写提示词；表单字段改动使表单修订号加 1，生成依据改动后的内容。
     const again = open(ASSET_FORM_NAMES.edit, { assetId: asset.id });
-    assert.deepEqual(again.schema.fields.filter((field) => field.key === 'promptZh').map((field) => field.disabled), [false]);
     await submit(again, { ...again.initialValues, appearance: '银色' }, 'saveAndPrompt');
     await waitForPrompt(assets, asset.id);
     const regenerated = assets.getAsset(asset.id);
     assert.deepEqual([regenerated.contentRevision, regenerated.promptContentRevision, regenerated.promptStatus], [2, 2, 'succeeded']);
+  } finally {
+    database.close();
+  }
+});
+
+test('提示词表单：带出现有提示词与状态说明；保存即确认；生成中只读；重新生成走后台并要求覆盖确认', async () => {
+  const { database, assets, open } = createFixture();
+  try {
+    const asset = assets.createAsset('prop', { projectName: '项目甲', name: '钥匙', appearance: '黄铜' });
+    const empty = open(ASSET_FORM_NAMES.prompt, { assetId: asset.id });
+    assert.equal(empty.schema.title, '提示词：钥匙');
+    assert.deepEqual(empty.schema.fields.map((field) => [field.key, field.disabled]), [['promptZh', false], ['promptEn', false]]);
+    assert.deepEqual((empty.schema.submitActions ?? []).map((action) => [action.key, action.label, action.primary]), [
+      ['save', '保存', false],
+      ['regenerate', '生成提示词', true]
+    ]);
+
+    await submit(empty, { promptZh: '黄铜钥匙', promptEn: 'a brass key' }, 'save');
+    assets.updateAsset(asset.id, { name: '钥匙', appearance: '银质' });
+    const outdated = open(ASSET_FORM_NAMES.prompt, { assetId: asset.id });
+    assert.deepEqual([outdated.initialValues.promptZh, outdated.initialValues.promptEn], ['黄铜钥匙', 'a brass key']);
+    assert.match(outdated.schema.fields[0].description, /可能需要更新/);
+    const [save, regenerate] = outdated.schema.submitActions ?? [];
+    assert.deepEqual([save.primary, regenerate.label, regenerate.confirmOverwrite?.fields], [true, '重新生成提示词', ['promptZh', 'promptEn']]);
+
+    await submit(outdated, { promptZh: '黄铜钥匙', promptEn: 'a brass key' }, 'save');
+    const confirmed = assets.getAsset(asset.id);
+    assert.deepEqual([confirmed.promptRevision, confirmed.promptContentRevision, confirmed.contentRevision], [1, 2, 2]);
+    assert.doesNotMatch(open(ASSET_FORM_NAMES.prompt, { assetId: asset.id }).schema.fields[0].description, /需要更新/);
+
+    await submit(outdated, {}, 'regenerate');
+    assert.equal(assets.getAsset(asset.id).promptStatus, 'running');
+    const running = open(ASSET_FORM_NAMES.prompt, { assetId: asset.id });
+    assert.deepEqual(running.schema.fields.map((field) => field.disabled), [true, true]);
+    assert.match(running.schema.fields[0].description, /生成中/);
+    await assert.rejects(submit(running, { promptZh: '新' }, 'save'), ValidationError);
+    await waitForPrompt(assets, asset.id);
+    assert.equal(assets.getAsset(asset.id).promptZh, '中文提示词');
+
+    assert.throws(() => open(ASSET_FORM_NAMES.prompt, { assetId: 9999 }), NotFoundError);
+    assert.throws(() => open(ASSET_FORM_NAMES.prompt, {}), ValidationError);
   } finally {
     database.close();
   }

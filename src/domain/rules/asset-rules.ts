@@ -67,8 +67,6 @@ export function normalizeAssetContent(rawInput: unknown, kind: AssetKind): Norma
 
   if (kind === 'audio') {
     const attributes = readAudioAttributes(source, errors);
-    const promptZh = readText(source, { key: 'promptZh', label: '中文提示词', required: false, maxLength: ASSET_PROMPT_MAX_LENGTH }, errors);
-    const promptEn = readText(source, { key: 'promptEn', label: '英文提示词', required: false, maxLength: ASSET_PROMPT_MAX_LENGTH }, errors);
     const files = readAudioFile(source[ASSET_FILE_FIELD_KEY], errors);
     assertNoFieldErrors(errors);
     return {
@@ -80,8 +78,8 @@ export function normalizeAssetContent(rawInput: unknown, kind: AssetKind): Norma
         background: '',
         referenceAspectRatio: null,
         extraRequirements,
-        promptZh,
-        promptEn
+        promptZh: '',
+        promptEn: ''
       },
       files
     };
@@ -94,8 +92,6 @@ export function normalizeAssetContent(rawInput: unknown, kind: AssetKind): Norma
   const background = choice('background', '背景');
   const style = readOptionalText(source, { key: 'style', label: '画面风格', required: false, maxLength: ASSET_STYLE_MAX_LENGTH }, errors);
   const referenceAspectRatio = readOptionalChoice(source, 'referenceAspectRatio', '参考图画幅', options.aspectRatio, errors);
-  const promptZh = readText(source, { key: 'promptZh', label: '中文提示词', required: false, maxLength: ASSET_PROMPT_MAX_LENGTH }, errors);
-  const promptEn = readText(source, { key: 'promptEn', label: '英文提示词', required: false, maxLength: ASSET_PROMPT_MAX_LENGTH }, errors);
 
   const attributes: Record<string, string> = {};
   for (const field of ASSET_ATTRIBUTE_FIELDS[kind]) {
@@ -111,9 +107,19 @@ export function normalizeAssetContent(rawInput: unknown, kind: AssetKind): Norma
   const files = readImageFiles(source[ASSET_FILE_FIELD_KEY], errors);
   assertNoFieldErrors(errors);
   return {
-    content: { name, attributes, composition, style, background, referenceAspectRatio, extraRequirements, promptZh, promptEn },
+    content: { name, attributes, composition, style, background, referenceAspectRatio, extraRequirements, promptZh: '', promptEn: '' },
     files
   };
+}
+
+/** 校验并规范化手动保存的提示词；两种语言都可以为空。 */
+export function normalizeAssetPrompts(rawInput: unknown): { readonly promptZh: string; readonly promptEn: string } {
+  const source = readRecord(rawInput);
+  const errors: FieldErrors = {};
+  const promptZh = readText(source, { key: 'promptZh', label: '中文提示词', required: false, maxLength: ASSET_PROMPT_MAX_LENGTH }, errors);
+  const promptEn = readText(source, { key: 'promptEn', label: '英文提示词', required: false, maxLength: ASSET_PROMPT_MAX_LENGTH }, errors);
+  assertNoFieldErrors(errors);
+  return { promptZh, promptEn };
 }
 
 /** 读取音频资产的描述字段：音频类型必填，描述可选，语言只对音色参考有意义。 */
