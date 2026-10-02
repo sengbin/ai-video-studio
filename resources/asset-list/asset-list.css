@@ -61,6 +61,14 @@
   gap: 2px;
 }
 
+/* 操作列：两行按钮，行内沿用表格对按钮的间距 */
+.ui-table .asset-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
 /* 状态列：提示词与图片状态的多行文字 */
 .asset-status {
   display: flex;

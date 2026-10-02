@@ -250,7 +250,7 @@
     return aiUi.h('span', { class: 'description', text: asset.fileCount > 0 ? '手动上传' : '无' });
   }
 
-  /** 操作列的按钮：提示词（生成、重试、取消）、生成图片（音频）、提示词、版本、修改、删除；图片生成无法取消，提示词或图片生成中“提示词”“生成”按钮不可用。 */
+  /** 操作列：两行按钮。第一行是生成相关（提示词生成、重试、取消，生成图片（音频），提示词），第二行是版本、修改、删除；图片生成无法取消，提示词或图片生成中“提示词”“生成”按钮不可用。 */
   function renderActions(asset) {
     const buttons = [];
     const hasPrompt = Boolean(asset.promptZh || asset.promptEn);
@@ -283,14 +283,19 @@
       onClick: () => openPromptForm(asset)
     });
     if (busy) promptButton.element.title = generating ? '正在生成，请等待完成。' : '提示词生成中，完成后再修改。';
-    buttons.push(
-      generate.element,
-      promptButton.element,
-      aiUi.button({ text: '版本', compact: true, ariaLabel: `查看版本：${asset.name}`, onClick: () => window.aiAssetVersions.open(asset) }).element,
-      aiUi.button({ kind: 'edit', compact: true, ariaLabel: `修改：${asset.name}`, onClick: () => openEditForm(asset) }).element,
-      aiUi.button({ kind: 'delete', compact: true, ariaLabel: `删除：${asset.name}`, onClick: () => void deleteAsset(asset) }).element
+    buttons.push(generate.element, promptButton.element);
+    return aiUi.h(
+      'div',
+      { class: 'asset-actions' },
+      aiUi.h('div', { class: 'asset-actions__row' }, buttons),
+      aiUi.h(
+        'div',
+        { class: 'asset-actions__row' },
+        aiUi.button({ text: '版本', compact: true, ariaLabel: `查看版本：${asset.name}`, onClick: () => window.aiAssetVersions.open(asset) }).element,
+        aiUi.button({ kind: 'edit', compact: true, ariaLabel: `修改：${asset.name}`, onClick: () => openEditForm(asset) }).element,
+        aiUi.button({ kind: 'delete', compact: true, ariaLabel: `删除：${asset.name}`, onClick: () => void deleteAsset(asset) }).element
+      )
     );
-    return buttons;
   }
 
   /** 重新生成提示词时已有内容先确认覆盖，再请求后台生成。 */
