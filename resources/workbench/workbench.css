@@ -164,6 +164,14 @@
   margin: 0 0 6px;
 }
 
+/* 提交的提示词：保留换行，可选中复制 */
+.wb-prompt {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+  margin: 0 0 4px;
+}
+
 /* 实体绑定弹出页：顶部汇总与操作、实体表、资产缩略图与选择资产列表 */
 .wb-bind__bar {
   display: flex;

@@ -196,6 +196,7 @@ const server = http.createServer(async (request, response) => {
       response.end(
         JSON.stringify({
           lmMode: state.lmMode,
+          messages: state.messages,
           webviews: [...state.webviews.values()].map((webview) => ({
             id: webview.id,
             kind: webview.kind,

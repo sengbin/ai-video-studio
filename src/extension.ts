@@ -8,12 +8,15 @@
 // ------------------------------------------------------------------------
 
 import { mkdirSync } from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { MessageRouter } from './app/messaging/message-router';
 import { AssetListPages } from './app/pages/asset-list-pages';
 import { ProjectPages } from './app/pages/project-pages';
 import { SettingsPages } from './app/pages/settings-pages';
 import { WorkListPages } from './app/pages/work-list-pages';
+import { WorkbenchHost } from './app/pages/workbench-handlers';
 import { WorkbenchPages } from './app/pages/workbench-pages';
 import { PanelManager } from './app/panels/panel-manager';
 import { JobChange, JobQueue } from './app/queue/job-queue';
@@ -66,6 +69,9 @@ import { SIDEBAR_VIEW_ID, SidebarViewProvider } from './sidebar/sidebar-view-pro
 
 /** 数据库文件名，位于扩展的全局存储目录。 */
 const DATABASE_FILE_NAME = 'ai-video-studio.sqlite';
+
+/** 任务完成通知上的按钮文字。 */
+const WORKBENCH_ACTION_LABEL = '打开工作台';
 
 /** 生成队列的处理间隔：平台生成通常需要一到几分钟，每几秒查询一次足够及时。 */
 const JOB_QUEUE_INTERVAL_MS = 5000;
@@ -227,10 +233,11 @@ export function activate(context: vscode.ExtensionContext): void {
   const settingsPages = new SettingsPages({ text: textSettingsService, providers: providerService }, panels);
   const workbenchPages = new WorkbenchPages(
     { generation: generationService, profiles: profileService, bindings: bindingService, assets: assetService, prompts: assetPromptService, ...services },
-    // 结果视频用系统默认的视频播放器打开。
-    { openFile: async (absolutePath) => void (await vscode.env.openExternal(vscode.Uri.file(absolutePath))) },
+    // 结果视频用系统默认的视频播放器打开，也可导出到用户选择的位置或在文件夹中显示。
+    createWorkbenchHost(),
     panels
   );
+  notifyFinishedJobs(context, generationService, () => workbenchPages.show());
 
   // 侧栏：尚未实现的入口不注册动作，点击时由侧栏提示“该功能尚未开放”。
   const actionRegistry = new SidebarActionRegistry(SIDEBAR_SECTIONS)
@@ -271,6 +278,50 @@ export function activate(context: vscode.ExtensionContext): void {
 
 /** 停用扩展；注册的资源由 VS Code 通过 subscriptions 统一释放。 */
 export function deactivate(): void {}
+
+/** 工作台使用的宿主能力：用系统程序打开、导出到用户选择的位置、在文件夹中显示、右下角通知。 */
+function createWorkbenchHost(): WorkbenchHost {
+  const revealFile = async (absolutePath: string): Promise<void> => {
+    await vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(absolutePath));
+  };
+  return {
+    openFile: async (absolutePath) => void (await vscode.env.openExternal(vscode.Uri.file(absolutePath))),
+    revealFile,
+    exportFile: async (absolutePath, suggestedName) => {
+      const target = await vscode.window.showSaveDialog({
+        defaultUri: vscode.Uri.file(path.join(os.homedir(), suggestedName)),
+        filters: { 视频: ['mp4'] },
+        saveLabel: '导出'
+      });
+      if (target === undefined) {
+        return false;
+      }
+      await vscode.workspace.fs.copy(vscode.Uri.file(absolutePath), target, { overwrite: true });
+      void vscode.window.showInformationMessage(`已导出到 ${target.fsPath}`, '在文件夹中显示').then((choice) => (choice === undefined ? undefined : revealFile(target.fsPath)));
+      return true;
+    },
+    notify: (level, message) => void (level === 'warning' ? vscode.window.showWarningMessage(message) : vscode.window.showInformationMessage(message))
+  };
+}
+
+/** 视频任务成功或失败时在右下角通知（每个任务每种结果只通知一次），点“打开工作台”进入工作台。 */
+function notifyFinishedJobs(context: vscode.ExtensionContext, generation: GenerationService, openWorkbench: () => void): void {
+  const notified = new Set<string>();
+  const unsubscribe = generation.onDidChangeJobs((change) => {
+    const outcome = generation.describeFinishedJob(change.jobId);
+    if (outcome === undefined) {
+      return;
+    }
+    const key = `${change.jobId}:${outcome.status}`;
+    if (notified.has(key)) {
+      return;
+    }
+    notified.add(key);
+    const show = outcome.level === 'warning' ? vscode.window.showWarningMessage : vscode.window.showInformationMessage;
+    void show(outcome.message, WORKBENCH_ACTION_LABEL).then((choice) => (choice === undefined ? undefined : openWorkbench()));
+  });
+  context.subscriptions.push({ dispose: unsubscribe });
+}
 
 /**
  * 在全局存储目录中打开数据库；失败时提示用户并返回 undefined。

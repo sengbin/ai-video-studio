@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：workbench-handlers.ts
-// 说明：生成工作台（P5）的请求处理：读取作品与可用模型清单、读取一集的镜头组与任务历史、提交生成、重新分组与拆分合并镜头组、取消任务、用系统播放器打开结果视频；并提供分镜脚本阶段产出层需要的请求。
+// 说明：生成工作台（P5）的请求处理：读取作品与可用模型清单、读取一集的镜头组与任务历史、提交生成（结果以右下角通知弹出）、重新分组与拆分合并镜头组、取消任务、打开、导出、在文件夹中显示结果视频；并提供分镜脚本阶段产出层需要的请求。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
@@ -11,7 +11,7 @@ import { readEntityId, readRecord } from '../../domain/rules/field-readers';
 import { MessageRouter } from '../messaging/message-router';
 import { BindingService } from '../services/binding-service';
 import { GenerationProfileService } from '../services/generation-profile-service';
-import { GenerationService } from '../services/generation-service';
+import { GenerationService, SubmitResult } from '../services/generation-service';
 import { ScreenplayService } from '../services/screenplay-service';
 import { StageService } from '../services/stage-service';
 import { StoryboardService } from '../services/storyboard-service';
@@ -30,7 +30,9 @@ export const WORKBENCH_REQUESTS = {
   splitGroup: 'workbench.splitGroup',
   mergeGroup: 'workbench.mergeGroup',
   cancel: 'workbench.cancel',
-  openResult: 'workbench.openResult'
+  openResult: 'workbench.openResult',
+  exportResult: 'workbench.exportResult',
+  revealResult: 'workbench.revealResult'
 } as const;
 
 /** 宿主推送给工作台的事件名称：changed 要求刷新数据（任务或分镜脚本有变化）。 */
@@ -53,6 +55,36 @@ export interface WorkbenchServices {
 export interface WorkbenchHost {
   /** 用系统默认程序打开本机文件。 */
   readonly openFile: (absolutePath: string) => Promise<void>;
+  /** 让用户选择位置并把文件复制过去；用户取消时返回 false。 */
+  readonly exportFile: (absolutePath: string, suggestedName: string) => Promise<boolean>;
+  /** 在系统文件管理器中显示文件。 */
+  readonly revealFile: (absolutePath: string) => Promise<void>;
+  /** 在 VS Code 右下角弹出通知。 */
+  readonly notify: (level: NoticeLevel, message: string) => void;
+}
+
+/** 通知的级别。 */
+export type NoticeLevel = 'info' | 'warning';
+
+/**
+ * 把提交结果整理成一条通知：已提交的组数、提醒与被拒绝的原因；有被拒绝的组时为警告级别。
+ * @returns 没有任何内容可通知时返回 undefined。
+ */
+export function describeSubmitResult(result: SubmitResult): { readonly level: NoticeLevel; readonly message: string } | undefined {
+  const lines: string[] = [];
+  if (result.submitted.length > 0) {
+    lines.push(`已提交 ${result.submitted.length} 个镜头组，生成需要几分钟，完成后会通知你。`);
+  }
+  for (const item of result.submitted) {
+    for (const warning of item.warnings) lines.push(`第 ${item.seq} 组：${warning}`);
+  }
+  for (const item of result.rejected) {
+    lines.push(`第 ${item.seq || item.groupId} 组未提交：${item.issues.join('；')}`);
+  }
+  if (lines.length === 0) {
+    return undefined;
+  }
+  return { level: result.rejected.length > 0 ? 'warning' : 'info', message: lines.join('\n') };
 }
 
 /**
@@ -78,7 +110,14 @@ export function registerWorkbenchHandlers(router: MessageRouter, services: Workb
   });
   router.register(WORKBENCH_REQUESTS.saveProfile, (payload) => profiles.save(payload));
 
-  router.register(WORKBENCH_REQUESTS.submit, (payload) => generation.submit(payload));
+  router.register(WORKBENCH_REQUESTS.submit, async (payload) => {
+    const result = await generation.submit(payload);
+    const notice = describeSubmitResult(result);
+    if (notice !== undefined) {
+      host.notify(notice.level, notice.message);
+    }
+    return result;
+  });
   router.register(WORKBENCH_REQUESTS.regroup, (payload) => {
     generation.regroup(payload);
     return { done: true };
@@ -97,6 +136,16 @@ export function registerWorkbenchHandlers(router: MessageRouter, services: Workb
   router.register(WORKBENCH_REQUESTS.openResult, async (payload) => {
     await host.openFile(generation.getResultPath(payload));
     return { opened: true };
+  });
+
+  router.register(WORKBENCH_REQUESTS.exportResult, async (payload) => {
+    const file = generation.getResultFile(payload);
+    return { exported: await host.exportFile(file.path, file.suggestedName) };
+  });
+
+  router.register(WORKBENCH_REQUESTS.revealResult, async (payload) => {
+    await host.revealFile(generation.getResultPath(payload));
+    return { revealed: true };
   });
 
   registerStageHandlers(

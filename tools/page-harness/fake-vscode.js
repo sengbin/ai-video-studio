@@ -24,6 +24,8 @@ const state = {
   webviews: new Map(),
   events: new EventEmitter(),
   configuration: new Map(),
+  /** 右下角通知的记录，按弹出顺序。 */
+  messages: [],
   nextPanelId: 1
 };
 
@@ -129,7 +131,17 @@ const window = {
   },
   showInformationMessage(message) {
     console.log('[showInformationMessage]', message);
+    state.messages.push({ level: 'info', message });
     return Promise.resolve(undefined);
+  },
+  showWarningMessage(message) {
+    console.log('[showWarningMessage]', message);
+    state.messages.push({ level: 'warning', message });
+    return Promise.resolve(undefined);
+  },
+  /** “另存为”对话框：直接返回系统临时目录下的建议文件名。 */
+  showSaveDialog(options) {
+    return Promise.resolve(Uri.file(path.join(require('node:os').tmpdir(), path.basename(options.defaultUri.fsPath))));
   }
 };
 
@@ -145,6 +157,19 @@ const workspace = {
         return undefined;
       }
     };
+  },
+  fs: {
+    copy: async (source, target) => {
+      require('node:fs').copyFileSync(source.fsPath, target.fsPath);
+    }
+  }
+};
+
+/** 假的命令执行：只记录。 */
+const commands = {
+  executeCommand: async (command, ...args) => {
+    console.log(`[假 executeCommand] ${command}`, ...args.map((arg) => arg.fsPath ?? arg));
+    return undefined;
   }
 };
 
@@ -282,6 +307,7 @@ module.exports = {
   env,
   window,
   workspace,
+  commands,
   lm,
   CancellationTokenSource,
   LanguageModelTextPart,

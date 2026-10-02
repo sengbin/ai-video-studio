@@ -364,6 +364,25 @@ test('完成：视图带结果视频信息，可取得本机路径；不存在�
     assert.deepEqual(view.result, { id: saved?.id, durationSeconds: 8, sizeBytes: 2048, hasAudio: true, isSelected: true });
     assert.equal(fixture.generation.getResultPath({ resultId: saved?.id }), '/store/videos/1/1/1/1-1.mp4');
     assert.throws(() => fixture.generation.getResultPath({ resultId: 999 }), NotFoundError);
+
+    // 视图带提交时的参数与提示词；导出文件名由作品、集、组和次数组成，不含非法字符。
+    assert.deepEqual([view.params.resolution, view.params.durationSeconds === null, view.shotCount > 0, view.prompt.length > 0], ['720P', false, true, true]);
+    const file = fixture.generation.getResultFile({ resultId: saved?.id });
+    assert.equal(file.path, '/store/videos/1/1/1/1-1.mp4');
+    assert.equal(file.suggestedName, `${fixture.work.name}-第1集-第1组-第1次.mp4`);
+    assert.doesNotMatch(file.suggestedName, /[\\/:*?"<>|]/);
+    assert.throws(() => fixture.generation.getResultFile({ resultId: 999 }), NotFoundError);
+
+    // 任务结束的通知：成功为信息，失败为警告；进行中和不存在的任务没有通知。
+    assert.deepEqual(fixture.generation.describeFinishedJob(job.id), { status: 'succeeded', level: 'info', message: `「${fixture.work.name}」第 1 集第 1 组的视频已生成。` });
+    assert.equal(fixture.generation.describeFinishedJob(9999), undefined);
+    await submitGroups(fixture);
+    const second = fixture.jobs.listJobsByGroups([groupId])[0];
+    assert.equal(fixture.generation.describeFinishedJob(second.id), undefined);
+    fixture.jobs.markFailed(second.id, { category: 'content_rejected', code: 'DataInspectionFailed', message: 'Input data may contain inappropriate content.' }, 't');
+    const failed = fixture.generation.describeFinishedJob(second.id);
+    assert.equal(failed?.level, 'warning');
+    assert.match(failed?.message ?? '', /第 1 集第 1 组生成失败：内容审核未通过。Input data/);
   } finally {
     fixture.database.close();
   }

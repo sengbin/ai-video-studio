@@ -41,6 +41,13 @@ import { WorkService } from './work-service';
 
 /** 每个镜头组在视图中最多显示的任务数（最新的在前）。 */
 const MAX_JOBS_PER_GROUP = 10;
+/** 失败通知里最多引用平台原文的字数，完整原文在工作台查看。 */
+const FAILURE_NOTICE_LENGTH = 100;
+
+/** 把文字转成可用作文件名的形式：去掉 Windows 不允许的字符。 */
+function toFileName(text: string): string {
+  return text.replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').trim();
+}
 
 /** 工作台里的一集。 */
 export interface WorkbenchEpisode {
@@ -94,6 +101,16 @@ export interface JobResultView {
   readonly isSelected: boolean;
 }
 
+/** 任务提交时使用的生成参数（来自请求快照）。 */
+export interface JobParamsView {
+  readonly aspectRatio: string | null;
+  readonly resolution: string | null;
+  /** 整组视频的时长（秒）。 */
+  readonly durationSeconds: number | null;
+  readonly audioMode: VideoAudioMode | null;
+  readonly seed: number | null;
+}
+
 /** 一条任务的界面视图。 */
 export interface JobView {
   readonly id: number;
@@ -102,7 +119,13 @@ export interface JobView {
   readonly statusLabel: string;
   readonly modelName: string;
   readonly createdAt: string;
+  readonly submittedAt: string | null;
   readonly finishedAt: string | null;
+  /** 提交时使用的参数。 */
+  readonly params: JobParamsView;
+  /** 提交给模型的提示词全文。 */
+  readonly prompt: string;
+  readonly shotCount: number;
   readonly failure: JobFailureView | null;
   readonly warnings: readonly string[];
   readonly result: JobResultView | null;
@@ -469,6 +492,59 @@ export class GenerationService {
     return this.dependencies.results.resolvePath(result.filePath);
   }
 
+  /**
+   * 取得结果视频的本机路径和建议的导出文件名（“作品-第 N 集-第 M 组-第 K 次.mp4”），用于导出。
+   * @param rawInput { resultId }。
+   * @throws NotFoundError 结果不存在。
+   */
+  getResultFile(rawInput: unknown): { readonly path: string; readonly suggestedName: string } {
+    const { jobs } = this.dependencies;
+    const result = jobs.findResult(readEntityId({ id: readRecord(rawInput).resultId }, '结果'));
+    if (result === undefined) {
+      throw new NotFoundError('结果视频不存在。');
+    }
+    const job = jobs.findJob(result.jobId);
+    const place = job === undefined ? undefined : this.locateJob(job);
+    const stem = place === undefined ? `视频-${result.id}` : `${place.workName}-第${place.episodeSeq}集-第${place.groupSeq}组-第${job?.attempt}次`;
+    return { path: this.dependencies.results.resolvePath(result.filePath), suggestedName: `${toFileName(stem)}.mp4` };
+  }
+
+  /**
+   * 任务成功或失败后给用户的通知内容；任务还在进行、已取消或不存在时返回 undefined。
+   * @param jobId 任务标识。
+   */
+  describeFinishedJob(jobId: number): { readonly status: 'succeeded' | 'failed'; readonly level: 'info' | 'warning'; readonly message: string } | undefined {
+    const job = this.dependencies.jobs.findJob(jobId);
+    if (job === undefined || (job.status !== 'succeeded' && job.status !== 'failed')) {
+      return undefined;
+    }
+    const place = this.locateJob(job);
+    const label = place === undefined ? '镜头组' : `「${place.workName}」第 ${place.episodeSeq} 集第 ${place.groupSeq} 组`;
+    if (job.status === 'succeeded' || job.failure === null) {
+      return { status: 'succeeded', level: 'info', message: `${label}的视频已生成。` };
+    }
+    const detail = job.failure.message.length > FAILURE_NOTICE_LENGTH ? `${job.failure.message.slice(0, FAILURE_NOTICE_LENGTH)}…` : job.failure.message;
+    return { status: 'failed', level: 'warning', message: `${label}生成失败：${describeJobFailure(job.failure).label}。${detail}` };
+  }
+
+  /** 任务所属的作品名、集序号和镜头组序号；任何一项找不到（如作品已删除）时返回 undefined。 */
+  private locateJob(job: VideoJobRecord): { readonly workName: string; readonly episodeSeq: number; readonly groupSeq: number } | undefined {
+    const { jobs, works, storyboardService, storyboards } = this.dependencies;
+    const location = jobs.getGroupLocation(job.groupId);
+    if (location === undefined) {
+      return undefined;
+    }
+    let workName: string;
+    try {
+      workName = works.getWork(location.workId).name;
+    } catch {
+      return undefined;
+    }
+    const episodeSeq = storyboardService.listEpisodeStatuses(location.workId).find((status) => status.episodeId === location.episodeId)?.seq;
+    const groupSeq = storyboards.listGroups(job.snapshot.storyboardRunId).find((group) => group.id === job.groupId)?.seq;
+    return episodeSeq === undefined || groupSeq === undefined ? undefined : { workName, episodeSeq, groupSeq };
+  }
+
   /** 工作台使用的分镜脚本版本；这一集还没有分镜脚本时报错。 */
   private resolveRun(workId: number, episodeId: number): WorkbenchRun {
     const { runs } = this.dependencies;
@@ -530,7 +606,17 @@ export class GenerationService {
       statusLabel: JOB_STATUS_LABELS[job.status],
       modelName: model?.displayName ?? '',
       createdAt: job.createdAt,
+      submittedAt: job.submittedAt,
       finishedAt: job.finishedAt,
+      params: {
+        aspectRatio: job.snapshot.params.aspectRatio,
+        resolution: job.snapshot.params.resolution,
+        durationSeconds: job.snapshot.params.durationSeconds,
+        audioMode: job.snapshot.params.audioMode,
+        seed: job.snapshot.params.seed
+      },
+      prompt: job.snapshot.prompt,
+      shotCount: job.snapshot.shotIds.length,
       failure: job.failure === null ? null : { ...job.failure, ...describeJobFailure(job.failure) },
       warnings: job.snapshot.warnings,
       result:

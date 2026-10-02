@@ -336,14 +336,17 @@ test('下载结果失败：在容忍次数内保持生成中，之后重试成�
   }
 });
 
-test('等待超时：生成中的任务超过最长等待时间记为失败', async () => {
-  const { database, jobs, clock, queue, enqueue } = createFixture({ maxRunningMs: 60_000 });
+test('等待超时：超过最长等待时间后查询仍在生成中的任务记为失败；平台已完成的任务照常取回结果', async () => {
+  const { database, jobs, provider, clock, queue, enqueue } = createFixture({ maxRunningMs: 60_000 });
   try {
-    const job = enqueue();
+    const stuck = enqueue();
+    const finished = enqueue(1);
     await queue.pump();
     clock.time += 61_000;
+    provider.queryStates.push({ status: 'running', result: null, errorCategory: null, errorCode: null, errorMessage: null });
     await queue.pump();
-    assert.match(jobs.findJob(job.id)?.failure?.message ?? '', /超时/);
+    assert.match(jobs.findJob(stuck.id)?.failure?.message ?? '', /超时/);
+    assert.equal(jobs.findJob(finished.id)?.status, 'succeeded', '关闭扩展期间平台已生成完，重开后不能因为超时丢弃');
   } finally {
     database.close();
   }

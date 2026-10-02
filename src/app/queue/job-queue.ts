@@ -221,10 +221,8 @@ export class JobQueue {
       this.fail(job, { category: 'server', code: null, message: INTERRUPTED_MESSAGE });
       return;
     }
-    if (job.submittedAt !== null && this.now().getTime() - Date.parse(job.submittedAt) > this.maxRunningMs) {
-      this.fail(job, { category: 'server', code: null, message: '等待生成结果超时，请重新生成。' });
-      return;
-    }
+    // 超时也要先查询：扩展关闭期间平台可能已经生成完，只有查询后仍未结束才记为超时。
+    const timedOut = job.submittedAt !== null && this.now().getTime() - Date.parse(job.submittedAt) > this.maxRunningMs;
 
     try {
       const call = await this.dependencies.calls.resolveVideoCall(job.modelId);
@@ -249,6 +247,7 @@ export class JobQueue {
           this.fail(job, { category: 'server', code: null, message: '平台已不再保留这个任务（通常保留 24 小时），请重新生成。' });
           return;
         default:
+          if (timedOut) this.fail(job, { category: 'server', code: null, message: '等待生成结果超时，请重新生成。' });
           return;
       }
     } catch (error) {

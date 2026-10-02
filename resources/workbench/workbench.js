@@ -20,6 +20,8 @@
   const REQUEST_MERGE_GROUP = 'workbench.mergeGroup';
   const REQUEST_CANCEL = 'workbench.cancel';
   const REQUEST_OPEN_RESULT = 'workbench.openResult';
+  const REQUEST_EXPORT_RESULT = 'workbench.exportResult';
+  const REQUEST_REVEAL_RESULT = 'workbench.revealResult';
   const EVENT_CHANGED = 'workbench.changed';
   const STAGE_STORYBOARD = 'storyboard_script';
 
@@ -37,6 +39,9 @@
   const KILOBYTE = 1024;
   const MEGABYTE = 1024 * KILOBYTE;
   const ACTION_PREVIEW_LENGTH = 40;
+  const AUDIO_MODE_LABELS = { native: '模型生成声音', none: '无声', external: '独立音轨' };
+  const MS_PER_SECOND = 1000;
+  const SECONDS_PER_MINUTE = 60;
 
   const { formatRelativeTime, stageStatusLabel } = window.pageFormat;
 
@@ -216,7 +221,7 @@
     const { workId, episodeId } = parseEpisodeKey(episodeKey);
     groups.forEach((group) => submitting.add(group.id));
     render();
-    const result = await runAction(REQUEST_SUBMIT, {
+    await runAction(REQUEST_SUBMIT, {
       workId,
       episodeId,
       groupIds: groups.map((group) => group.id),
@@ -228,13 +233,7 @@
       }
     });
     groups.forEach((group) => submitting.delete(group.id));
-    if (result) {
-      const lines = [];
-      if (result.submitted.length > 0) lines.push(`已提交 ${result.submitted.length} 个镜头组，生成需要几分钟，完成后会自动更新。`);
-      for (const item of result.submitted) for (const warning of item.warnings) lines.push(`第 ${item.seq} 组：${warning}`);
-      for (const item of result.rejected) lines.push(`第 ${item.seq || item.groupId} 组未提交：${item.issues.join('；')}`);
-      showMessage(lines.join('\n'), result.submitted.length === 0);
-    }
+    // 提交结果、被拒绝的原因和提醒由宿主在 VS Code 右下角通知，页面只刷新状态。
     await loadEpisode(false);
   }
 
@@ -260,6 +259,15 @@
 
   async function openResult(result) {
     await runAction(REQUEST_OPEN_RESULT, { resultId: result.id });
+  }
+
+  /** 导出结果视频：宿主弹出“另存为”对话框，完成后在右下角通知。 */
+  async function exportResult(result) {
+    await runAction(REQUEST_EXPORT_RESULT, { resultId: result.id });
+  }
+
+  async function revealResult(result) {
+    await runAction(REQUEST_REVEAL_RESULT, { resultId: result.id });
   }
 
   /** 在某个镜头之前拆开所在的组。 */
@@ -307,15 +315,45 @@
     );
   }
 
-  /** 一次任务的状态：状态文字、失败原因或结果信息、提醒。 */
+  /** 耗时文字：从提交到结束（进行中到现在）；还没提交给平台时为空。 */
+  function formatElapsed(job) {
+    if (!job.submittedAt) return '';
+    const end = job.finishedAt ? Date.parse(job.finishedAt) : Date.now();
+    const seconds = Math.max(0, Math.round((end - Date.parse(job.submittedAt)) / MS_PER_SECOND));
+    return seconds < SECONDS_PER_MINUTE ? `${seconds} 秒` : `${Math.floor(seconds / SECONDS_PER_MINUTE)} 分 ${seconds % SECONDS_PER_MINUTE} 秒`;
+  }
+
+  /** 任务提交时的生成参数一行：模型、画幅、分辨率、时长、镜头数、声音、种子。 */
+  function describeJobParams(job) {
+    const { params } = job;
+    return [
+      job.modelName,
+      params.aspectRatio,
+      params.resolution,
+      params.durationSeconds === null ? '' : `${params.durationSeconds} 秒`,
+      `${job.shotCount} 个镜头`,
+      AUDIO_MODE_LABELS[params.audioMode] || '',
+      params.seed === null ? '' : `种子 ${params.seed}`
+    ]
+      .filter(Boolean)
+      .join(' · ');
+  }
+
+  /** 一次任务的状态：状态文字、生成参数、时间、失败原因或结果信息、提醒与提交的提示词。 */
   function renderJob(job) {
+    const elapsed = formatElapsed(job);
     const parts = [
       aiUi.h(
         'div',
         { class: 'wb-job__head' },
         aiUi.h('span', { class: STATUS_CLASSES[job.status] || 'description', text: job.statusLabel }),
-        aiUi.h('span', { class: 'description', text: `第 ${job.attempt} 次 · ${job.modelName} · ${formatRelativeTime(job.finishedAt || job.createdAt)}` })
-      )
+        aiUi.h('span', { class: 'description', text: `第 ${job.attempt} 次 · ${formatRelativeTime(job.finishedAt || job.createdAt)}` })
+      ),
+      aiUi.h('div', { class: 'description wb-job__params', text: describeJobParams(job) }),
+      aiUi.h('div', {
+        class: 'description',
+        text: `提交于 ${new Date(job.createdAt).toLocaleString('zh-CN')}${elapsed ? ` · 耗时 ${elapsed}` : ''}`
+      })
     ];
     if (job.failure) parts.push(renderFailure(job.failure));
     if (job.result) {
@@ -325,12 +363,17 @@
         aiUi.h(
           'div',
           { class: 'wb-result' },
-          aiUi.h('span', { class: 'description', text: info.join(' · ') }),
-          aiUi.button({ text: '打开视频', compact: true, onClick: () => void openResult(job.result) }).element
+          aiUi.h('span', { class: 'description', text: `结果：${info.join(' · ')}` }),
+          aiUi.button({ text: '打开视频', compact: true, onClick: () => void openResult(job.result) }).element,
+          aiUi.button({ text: '导出…', compact: true, ariaLabel: '导出视频到指定位置', onClick: () => void exportResult(job.result) }).element,
+          aiUi.button({ text: '在文件夹中显示', compact: true, onClick: () => void revealResult(job.result) }).element
         )
       );
     }
     for (const warning of job.warnings) parts.push(aiUi.h('div', { class: 'description', text: `提醒：${warning}` }));
+    parts.push(
+      aiUi.h('details', { class: 'wb-history' }, aiUi.h('summary', { text: '提交的提示词' }), aiUi.h('div', { class: 'wb-prompt', text: job.prompt }))
+    );
     return aiUi.h('div', { class: 'wb-job' }, parts);
   }
 

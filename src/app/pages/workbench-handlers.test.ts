@@ -12,19 +12,22 @@ import { test } from 'node:test';
 import { MessageRouter } from '../messaging/message-router';
 import { BindingService } from '../services/binding-service';
 import { GenerationProfileService } from '../services/generation-profile-service';
-import { GenerationService } from '../services/generation-service';
+import { GenerationService, SubmitResult } from '../services/generation-service';
 import { ScreenplayService } from '../services/screenplay-service';
 import { StageService } from '../services/stage-service';
 import { StoryboardService } from '../services/storyboard-service';
 import { WorkService } from '../services/work-service';
 import { STAGE_REQUESTS } from './stage-handlers';
 import { BINDING_REQUESTS } from './binding-handlers';
-import { WORKBENCH_REQUESTS, registerWorkbenchHandlers } from './workbench-handlers';
+import { WORKBENCH_REQUESTS, describeSubmitResult, registerWorkbenchHandlers } from './workbench-handlers';
 
 /** 创建路由器与记录调用的替身。 */
 function createFixture() {
   const calls: Array<[string, unknown]> = [];
   const opened: string[] = [];
+  const exported: Array<[string, string]> = [];
+  const revealed: string[] = [];
+  const notices: Array<[string, string]> = [];
   const generation = {
     getCatalog: async () => ({ works: [], models: [] }),
     getEpisode: (workId: number, episodeId: number) => {
@@ -33,7 +36,7 @@ function createFixture() {
     },
     submit: async (payload: unknown) => {
       calls.push(['submit', payload]);
-      return { submitted: [], rejected: [] };
+      return submitResult;
     },
     cancel: async (payload: unknown) => {
       calls.push(['cancel', payload]);
@@ -45,6 +48,10 @@ function createFixture() {
     getResultPath: (payload: unknown) => {
       calls.push(['resultPath', payload]);
       return '/store/videos/1.mp4';
+    },
+    getResultFile: (payload: unknown) => {
+      calls.push(['resultFile', payload]);
+      return { path: '/store/videos/1.mp4', suggestedName: '作品-第1集-第1组-第1次.mp4' };
     }
   } as unknown as GenerationService;
   const router = new MessageRouter();
@@ -73,7 +80,15 @@ function createFixture() {
       screenplays: {} as ScreenplayService,
       storyboards: {} as StoryboardService
     },
-    { openFile: async (absolutePath) => void opened.push(absolutePath) }
+    {
+      openFile: async (absolutePath) => void opened.push(absolutePath),
+      exportFile: async (absolutePath, suggestedName) => {
+        exported.push([absolutePath, suggestedName]);
+        return true;
+      },
+      revealFile: async (absolutePath) => void revealed.push(absolutePath),
+      notify: (level, message) => void notices.push([level, message])
+    }
   );
   const send = (name: string, payload?: unknown) => router.handle({ type: 'request', requestId: 1, name, payload });
   /** 发送请求并断言成功，返回响应数据。 */
@@ -82,8 +97,11 @@ function createFixture() {
     assert.ok(response?.ok, '请求应成功');
     return response.data;
   };
-  return { calls, opened, send, callOk };
+  return { calls, opened, exported, revealed, notices, send, callOk };
 }
+
+/** 提交结果替身：测试里直接修改它的内容。 */
+const submitResult: SubmitResult = { submitted: [], rejected: [] };
 
 test('清单、集视图、提交、重新分组、拆分、合并、取消都转发给生成服务', async () => {
   const { calls, callOk } = createFixture();
@@ -119,6 +137,35 @@ test('打开结果视频：取得本机路径后交给宿主打开', async () =>
   assert.deepEqual(await callOk(WORKBENCH_REQUESTS.openResult, { resultId: 9 }), { opened: true });
   assert.deepEqual(opened, ['/store/videos/1.mp4']);
   assert.deepEqual(calls, [['resultPath', { resultId: 9 }]]);
+});
+
+test('导出与在文件夹中显示：取得路径和建议文件名后交给宿主', async () => {
+  const { calls, exported, revealed, callOk } = createFixture();
+  assert.deepEqual(await callOk(WORKBENCH_REQUESTS.exportResult, { resultId: 9 }), { exported: true });
+  assert.deepEqual(exported, [['/store/videos/1.mp4', '作品-第1集-第1组-第1次.mp4']]);
+  assert.deepEqual(await callOk(WORKBENCH_REQUESTS.revealResult, { resultId: 9 }), { revealed: true });
+  assert.deepEqual(revealed, ['/store/videos/1.mp4']);
+  assert.deepEqual(calls, [['resultFile', { resultId: 9 }], ['resultPath', { resultId: 9 }]]);
+});
+
+test('提交结果通过宿主通知：已提交为信息，有被拒绝的组为警告，没有内容时不通知', async () => {
+  const { notices, callOk } = createFixture();
+  await callOk(WORKBENCH_REQUESTS.submit, {});
+  assert.deepEqual(notices, []);
+
+  const mutable = submitResult as { submitted: SubmitResult['submitted']; rejected: SubmitResult['rejected'] };
+  mutable.submitted = [{ groupId: 1, seq: 1, jobId: 5, warnings: ['尾帧衔接暂未支持'] }];
+  await callOk(WORKBENCH_REQUESTS.submit, {});
+  assert.deepEqual(notices, [['info', '已提交 1 个镜头组，生成需要几分钟，完成后会通知你。\n第 1 组：尾帧衔接暂未支持']]);
+
+  mutable.rejected = [{ groupId: 2, seq: 2, issues: ['超过上限', '分辨率不支持'] }];
+  await callOk(WORKBENCH_REQUESTS.submit, {});
+  assert.equal(notices[1][0], 'warning');
+  assert.match(notices[1][1], /第 2 组未提交：超过上限；分辨率不支持/);
+  mutable.submitted = [];
+  mutable.rejected = [];
+
+  assert.equal(describeSubmitResult({ submitted: [], rejected: [] }), undefined);
 });
 
 test('绑定请求已注册：读取一集的绑定视图转发给绑定服务', async () => {
