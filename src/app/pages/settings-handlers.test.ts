@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：settings-handlers.test.ts
-// 说明：模型设置页请求处理的自动化测试：加载文本生成设置与服务商视图、各修改请求的响应与错误。
+// 说明：模型设置页请求处理的自动化测试：加载文本生成设置与服务商视图、各修改请求的响应与错误、测试连接。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
@@ -87,6 +87,15 @@ test('服务商修改请求：返回修改后的服务商视图', async () => {
 
   const toggled = await callOk<{ provider: ProviderData }>(SETTINGS_REQUESTS.modelSetEnabled, { modelId: loaded.models[0].id, isEnabled: false });
   assert.equal(toggled.provider.models[0].isEnabled, false);
+});
+
+test('测试连接请求：没有密钥时返回失败结果，配置密钥后返回成功；服务商不存在返回未找到', async () => {
+  const { callOk, callError } = createRouter();
+  const loaded = (await callOk<LoadedData>(SETTINGS_REQUESTS.load)).providers[0];
+  assert.deepEqual(await callOk(SETTINGS_REQUESTS.providerTestConnection, { providerId: loaded.id }), { ok: false, message: '尚未配置访问密钥。' });
+  await callOk(SETTINGS_REQUESTS.providerSetKey, { providerId: loaded.id, apiKey: 'sk-1' });
+  assert.equal((await callOk<{ ok: boolean }>(SETTINGS_REQUESTS.providerTestConnection, { providerId: loaded.id })).ok, true);
+  assert.equal((await callError(SETTINGS_REQUESTS.providerTestConnection, { providerId: 999 })).kind, 'not-found');
 });
 
 test('服务商修改请求：校验失败返回字段错误，服务商不存在返回未找到', async () => {

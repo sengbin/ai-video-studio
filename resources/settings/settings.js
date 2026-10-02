@@ -4,7 +4,7 @@
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
-// 备注：请求名称与 src/app/pages/settings-handlers.ts 一致；每个字段旁显示“保存中…”“已保存”“保存失败”；访问密钥只发送给宿主，不回显。
+// 备注：请求名称与 src/app/pages/settings-handlers.ts 一致；每个字段旁显示“保存中…”“已保存”“保存失败”；访问密钥只发送给宿主，不回显；“测试连接”用宿主已保存的密钥和设置发起。
 // ------------------------------------------------------------------------
 
 'use strict';
@@ -15,6 +15,7 @@
   const REQUEST_PROVIDER_UPDATE = 'settings.providerUpdate';
   const REQUEST_PROVIDER_SET_KEY = 'settings.providerSetKey';
   const REQUEST_PROVIDER_CLEAR_KEY = 'settings.providerClearKey';
+  const REQUEST_PROVIDER_TEST_CONNECTION = 'settings.providerTestConnection';
   const REQUEST_MODEL_SET_ENABLED = 'settings.modelSetEnabled';
 
   const AUTO_MODEL_LABEL = '自动';
@@ -22,6 +23,7 @@
   const AUTO_MODEL_VALUE = '__auto__';
   const SAVING_TEXT = '保存中…';
   const SAVED_TEXT = '已保存';
+  const TESTING_TEXT = '正在测试连接…';
   const GENERIC_ERROR_TEXT = '操作失败，请重试。';
   const API_KEY_FIELD = 'apiKey';
   const KEY_CONFIGURED_TEXT = '已配置';
@@ -183,6 +185,7 @@
     });
     const saveButton = aiUi.button({ text: '保存密钥', variant: 'primary', onClick: () => void saveKey() });
     const clearButton = aiUi.button({ text: '清除密钥', variant: 'danger', onClick: () => void clearKey() });
+    const testButton = aiUi.button({ text: '测试连接', onClick: () => void testConnection() });
 
     /** 按是否已配置刷新状态文字、占位文字和按钮。 */
     function refresh() {
@@ -191,6 +194,21 @@
       keyInput.focusTarget.placeholder = configured ? KEY_PLACEHOLDER_REPLACE : KEY_PLACEHOLDER_NEW;
       saveButton.setText(configured ? '更换密钥' : '保存密钥');
       clearButton.element.hidden = !configured;
+      testButton.setDisabled(!configured);
+    }
+
+    /** 用已保存的密钥和设置测试连接，结果显示在状态文字里。 */
+    async function testConnection() {
+      testButton.setDisabled(true);
+      status.show(TESTING_TEXT, false);
+      try {
+        const result = await window.hostBridge.request(REQUEST_PROVIDER_TEST_CONNECTION, { providerId: provider.id });
+        status.show(result.message, !result.ok);
+      } catch (error) {
+        status.show(`测试失败：${errorText(error)}`, true);
+      } finally {
+        testButton.setDisabled(!configured);
+      }
     }
 
     async function saveKey() {
@@ -249,7 +267,7 @@
       'div',
       { class: 'provider-key' },
       keyField.element,
-      aiUi.h('div', { class: 'provider-key-actions' }, saveButton.element, clearButton.element, keyState),
+      aiUi.h('div', { class: 'provider-key-actions' }, saveButton.element, testButton.element, clearButton.element, keyState),
       status.element
     );
   }

@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：provider-service.test.ts
-// 说明：服务商应用服务的自动化测试：目录同步、设置页视图、启用与设置修改、访问密钥、模型开关、可用模型。
+// 说明：服务商应用服务的自动化测试：目录同步、设置页视图、启用与设置修改、访问密钥、测试连接、模型开关、可用模型。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
@@ -9,7 +9,7 @@
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { NotFoundError, ValidationError } from '../../domain/errors';
+import { NotFoundError, ProviderError, ValidationError } from '../../domain/errors';
 import { ProviderRegistry } from '../../domain/ports/provider-registry';
 import { FAKE_PROVIDER_CODE, FAKE_VIDEO_CAPABILITY, FakeImageProvider, FakeVideoProvider } from '../../domain/ports/testing/fake-model-providers';
 import { MemorySecretStore } from '../../domain/ports/testing/memory-secret-store';
@@ -110,6 +110,38 @@ test('访问密钥：保存后视图显示已配置，密钥只进密钥存储�
   assert.equal(cleared.apiKeyConfigured, false);
   assert.equal(secrets.values.size, 0);
   await assert.rejects(() => service.clearApiKey({ providerId: 999 }), NotFoundError);
+});
+
+test('测试连接：用已保存的密钥和设置调用适配器，成功、分类失败、没有密钥、不支持都以结果返回', async () => {
+  const video = new FakeVideoProvider();
+  const { service } = createService(new ProviderRegistry().register(video));
+  const provider = await onlyProvider(service);
+
+  assert.deepEqual(await service.testConnection({ providerId: provider.id }), { ok: false, message: '尚未配置访问密钥。' });
+  assert.equal(video.connectionChecks.length, 0, '没有密钥时不调用适配器');
+
+  await service.setApiKey({ providerId: provider.id, apiKey: 'sk-test' });
+  const ok = await service.testConnection({ providerId: provider.id });
+  assert.equal(ok.ok, true);
+  assert.match(ok.message, /连接成功/);
+  assert.deepEqual([video.connectionChecks[0].apiKey, video.connectionChecks[0].settings.region, video.connectionChecks[0].signal !== undefined], ['sk-test', 'cn', true]);
+
+  video.connectionError = new ProviderError('auth', 'Invalid API-key provided.', { code: 'InvalidApiKey' });
+  const failed = await service.testConnection({ providerId: provider.id });
+  assert.deepEqual(failed, { ok: false, message: '密钥或账号问题：Invalid API-key provided.' });
+  assert.ok(!failed.message.includes('sk-test'));
+
+  video.connectionError = new TypeError('非服务商错误');
+  await assert.rejects(() => service.testConnection({ providerId: provider.id }), TypeError);
+  await assert.rejects(() => service.testConnection({ providerId: 999 }), NotFoundError);
+  await assert.rejects(() => service.testConnection({ providerId: 'x' }), ValidationError);
+});
+
+test('测试连接：没有适配器实现测试时说明暂不支持', async () => {
+  const { service, secrets } = createService(new ProviderRegistry().register(new FakeImageProvider()));
+  const provider = await onlyProvider(service);
+  await secrets.set(providerApiKeySecretKey(FAKE_PROVIDER_CODE), 'sk-test');
+  assert.deepEqual(await service.testConnection({ providerId: provider.id }), { ok: false, message: '“假服务商”暂不支持测试连接。' });
 });
 
 test('模型开关：返回所属服务商的视图；模型不存在时报错', async () => {

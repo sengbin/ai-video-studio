@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：provider-adapters.ts
-// 说明：图像、音频、视频模型适配器的端口接口：与模型无关的生成请求、远端任务引用与状态，以及三类适配器的统一方法。
+// 说明：图像、音频、视频模型适配器的端口接口：与模型无关的生成请求、远端任务引用与状态，以及三类适配器的统一方法（含可选的取消与测试连接）。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
@@ -147,6 +147,12 @@ export interface ModelProvider<TKind extends ModelKind, TRequest, TResult> {
    * @throws ProviderError 取消请求失败。
    */
   cancel?(ref: RemoteJobRef, context: ProviderCallContext): Promise<void>;
+
+  /**
+   * 用凭据向服务商发一次轻量请求，确认接口地址和访问密钥可用；服务商不支持时不实现。
+   * @throws ProviderError 鉴权、网络、服务端等失败，或接口地址不正确。
+   */
+  checkConnection?(context: ProviderCallContext): Promise<void>;
 }
 
 /** 图像模型适配器。 */

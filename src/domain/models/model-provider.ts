@@ -122,6 +122,12 @@ export interface ProviderView {
   readonly models: readonly ModelView[];
 }
 
+/** 测试连接的结果：失败也是正常结果，message 说明成功或失败的原因。 */
+export interface ConnectionTestResult {
+  readonly ok: boolean;
+  readonly message: string;
+}
+
 /** 可以实际使用的模型：模型与服务商都已启用且已配置密钥。 */
 export interface UsableModel {
   readonly model: ModelRecord;

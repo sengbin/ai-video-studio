@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：provider-service.ts
-// 说明：模型服务商应用服务：把适配器声明的服务商与模型同步到数据库，整理设置页视图，并校验后保存启用状态、设置、访问密钥和模型开关。
+// 说明：模型服务商应用服务：把适配器声明的服务商与模型同步到数据库，整理设置页视图，并校验后保存启用状态、设置、访问密钥和模型开关；用已保存的密钥测试服务商连接。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
@@ -10,6 +10,7 @@
 import { NotFoundError, ProviderError } from '../../domain/errors';
 import { MODEL_KIND_LABELS, ModelKind } from '../../domain/models/model-capability';
 import {
+  ConnectionTestResult,
   ModelDescriptor,
   ModelRecord,
   ModelView,
@@ -28,6 +29,7 @@ import {
 import { ProviderRegistry } from '../../domain/ports/provider-registry';
 import { ProviderRepository } from '../../domain/ports/provider-repository';
 import { SecretStore } from '../../domain/ports/secret-store';
+import { describeJobFailure } from '../../domain/rules/generation-rules';
 import { summarizeCapability } from '../../domain/rules/model-capability-rules';
 import {
   normalizeProviderSettings,
@@ -38,6 +40,9 @@ import {
   readProviderUpdate,
   resolveProviderSettings
 } from '../../domain/rules/provider-rules';
+
+/** 测试连接的超时（毫秒）。 */
+const CONNECTION_TEST_TIMEOUT_MS = 15_000;
 
 /** 服务商应用服务的依赖。 */
 export interface ProviderServiceDependencies {
@@ -151,6 +156,34 @@ export class ProviderService {
     const { provider, descriptor } = this.requireProvider(readProviderId(rawInput));
     await this.secrets.delete(providerApiKeySecretKey(provider.code));
     return this.buildView(provider, descriptor);
+  }
+
+  /**
+   * 用已保存的访问密钥和设置测试能否连上服务商；连接失败（鉴权、网络等）不抛出，而是在结果里说明原因。
+   * @param rawInput 界面提交的原始内容：providerId。
+   * @throws ValidationError 标识不合法。
+   * @throws NotFoundError 服务商不存在。
+   */
+  async testConnection(rawInput: unknown): Promise<ConnectionTestResult> {
+    const { provider, descriptor } = this.requireProvider(readProviderId(rawInput));
+    const adapter = this.registry.listAdapters(provider.code).find((candidate) => candidate.checkConnection !== undefined);
+    if (adapter === undefined) {
+      return { ok: false, message: `“${provider.displayName}”暂不支持测试连接。` };
+    }
+    const apiKey = await this.secrets.get(providerApiKeySecretKey(provider.code));
+    if (apiKey === undefined || apiKey === '') {
+      return { ok: false, message: '尚未配置访问密钥。' };
+    }
+    const settings = resolveProviderSettings(descriptor.settingFields, provider.settings);
+    try {
+      await adapter.checkConnection?.({ apiKey, settings, signal: AbortSignal.timeout(CONNECTION_TEST_TIMEOUT_MS) });
+      return { ok: true, message: '连接成功，接口地址和访问密钥可用。' };
+    } catch (error) {
+      if (error instanceof ProviderError) {
+        return { ok: false, message: `${describeJobFailure({ category: error.category, code: error.code, message: error.message }).label}：${error.message}` };
+      }
+      throw error;
+    }
   }
 
   /**

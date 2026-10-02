@@ -111,10 +111,21 @@ export class FakeVideoProvider implements VideoModelProvider {
   readonly submitted: VideoGenerationRequest[] = [];
   /** 预设的查询结果，每次查询取出第一项；耗尽后返回成功。 */
   readonly queryStates: RemoteJobState<VideoJobResult>[] = [];
+  /** 测试连接时要抛出的错误；为 null 表示连接成功。 */
+  connectionError: Error | null = null;
+  /** 收到的测试连接凭据。 */
+  readonly connectionChecks: ProviderCallContext[] = [];
 
   constructor(private readonly models: readonly ModelDescriptor<'video'>[] = [
     { code: 'fake-video', displayName: '假视频模型', kind: 'video', capability: FAKE_VIDEO_CAPABILITY }
   ]) {}
+
+  async checkConnection(context: ProviderCallContext): Promise<void> {
+    this.connectionChecks.push(context);
+    if (this.connectionError !== null) {
+      throw this.connectionError;
+    }
+  }
 
   listModels(): readonly ModelDescriptor<'video'>[] {
     return this.models;

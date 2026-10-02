@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：qianwen-video-provider.ts
-// 说明：千问AI平台万相 3.0 视频适配器：按模型能力校验请求，把与模型无关的生成请求转换为 video-synthesis 异步任务，并查询任务状态。
+// 说明：千问AI平台万相 3.0 视频适配器：按模型能力校验请求，把与模型无关的生成请求转换为 video-synthesis 异步任务，并查询任务状态；用查询不存在的任务来测试连接。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
@@ -37,6 +37,9 @@ import {
 
 /** 创建任务的接口路径。 */
 const CREATE_TASK_PATH = '/services/aigc/video-generation/video-synthesis';
+
+/** 测试连接时查询的任务标识：不会存在。 */
+const CONNECTION_PROBE_TASK_ID = '00000000-0000-0000-0000-000000000000';
 
 /** 素材类型（请求体 input.media[].type）。 */
 const MEDIA_TYPE_FIRST_FRAME = 'first_frame';
@@ -90,6 +93,10 @@ export class QianwenVideoProvider implements VideoModelProvider {
     }
     const response = await this.client.postJson(context, CREATE_TASK_PATH, buildRequestBody(request), ASYNC_HEADERS);
     return { modelCode: request.modelCode, remoteJobId: readTaskId(response) };
+  }
+
+  checkConnection(context: ProviderCallContext): Promise<void> {
+    return this.client.checkConnection(context, `${QUERY_TASK_PATH}/${CONNECTION_PROBE_TASK_ID}`);
   }
 
   async query(ref: RemoteJobRef, context: ProviderCallContext): Promise<RemoteJobState<VideoJobResult>> {

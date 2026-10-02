@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：qianwen-api-client.ts
-// 说明：千问AI平台（DashScope 原生接口）的 HTTP 客户端：带鉴权的 JSON 请求，并把网络错误、HTTP 状态和错误码统一转换为 ProviderError。
+// 说明：千问AI平台（DashScope 原生接口）的 HTTP 客户端：带鉴权的 JSON 请求，并把网络错误、HTTP 状态和错误码统一转换为 ProviderError；提供测试连接。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
@@ -73,6 +73,26 @@ export class QianwenApiClient {
    */
   getJson(context: ProviderCallContext, path: string): Promise<Record<string, unknown>> {
     return this.send(context, path, { method: 'GET', extraHeaders: {} });
+  }
+
+  /**
+   * 确认接口地址与访问密钥可用：查询一个不存在的任务。平台返回带错误码的业务错误（如任务不存在）说明请求已通过鉴权。
+   * @param context 调用凭据与设置。
+   * @param probePath 查询不存在任务的接口路径，以 / 开头。
+   * @throws ProviderError 鉴权失败、网络故障、服务端错误，或响应不像平台的业务错误（接口地址可能不正确）。
+   */
+  async checkConnection(context: ProviderCallContext, probePath: string): Promise<void> {
+    try {
+      await this.getJson(context, probePath);
+    } catch (error) {
+      if (error instanceof ProviderError && error.category === 'invalid_request') {
+        if (error.code !== null) {
+          return;
+        }
+        throw new ProviderError('invalid_request', `${error.message}。请检查接口地址是否正确。`, { cause: error });
+      }
+      throw error;
+    }
   }
 
   private async send(

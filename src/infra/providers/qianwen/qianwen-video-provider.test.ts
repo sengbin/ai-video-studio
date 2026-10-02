@@ -179,6 +179,26 @@ test('提交：没有任务标识、没有或填错接口地址时报错，填�
   }
 });
 
+test('测试连接：查询不存在的任务，带错误码的业务错误说明地址与密钥可用，其他失败按分类报错', async () => {
+  const reachable = createFakeFetch([{ status: 400, body: { code: 'InvalidParameter', message: 'task not found' } }]);
+  await reachable.provider.checkConnection(CONTEXT);
+  assert.deepEqual([reachable.calls[0].method, reachable.calls[0].url, reachable.calls[0].headers.Authorization], ['GET', 'https://api.test/api/v1/tasks/00000000-0000-0000-0000-000000000000', 'Bearer sk-test']);
+
+  await createFakeFetch([{ body: {} }]).provider.checkConnection(CONTEXT);
+
+  const badKey = createFakeFetch([{ status: 401, body: { code: 'InvalidApiKey', message: 'Invalid API-key provided.' } }]);
+  assert.equal((await rejectedWith(badKey.provider.checkConnection(CONTEXT))).category, 'auth');
+
+  const wrongPath = createFakeFetch([{ status: 404, body: {} }]);
+  const notFound = await rejectedWith(wrongPath.provider.checkConnection(CONTEXT));
+  assert.deepEqual([notFound.category, /接口地址是否正确/.test(notFound.message)], ['invalid_request', true]);
+
+  const offline = createFakeFetch([new TypeError('fetch failed')]);
+  assert.equal((await rejectedWith(offline.provider.checkConnection(CONTEXT))).category, 'network');
+  const server = createFakeFetch([{ status: 500, body: { code: 'InternalError', message: 'x' } }]);
+  assert.equal((await rejectedWith(server.provider.checkConnection(CONTEXT))).category, 'server');
+});
+
 test('默认接口地址符合自身的格式约束', () => {
   const { provider } = createFakeFetch([]);
   const field = provider.provider.settingFields[0];

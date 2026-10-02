@@ -186,6 +186,7 @@ function installFakeQianwen() {
 
     const taskMatch = TASK_PATH.exec(url);
     if (url.includes('/api/v1') && taskMatch && method === 'GET') {
+      if (!authorized) return jsonResponse({ code: 'InvalidApiKey', message: 'Invalid API-key provided.' }, 401);
       const task = tasks.get(decodeURIComponent(taskMatch[1]));
       if (task === undefined) {
         return jsonResponse({ code: 'InvalidParameter', message: 'task not found' }, 404);

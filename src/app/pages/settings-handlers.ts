@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：settings-handlers.ts
-// 说明：模型设置页（P6）的请求处理：读取文本生成设置与服务商视图，即时保存文本生成设置、服务商启用与设置、访问密钥和模型开关。
+// 说明：模型设置页（P6）的请求处理：读取文本生成设置与服务商视图，即时保存文本生成设置、服务商启用与设置、访问密钥和模型开关，并按需测试服务商连接。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
@@ -18,6 +18,7 @@ export const SETTINGS_REQUESTS = {
   providerUpdate: 'settings.providerUpdate',
   providerSetKey: 'settings.providerSetKey',
   providerClearKey: 'settings.providerClearKey',
+  providerTestConnection: 'settings.providerTestConnection',
   modelSetEnabled: 'settings.modelSetEnabled'
 } as const;
 
@@ -46,5 +47,6 @@ export function registerSettingsHandlers(router: MessageRouter, services: Settin
   router.register(SETTINGS_REQUESTS.providerUpdate, async (payload) => ({ provider: await services.providers.updateProvider(payload) }));
   router.register(SETTINGS_REQUESTS.providerSetKey, async (payload) => ({ provider: await services.providers.setApiKey(payload) }));
   router.register(SETTINGS_REQUESTS.providerClearKey, async (payload) => ({ provider: await services.providers.clearApiKey(payload) }));
+  router.register(SETTINGS_REQUESTS.providerTestConnection, (payload) => services.providers.testConnection(payload));
   router.register(SETTINGS_REQUESTS.modelSetEnabled, async (payload) => ({ provider: await services.providers.setModelEnabled(payload) }));
 }
