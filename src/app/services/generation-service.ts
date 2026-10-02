@@ -4,14 +4,15 @@
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
-// 备注：不依赖 VS Code；一个镜头组一次生成一个多镜头视频；只有已确认采用的分镜脚本才能生成；每次提交产生新任务，失败原因与历史都保留；已有生成记录的组不能拆分或合并。
+// 备注：不依赖 VS Code；一个镜头组一次生成一个多镜头视频；只有已确认采用的分镜脚本才能生成；每次提交产生新任务，失败原因与历史都保留；已有生成记录的组不能拆分或合并；组的第一个镜头设为“上一镜头尾帧作首帧”时，任务等待上一组，尾帧由工作台截取后入库。
 // ------------------------------------------------------------------------
 
 import { FORM_LEVEL_ERROR_KEY, NotFoundError, ProviderError, ValidationError } from '../../domain/errors';
-import { JOB_STATUS_LABELS, JobFailure, JobStatus, VideoJobRecord, VideoResultRecord } from '../../domain/models/generation';
+import { ACTIVE_JOB_STATUSES, JOB_STATUS_LABELS, JobFailure, JobStatus, VideoJobRecord, VideoResultRecord } from '../../domain/models/generation';
 import { VideoAudioMode, VideoCapability } from '../../domain/models/model-capability';
 import { EntityKind, ENTITY_KIND_LABELS } from '../../domain/models/screenplay';
 import { StageDisplayStatus, StageRun } from '../../domain/models/stage-run';
+import { ShotGroup } from '../../domain/models/storyboard';
 import { AssetRepository } from '../../domain/ports/asset-repository';
 import { BindingRepository } from '../../domain/ports/binding-repository';
 import { GenerationRepository, JobMediaReader, ResultStore } from '../../domain/ports/generation-repository';
@@ -21,7 +22,17 @@ import { ScreenplayRepository } from '../../domain/ports/screenplay-repository';
 import { StageRunRepository } from '../../domain/ports/stage-run-repository';
 import { StoryboardRepository } from '../../domain/ports/storyboard-repository';
 import { FieldErrors, assertNoFieldErrors, readEntityId, readInteger, readRecord } from '../../domain/rules/field-readers';
-import { EntityReferences, describeJobFailure, maxGroupSeconds, planGroupRequest, readSubmitInput } from '../../domain/rules/generation-rules';
+import {
+  EntityReferences,
+  TAIL_FRAME_MAX_BYTES,
+  TAIL_FRAME_UNAVAILABLE_CODE,
+  describeJobFailure,
+  maxGroupSeconds,
+  planGroupRequest,
+  readSubmitInput,
+  readTailFrameFailure,
+  readTailFrameInput
+} from '../../domain/rules/generation-rules';
 import {
   GROUP_SECONDS_MAX,
   GROUP_SECONDS_MIN,
@@ -31,7 +42,7 @@ import {
   sumSeconds
 } from '../../domain/rules/shot-group-rules';
 import { JobChange } from '../queue/job-queue';
-import { buildVideoRequest } from '../queue/video-request';
+import { buildVideoRequest, PLACEHOLDER_FIRST_FRAME } from '../queue/video-request';
 import { ChangeNotifier } from './change-notifier';
 import { ProjectService } from './project-service';
 import { ProviderService } from './provider-service';
@@ -128,6 +139,10 @@ export interface JobView {
   readonly shotCount: number;
   readonly failure: JobFailureView | null;
   readonly warnings: readonly string[];
+  /** 是否以上一组的尾帧作首帧。 */
+  readonly usesPreviousTail: boolean;
+  /** 等待前序时说明在等什么；其他状态为 null。 */
+  readonly waitNote: string | null;
   readonly result: JobResultView | null;
 }
 
@@ -188,6 +203,12 @@ export interface RejectedGroup {
 export interface SubmitResult {
   readonly submitted: ReadonlyArray<{ readonly groupId: number; readonly seq: number; readonly jobId: number; readonly warnings: readonly string[] }>;
   readonly rejected: readonly RejectedGroup[];
+}
+
+/** 这一组首帧所依赖的前序任务，以及已就绪的首帧（尾帧图片）；尾帧还没截取时为 null。 */
+interface FirstFrameLink {
+  readonly prevJobId: number;
+  readonly firstFrameId: number | null;
 }
 
 /** 提交后通知队列开始处理，以及取消任务；由 JobQueue 实现。 */
@@ -360,10 +381,15 @@ export class GenerationService {
 
     syncShotGroups(storyboards, run.id, groupMaxSecondsOf(readStoryboardParams(run)), this.timestamp());
     const shotsById = new Map(storyboards.listShots(run.id).map((shot) => [shot.id, shot]));
-    const groupsById = new Map(storyboards.listGroups(run.id).map((group) => [group.id, group]));
+    const groupList = storyboards.listGroups(run.id);
+    const groupsById = new Map(groupList.map((group) => [group.id, group]));
+    // 按组序号依次处理，这样同一次提交里后一组能接在前一组刚建的任务后面。
+    const orderOf = new Map(groupList.map((group, index) => [group.id, index]));
+    const orderedGroupIds = [...input.groupIds].sort((left, right) => (orderOf.get(left) ?? Number.MAX_SAFE_INTEGER) - (orderOf.get(right) ?? Number.MAX_SAFE_INTEGER));
+    const createdJobIds = new Map<number, number>();
     const submitted: Array<SubmitResult['submitted'][number]> = [];
     const rejected: RejectedGroup[] = [];
-    for (const groupId of input.groupIds) {
+    for (const groupId of orderedGroupIds) {
       const group = groupsById.get(groupId);
       if (group === undefined) {
         rejected.push({ groupId, seq: 0, issues: ['镜头组不属于当前已确认的分镜脚本。'] });
@@ -383,6 +409,25 @@ export class GenerationService {
         });
         continue;
       }
+      // 组的第一个镜头设为“上一镜头尾帧作首帧”时，这一组要接在上一组后面（第一组没有上一组，不适用）。
+      let link: FirstFrameLink | undefined;
+      const previousGroup = groupList[(orderOf.get(group.id) ?? 0) - 1] as ShotGroup | undefined;
+      if (members[0]?.firstFrameMode === 'prev_tail' && previousGroup !== undefined) {
+        if (!capability.firstFrame) {
+          rejected.push({
+            groupId,
+            seq: group.seq,
+            issues: ['所选模型不支持首帧输入，无法用上一组的尾帧作首帧。请换一个支持首帧的模型，或点“编辑镜头”把首帧来源改为“无”。']
+          });
+          continue;
+        }
+        const found = this.linkPreviousGroup(previousGroup, createdJobIds);
+        if (typeof found === 'string') {
+          rejected.push({ groupId, seq: group.seq, issues: [found] });
+          continue;
+        }
+        link = found;
+      }
       const snapshot = planGroupRequest({
         shots: members,
         storyboardRunId: run.id,
@@ -390,11 +435,13 @@ export class GenerationService {
         modelCode: call.modelCode,
         capability,
         params: input.params,
-        entities: this.collectEntityReferences(input.workId, input.episodeId, [...new Set(members.flatMap((shot) => shot.entityIds))])
+        entities: this.collectEntityReferences(input.workId, input.episodeId, [...new Set(members.flatMap((shot) => shot.entityIds))]),
+        useFirstFrame: link !== undefined
       });
       let issues: readonly string[];
       try {
-        issues = call.adapter.validate(buildVideoRequest(snapshot, null, media, call.modelCode));
+        const request = buildVideoRequest(snapshot, null, media, call.modelCode);
+        issues = call.adapter.validate(link === undefined ? request : { ...request, firstFrame: PLACEHOLDER_FIRST_FRAME });
       } catch (error) {
         issues = [error instanceof Error ? error.message : String(error)];
       }
@@ -402,7 +449,18 @@ export class GenerationService {
         rejected.push({ groupId, seq: group.seq, issues });
         continue;
       }
-      const job = jobs.insertJob({ groupId: group.id, modelId: usable.model.id, status: 'queued', snapshot, prevJobId: null }, this.timestamp());
+      const job = jobs.insertJob(
+        {
+          groupId: group.id,
+          modelId: usable.model.id,
+          status: link === undefined || link.firstFrameId !== null ? 'queued' : 'waiting',
+          snapshot,
+          prevJobId: link === undefined ? null : link.prevJobId,
+          firstFrameId: link === undefined ? null : link.firstFrameId
+        },
+        this.timestamp()
+      );
+      createdJobIds.set(group.id, job.id);
       submitted.push({ groupId, seq: group.seq, jobId: job.id, warnings: snapshot.warnings });
       changes.notify({ jobId: job.id, groupId });
     }
@@ -509,6 +567,54 @@ export class GenerationService {
     return { path: this.dependencies.results.resolvePath(result.filePath), suggestedName: `${toFileName(stem)}.mp4` };
   }
 
+  /** 需要截取尾帧的结果视频：有等待它的任务、但还没有尾帧；工作台据此截取并上传。 */
+  listPendingTailFrames(): Array<{ readonly resultId: number }> {
+    return this.dependencies.jobs.listResultsAwaitingFrame().map((result) => ({ resultId: result.id }));
+  }
+
+  /**
+   * 保存工作台从结果视频截取的尾帧，并让等待它的任务继续。
+   * @param rawInput { resultId, mimeType, width, height, data（Base64） }。
+   * @throws ValidationError 内容不合法。
+   * @throws NotFoundError 结果视频不存在。
+   */
+  saveTailFrame(rawInput: unknown): { readonly saved: true } {
+    const { jobs, scheduler } = this.dependencies;
+    const input = readTailFrameInput(rawInput);
+    const data = Buffer.from(input.dataBase64, 'base64');
+    if (data.byteLength === 0 || data.byteLength > TAIL_FRAME_MAX_BYTES) {
+      throw new ValidationError({ [FORM_LEVEL_ERROR_KEY]: '尾帧图片内容不合法。' });
+    }
+    if (jobs.saveResultFrame(input.resultId, { mimeType: input.mimeType, width: input.width, height: input.height, data }, this.timestamp()) === undefined) {
+      throw new NotFoundError('结果视频不存在。');
+    }
+    void scheduler.pump().catch((error: unknown) => console.error('处理生成队列时出现未预期的错误：', error));
+    return { saved: true };
+  }
+
+  /**
+   * 工作台没能从结果视频截取尾帧时，让等待这个结果的任务失败，避免一直等下去。
+   * @param rawInput { resultId, reason? }。
+   * @returns 被置为失败的任务数。
+   */
+  reportTailFrameFailure(rawInput: unknown): { readonly failed: number } {
+    const { jobs, changes } = this.dependencies;
+    const { resultId, reason } = readTailFrameFailure(rawInput);
+    const result = jobs.findResult(resultId);
+    if (result === undefined) {
+      return { failed: 0 };
+    }
+    const message = reason === '' ? '无法从上一组的视频截取尾帧。' : `无法从上一组的视频截取尾帧：${reason}`;
+    let failed = 0;
+    for (const job of jobs.listJobsByStatus(['waiting']).filter((candidate) => candidate.prevJobId === result.jobId)) {
+      if (jobs.markFailed(job.id, { category: 'invalid_request', code: TAIL_FRAME_UNAVAILABLE_CODE, message }, this.timestamp())) {
+        failed += 1;
+        changes.notify({ jobId: job.id, groupId: job.groupId });
+      }
+    }
+    return { failed };
+  }
+
   /**
    * 任务成功或失败后给用户的通知内容；任务还在进行、已取消或不存在时返回 undefined。
    * @param jobId 任务标识。
@@ -597,6 +703,35 @@ export class GenerationService {
     });
   }
 
+  /**
+   * 找到这一组首帧依赖的上一组任务：本次提交里刚建的任务，其次是上一组正在进行的任务，最后是上一组已采用的结果。
+   * @returns 依赖；上一组什么都没有时返回说明原因的文字。
+   */
+  private linkPreviousGroup(previous: ShotGroup, createdJobIds: ReadonlyMap<number, number>): FirstFrameLink | string {
+    const { jobs } = this.dependencies;
+    const created = createdJobIds.get(previous.id);
+    if (created !== undefined) {
+      return { prevJobId: created, firstFrameId: null };
+    }
+    const active = jobs.listJobsByGroups([previous.id]).find((job) => ACTIVE_JOB_STATUSES.includes(job.status));
+    if (active !== undefined) {
+      return { prevJobId: active.id, firstFrameId: null };
+    }
+    const selected = jobs.listResultsByGroups([previous.id]).find((result) => result.isSelected);
+    if (selected !== undefined) {
+      return { prevJobId: selected.jobId, firstFrameId: jobs.findResultFrameId(selected.id) ?? null };
+    }
+    return `上一组（第 ${previous.seq} 组）还没有生成结果，无法用它的尾帧作首帧。请先生成上一组，或点“编辑镜头”把首帧来源改为“无”。`;
+  }
+
+  /** 等待前序的任务在等什么：前序还在生成，或前序已完成、等工作台截取尾帧。 */
+  private describeWaiting(job: VideoJobRecord): string {
+    const previous = job.prevJobId === null ? undefined : this.dependencies.jobs.findJob(job.prevJobId);
+    return previous?.status === 'succeeded'
+      ? '上一组已生成，正在从视频截取尾帧作首帧（需要保持工作台打开）。'
+      : '等待上一组生成完成，再用它的尾帧作首帧。';
+  }
+
   private toJobView(job: VideoJobRecord, result: VideoResultRecord | undefined): JobView {
     const model = this.dependencies.models.findModelById(job.modelId);
     return {
@@ -619,6 +754,8 @@ export class GenerationService {
       shotCount: job.snapshot.shotIds.length,
       failure: job.failure === null ? null : { ...job.failure, ...describeJobFailure(job.failure) },
       warnings: job.snapshot.warnings,
+      usesPreviousTail: job.prevJobId !== null || job.firstFrameId !== null,
+      waitNote: job.status === 'waiting' ? this.describeWaiting(job) : null,
       result:
         result === undefined
           ? null

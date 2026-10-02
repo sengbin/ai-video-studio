@@ -8,6 +8,7 @@
 // ------------------------------------------------------------------------
 
 import { mkdirSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
@@ -278,7 +279,7 @@ export function activate(context: vscode.ExtensionContext): void {
 /** 停用扩展；注册的资源由 VS Code 通过 subscriptions 统一释放。 */
 export function deactivate(): void {}
 
-/** 工作台使用的宿主能力：用系统程序打开、导出到用户选择的位置、在文件夹中显示、右下角通知。 */
+/** 工作台使用的宿主能力：用系统程序打开、导出到用户选择的位置、在文件夹中显示、读取结果视频（供页面截取尾帧）、右下角通知。 */
 function createWorkbenchHost(): WorkbenchHost {
   const revealFile = async (absolutePath: string): Promise<void> => {
     await vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(absolutePath));
@@ -286,6 +287,7 @@ function createWorkbenchHost(): WorkbenchHost {
   return {
     openFile: async (absolutePath) => void (await vscode.env.openExternal(vscode.Uri.file(absolutePath))),
     revealFile,
+    readFile: (absolutePath) => readFile(absolutePath),
     exportFile: async (absolutePath, suggestedName) => {
       const target = await vscode.window.showSaveDialog({
         defaultUri: vscode.Uri.file(path.join(os.homedir(), suggestedName)),

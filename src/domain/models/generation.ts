@@ -92,7 +92,18 @@ export interface NewVideoJob {
   readonly modelId: number;
   readonly status: 'queued' | 'waiting';
   readonly snapshot: JobSnapshot;
+  /** 首帧依赖的前序任务（取它结果视频的尾帧）；不依赖为 null。 */
   readonly prevJobId: number | null;
+  /** 已就绪的首帧（尾帧图片）；等待前序时为 null。 */
+  readonly firstFrameId: number | null;
+}
+
+/** 要写入的尾帧图片。 */
+export interface NewResultFrame {
+  readonly mimeType: string;
+  readonly width: number;
+  readonly height: number;
+  readonly data: Uint8Array;
 }
 
 /** 要写入的结果视频。 */

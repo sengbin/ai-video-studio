@@ -10,6 +10,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { NotFoundError, ValidationError } from '../../domain/errors';
+import { VideoCapability } from '../../domain/models/model-capability';
 import { VideoGenerationRequest } from '../../domain/ports/provider-adapters';
 import { ProviderRegistry } from '../../domain/ports/provider-registry';
 import { FAKE_VIDEO_CAPABILITY, FakeVideoProvider } from '../../domain/ports/testing/fake-model-providers';
@@ -47,7 +48,7 @@ class StrictFakeProvider extends FakeVideoProvider {
 }
 
 /** 创建完整夹具：作品、已生成的分镜脚本（待确认，自动分成 1 组 2 个镜头）、服务与假依赖。 */
-async function createFixture(storyboardParams: Record<string, unknown> = {}) {
+async function createFixture(storyboardParams: Record<string, unknown> = {}, capability: VideoCapability = FAKE_VIDEO_CAPABILITY) {
   const fixture = createServiceFixture(standardResponder);
   const work = fixture.works.createWork(fixture.project.id, normalizeWorkCreation({ workName: '作品甲', kind: '单个短视频' }, 'text'));
   const creative = await fixture.stages.startCreative(work.id, CREATIVE_PARAMS);
@@ -64,7 +65,7 @@ async function createFixture(storyboardParams: Record<string, unknown> = {}) {
   const assetRepository = new SqliteAssetRepository(database);
   const providerRepository = new SqliteProviderRepository(database);
   const jobs = new SqliteGenerationRepository(database);
-  const provider = new StrictFakeProvider();
+  const provider = new StrictFakeProvider([{ code: 'fake-video', displayName: '假视频模型', kind: 'video', capability }]);
   const secrets = new MemorySecretStore();
   const providers = new ProviderService({ repository: providerRepository, registry: new ProviderRegistry().register(provider), secrets });
   providers.syncCatalog();
@@ -501,6 +502,154 @@ test('订阅任务变化：提交时通知，取消订阅后不再通知', async
     unsubscribe();
     await submitGroups(fixture, [second]);
     assert.equal(received.length, 1);
+  } finally {
+    fixture.database.close();
+  }
+});
+
+/** 生成一组并让它成功（写入结果视频，自动采用）。 */
+async function finishGroup(fixture: Fixture, groupId: number) {
+  await submitGroups(fixture, [groupId]);
+  const [job] = fixture.jobs.listJobsByGroups([groupId]);
+  fixture.jobs.markSubmitted(job.id, 'r', 't');
+  const result = fixture.jobs.markSucceeded(job.id, { filePath: `videos/${job.id}.mp4`, remoteUrl: null, durationSeconds: 4, width: null, height: null, sizeBytes: 10, hasAudio: true }, 't');
+  assert.ok(result);
+  return { job, result };
+}
+
+const FRAME_BASE64 = Buffer.from([1, 2, 3]).toString('base64');
+
+test('尾帧衔接：同一次提交里后一组等待前一组（与点选顺序无关），快照不带参考图，视图说明在等什么', async () => {
+  const fixture = await createFixture({ groupMaxSeconds: '4' });
+  try {
+    fixture.approve();
+    const [first, second] = fixture.groupIds();
+    const result = await submitGroups(fixture, [second, first]);
+    assert.equal(result.rejected.length, 0);
+    assert.deepEqual(result.submitted.map((item) => item.seq), [1, 2]);
+
+    const [firstJob] = fixture.jobs.listJobsByGroups([first]);
+    const [secondJob] = fixture.jobs.listJobsByGroups([second]);
+    assert.deepEqual([firstJob.status, firstJob.prevJobId, firstJob.firstFrameId], ['queued', null, null]);
+    assert.deepEqual([secondJob.status, secondJob.prevJobId, secondJob.firstFrameId], ['waiting', firstJob.id, null]);
+    assert.deepEqual([secondJob.snapshot.referenceImageFileIds, secondJob.snapshot.referenceAudioFileIds], [[], []]);
+
+    const views = fixture.episode().groups.map((group) => group.jobs[0]);
+    assert.deepEqual([views[0].usesPreviousTail, views[0].waitNote], [false, null]);
+    assert.equal(views[1].usesPreviousTail, true);
+    assert.match(views[1].waitNote ?? '', /等待上一组生成完成/);
+  } finally {
+    fixture.database.close();
+  }
+});
+
+test('尾帧衔接：上一组还没有任何生成结果时拒绝，不创建任务', async () => {
+  const fixture = await createFixture({ groupMaxSeconds: '4' });
+  try {
+    fixture.approve();
+    const [, second] = fixture.groupIds();
+    const result = await submitGroups(fixture, [second]);
+    assert.equal(result.submitted.length, 0);
+    assert.match(result.rejected[0].issues[0], /上一组（第 1 组）还没有生成结果/);
+    assert.equal(fixture.jobs.listJobsByGroups([second]).length, 0);
+  } finally {
+    fixture.database.close();
+  }
+});
+
+test('尾帧衔接：模型不支持首帧输入时拒绝并说明怎么办', async () => {
+  const fixture = await createFixture({ groupMaxSeconds: '4' }, { ...FAKE_VIDEO_CAPABILITY, firstFrame: false });
+  try {
+    fixture.approve();
+    const result = await submitGroups(fixture);
+    assert.deepEqual(result.submitted.map((item) => item.seq), [1], '第 1 组不依赖尾帧，照常提交');
+    assert.match(result.rejected[0].issues[0], /不支持首帧输入.*首帧来源改为“无”/);
+  } finally {
+    fixture.database.close();
+  }
+});
+
+test('尾帧衔接：上一组已有结果但没有尾帧时等待截取；保存尾帧后唤醒队列，不再待截取', async () => {
+  const fixture = await createFixture({ groupMaxSeconds: '4' });
+  try {
+    fixture.approve();
+    const [first, second] = fixture.groupIds();
+    const { job, result } = await finishGroup(fixture, first);
+    assert.deepEqual(fixture.generation.listPendingTailFrames(), [], '没有任务在等，不需要截取');
+
+    await submitGroups(fixture, [second]);
+    const [waiting] = fixture.jobs.listJobsByGroups([second]);
+    assert.deepEqual([waiting.status, waiting.prevJobId, waiting.firstFrameId], ['waiting', job.id, null]);
+    assert.match(fixture.episode().groups[1].jobs[0].waitNote ?? '', /正在从视频截取尾帧/);
+    assert.deepEqual(fixture.generation.listPendingTailFrames(), [{ resultId: result.id }]);
+
+    const pumpsBefore = fixture.pumps.length;
+    assert.deepEqual(fixture.generation.saveTailFrame({ resultId: result.id, mimeType: 'image/jpeg', width: 64, height: 36, data: FRAME_BASE64 }), { saved: true });
+    assert.equal(fixture.pumps.length, pumpsBefore + 1);
+    const frameId = fixture.jobs.findResultFrameId(result.id);
+    assert.ok(frameId !== undefined);
+    assert.deepEqual(Array.from(fixture.jobs.readResultFrame(frameId)?.data ?? []), [1, 2, 3]);
+    assert.deepEqual(fixture.generation.listPendingTailFrames(), []);
+  } finally {
+    fixture.database.close();
+  }
+});
+
+test('尾帧衔接：上一组的尾帧已就绪时，这一组直接排队并带着首帧', async () => {
+  const fixture = await createFixture({ groupMaxSeconds: '4' });
+  try {
+    fixture.approve();
+    const [first, second] = fixture.groupIds();
+    const { job, result } = await finishGroup(fixture, first);
+    fixture.generation.saveTailFrame({ resultId: result.id, mimeType: 'image/png', width: 64, height: 36, data: FRAME_BASE64 });
+    const frameId = fixture.jobs.findResultFrameId(result.id);
+
+    await submitGroups(fixture, [second]);
+    const [queued] = fixture.jobs.listJobsByGroups([second]);
+    assert.deepEqual([queued.status, queued.prevJobId, queued.firstFrameId], ['queued', job.id, frameId]);
+    const view = fixture.episode().groups[1].jobs[0];
+    assert.deepEqual([view.usesPreviousTail, view.waitNote], [true, null]);
+    assert.match(queued.snapshot.warnings.join(), /尾帧作首帧.*不传参考素材/);
+  } finally {
+    fixture.database.close();
+  }
+});
+
+test('保存尾帧：内容不合法或结果不存在时报错', async () => {
+  const fixture = await createFixture({ groupMaxSeconds: '4' });
+  try {
+    fixture.approve();
+    const [first] = fixture.groupIds();
+    const { result } = await finishGroup(fixture, first);
+    const frame = { resultId: result.id, mimeType: 'image/jpeg', width: 64, height: 36, data: FRAME_BASE64 };
+    assert.throws(() => fixture.generation.saveTailFrame({ ...frame, mimeType: 'text/plain' }), ValidationError);
+    assert.throws(() => fixture.generation.saveTailFrame({ ...frame, data: '' }), ValidationError);
+    assert.throws(() => fixture.generation.saveTailFrame({ ...frame, resultId: 999 }), NotFoundError);
+    assert.equal(fixture.jobs.findResultFrameId(result.id), undefined);
+  } finally {
+    fixture.database.close();
+  }
+});
+
+test('截取尾帧失败：等待这个结果的任务失败并说明原因，通知界面；没有等待的任务时什么也不做', async () => {
+  const fixture = await createFixture({ groupMaxSeconds: '4' });
+  try {
+    fixture.approve();
+    const [first, second] = fixture.groupIds();
+    const { result } = await finishGroup(fixture, first);
+    assert.deepEqual(fixture.generation.reportTailFrameFailure({ resultId: result.id, reason: '无法解码视频' }), { failed: 0 });
+
+    await submitGroups(fixture, [second]);
+    const [waiting] = fixture.jobs.listJobsByGroups([second]);
+    fixture.changed.length = 0;
+    assert.deepEqual(fixture.generation.reportTailFrameFailure({ resultId: result.id, reason: '无法解码视频' }), { failed: 1 });
+    assert.deepEqual(fixture.changed, [{ jobId: waiting.id, groupId: second }]);
+    const failed = fixture.episode().groups[1].jobs[0];
+    assert.equal(failed.status, 'failed');
+    assert.equal(failed.failure?.label, '无法截取上一组的尾帧');
+    assert.equal(failed.failure?.message, '无法从上一组的视频截取尾帧：无法解码视频');
+    assert.deepEqual(fixture.generation.reportTailFrameFailure({ resultId: 9999 }), { failed: 0 });
+    assert.throws(() => fixture.generation.reportTailFrameFailure({}), ValidationError);
   } finally {
     fixture.database.close();
   }

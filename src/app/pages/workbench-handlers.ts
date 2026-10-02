@@ -1,12 +1,13 @@
 // ------------------------------------------------------------------------
 // 名称：workbench-handlers.ts
-// 说明：生成工作台（P5）的请求处理：读取作品与可用模型清单、读取一集的镜头组与任务历史、提交生成（结果以右下角通知弹出）、重新分组与拆分合并镜头组、取消任务、打开、导出、在文件夹中显示结果视频；并提供分镜脚本阶段产出层需要的请求。
+// 说明：生成工作台（P5）的请求处理：读取作品与可用模型清单、读取一集的镜头组与任务历史、提交生成（结果以右下角通知弹出）、重新分组与拆分合并镜头组、取消任务、打开、导出、在文件夹中显示结果视频、尾帧截取相关（列出待截取的结果、把结果视频交给页面、保存尾帧、上报截取失败）；并提供分镜脚本阶段产出层需要的请求。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
 // 备注：不依赖 VS Code；打开文件由宿主注入的 openFile 完成；“编辑镜头 / 确认分镜脚本”复用阶段产出层，所以一并注册阶段请求。
 // ------------------------------------------------------------------------
 
+import { FORM_LEVEL_ERROR_KEY, ValidationError } from '../../domain/errors';
 import { readEntityId, readRecord } from '../../domain/rules/field-readers';
 import { MessageRouter } from '../messaging/message-router';
 import { BindingService } from '../services/binding-service';
@@ -32,8 +33,15 @@ export const WORKBENCH_REQUESTS = {
   cancel: 'workbench.cancel',
   openResult: 'workbench.openResult',
   exportResult: 'workbench.exportResult',
-  revealResult: 'workbench.revealResult'
+  revealResult: 'workbench.revealResult',
+  pendingFrames: 'workbench.pendingFrames',
+  resultVideo: 'workbench.resultVideo',
+  saveFrame: 'workbench.saveFrame',
+  frameFailed: 'workbench.frameFailed'
 } as const;
+
+/** 读给页面截取尾帧的结果视频大小上限（字节）：视频要以 Base64 形式通过消息传给页面。 */
+const MAX_FRAME_SOURCE_BYTES = 200 * 1024 * 1024;
 
 /** 宿主推送给工作台的事件名称：changed 要求刷新数据（任务或分镜脚本有变化）。 */
 export const WORKBENCH_EVENTS = {
@@ -59,6 +67,8 @@ export interface WorkbenchHost {
   readonly exportFile: (absolutePath: string, suggestedName: string) => Promise<boolean>;
   /** 在系统文件管理器中显示文件。 */
   readonly revealFile: (absolutePath: string) => Promise<void>;
+  /** 读取本机文件的全部内容。 */
+  readonly readFile: (absolutePath: string) => Promise<Uint8Array>;
   /** 在 VS Code 右下角弹出通知。 */
   readonly notify: (level: NoticeLevel, message: string) => void;
 }
@@ -147,6 +157,17 @@ export function registerWorkbenchHandlers(router: MessageRouter, services: Workb
     await host.revealFile(generation.getResultPath(payload));
     return { revealed: true };
   });
+
+  router.register(WORKBENCH_REQUESTS.pendingFrames, () => generation.listPendingTailFrames());
+  router.register(WORKBENCH_REQUESTS.resultVideo, async (payload) => {
+    const data = await host.readFile(generation.getResultPath(payload));
+    if (data.byteLength > MAX_FRAME_SOURCE_BYTES) {
+      throw new ValidationError({ [FORM_LEVEL_ERROR_KEY]: '结果视频过大，无法在工作台里截取尾帧。' });
+    }
+    return { mimeType: 'video/mp4', data: Buffer.from(data).toString('base64') };
+  });
+  router.register(WORKBENCH_REQUESTS.saveFrame, (payload) => generation.saveTailFrame(payload));
+  router.register(WORKBENCH_REQUESTS.frameFailed, (payload) => generation.reportTailFrameFailure(payload));
 
   registerStageHandlers(
     router,

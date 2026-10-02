@@ -28,6 +28,8 @@ function createFixture() {
   const exported: Array<[string, string]> = [];
   const revealed: string[] = [];
   const notices: Array<[string, string]> = [];
+  const read: string[] = [];
+  const videoBytes = { current: new Uint8Array([1, 2, 3]) };
   const generation = {
     getCatalog: async () => ({ works: [], models: [] }),
     getEpisode: (workId: number, episodeId: number) => {
@@ -52,6 +54,15 @@ function createFixture() {
     getResultFile: (payload: unknown) => {
       calls.push(['resultFile', payload]);
       return { path: '/store/videos/1.mp4', suggestedName: '作品-第1集-第1组-第1次.mp4' };
+    },
+    listPendingTailFrames: () => [{ resultId: 9 }],
+    saveTailFrame: (payload: unknown) => {
+      calls.push(['saveFrame', payload]);
+      return { saved: true };
+    },
+    reportTailFrameFailure: (payload: unknown) => {
+      calls.push(['frameFailed', payload]);
+      return { failed: 1 };
     }
   } as unknown as GenerationService;
   const router = new MessageRouter();
@@ -87,6 +98,10 @@ function createFixture() {
         return true;
       },
       revealFile: async (absolutePath) => void revealed.push(absolutePath),
+      readFile: async (absolutePath) => {
+        read.push(absolutePath);
+        return videoBytes.current;
+      },
       notify: (level, message) => void notices.push([level, message])
     }
   );
@@ -97,7 +112,7 @@ function createFixture() {
     assert.ok(response?.ok, '请求应成功');
     return response.data;
   };
-  return { calls, opened, exported, revealed, notices, send, callOk };
+  return { calls, opened, exported, revealed, notices, read, videoBytes, send, callOk };
 }
 
 /** 提交结果替身：测试里直接修改它的内容。 */
@@ -146,6 +161,18 @@ test('导出与在文件夹中显示：取得路径和建议文件名后交给�
   assert.deepEqual(await callOk(WORKBENCH_REQUESTS.revealResult, { resultId: 9 }), { revealed: true });
   assert.deepEqual(revealed, ['/store/videos/1.mp4']);
   assert.deepEqual(calls, [['resultFile', { resultId: 9 }], ['resultPath', { resultId: 9 }]]);
+});
+
+test('尾帧请求：列出待截取的结果、把结果视频以 Base64 交给页面、保存与上报失败转发给生成服务', async () => {
+  const { calls, read, callOk } = createFixture();
+  assert.deepEqual(await callOk(WORKBENCH_REQUESTS.pendingFrames), [{ resultId: 9 }]);
+  assert.deepEqual(await callOk(WORKBENCH_REQUESTS.resultVideo, { resultId: 9 }), { mimeType: 'video/mp4', data: 'AQID' });
+  assert.deepEqual(read, ['/store/videos/1.mp4']);
+
+  const frame = { resultId: 9, mimeType: 'image/jpeg', width: 640, height: 360, data: 'AAAA' };
+  assert.deepEqual(await callOk(WORKBENCH_REQUESTS.saveFrame, frame), { saved: true });
+  assert.deepEqual(await callOk(WORKBENCH_REQUESTS.frameFailed, { resultId: 9, reason: '无法解码视频' }), { failed: 1 });
+  assert.deepEqual(calls, [['resultPath', { resultId: 9 }], ['saveFrame', frame], ['frameFailed', { resultId: 9, reason: '无法解码视频' }]]);
 });
 
 test('提交结果通过宿主通知：已提交为信息，有被拒绝的组为警告，没有内容时不通知', async () => {

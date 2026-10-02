@@ -4,13 +4,14 @@
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
-// 备注：不依赖 VS Code；一轮处理由 pump() 完成，定时器由 start() 启动，测试直接调用 pump()。限流、服务端、网络类的提交失败自动重试，其余失败直接记为失败。镜头依赖（等待前序）随尾帧功能实现。
+// 备注：不依赖 VS Code；一轮处理由 pump() 完成，定时器由 start() 启动，测试直接调用 pump()。限流、服务端、网络类的提交失败自动重试，其余失败直接记为失败。等待前序的任务（上一组尾帧作首帧）在前序成功且尾帧入库后转为排队，前序失败或被取消时一并失败。
 // ------------------------------------------------------------------------
 
 import { NotFoundError, ProviderError } from '../../domain/errors';
 import { JobFailure, VideoJobRecord } from '../../domain/models/generation';
 import { GenerationRepository, JobMediaReader, ResultStore } from '../../domain/ports/generation-repository';
 import { ResolvedVideoCall, VideoGenerationRequest } from '../../domain/ports/provider-adapters';
+import { PREVIOUS_GROUP_UNAVAILABLE_CODE } from '../../domain/rules/generation-rules';
 import { buildVideoRequest } from './video-request';
 
 /** 同时处于生成中的任务数上限。 */
@@ -107,7 +108,7 @@ export class JobQueue {
   }
 
   /**
-   * 处理一轮：先轮询生成中的任务，再提交排队中的任务。正在处理时只登记再来一轮，不并发处理。
+   * 处理一轮：先轮询生成中的任务，再处理等待前序的任务，最后提交排队中的任务。正在处理时只登记再来一轮，不并发处理。
    */
   async pump(): Promise<void> {
     if (this.pumping) {
@@ -119,6 +120,7 @@ export class JobQueue {
       do {
         this.pumpAgain = false;
         await this.pollRunning();
+        this.releaseWaiting();
         await this.submitQueued();
       } while (this.pumpAgain);
     } finally {
@@ -160,6 +162,26 @@ export class JobQueue {
   private async pollRunning(): Promise<void> {
     for (const job of this.dependencies.jobs.listJobsByStatus(['running'])) {
       await this.pollOne(job);
+    }
+  }
+
+  /** 处理等待前序的任务：前序成功且尾帧已入库则转为排队；前序仍在进行或尾帧还没截取则继续等；前序失败、被取消或已不存在则这些任务一并失败。 */
+  private releaseWaiting(): void {
+    const { jobs, notify } = this.dependencies;
+    for (const job of jobs.listJobsByStatus(['waiting'])) {
+      const previous = job.prevJobId === null ? undefined : jobs.findJob(job.prevJobId);
+      if (previous !== undefined && (previous.status === 'waiting' || previous.status === 'queued' || previous.status === 'running')) {
+        continue;
+      }
+      const result = previous !== undefined && previous.status === 'succeeded' ? jobs.findResultByJob(previous.id) : undefined;
+      if (previous === undefined || previous.status !== 'succeeded' || result === undefined) {
+        this.fail(job, { category: 'invalid_request', code: PREVIOUS_GROUP_UNAVAILABLE_CODE, message: '上一组的任务失败、被取消或已不存在，没有可用的尾帧。' });
+        continue;
+      }
+      const frameId = jobs.findResultFrameId(result.id);
+      if (frameId !== undefined && jobs.releaseWaitingJob(job.id, frameId)) {
+        notify({ jobId: job.id, groupId: job.groupId });
+      }
     }
   }
 

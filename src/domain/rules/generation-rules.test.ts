@@ -14,7 +14,19 @@ import { GenerationParams } from '../models/generation';
 import { VideoCapability } from '../models/model-capability';
 import { ShotRecord, SoundRecord } from '../models/storyboard';
 import { FAKE_VIDEO_CAPABILITY } from '../ports/testing/fake-model-providers';
-import { EntityReferences, describeJobFailure, fitGroupDuration, formatTimestamp, maxGroupSeconds, planGroupRequest, readSubmitInput } from './generation-rules';
+import {
+  EntityReferences,
+  PREVIOUS_GROUP_UNAVAILABLE_CODE,
+  TAIL_FRAME_UNAVAILABLE_CODE,
+  describeJobFailure,
+  fitGroupDuration,
+  formatTimestamp,
+  maxGroupSeconds,
+  planGroupRequest,
+  readSubmitInput,
+  readTailFrameFailure,
+  readTailFrameInput
+} from './generation-rules';
 
 const PARAMS: GenerationParams = { modelId: 1, aspectRatio: '16:9', resolution: '720P', audioMode: null };
 
@@ -137,11 +149,63 @@ test('编译镜头组：组内不同镜头的声音挂在各自的时间段里�
   assert.deepEqual(snapshot.referenceImageFileIds, [101]);
 });
 
-test('编译镜头组：只有组内第一个镜头的首帧设置会提醒，组内其他镜头的尾帧衔接在同一个视频里自然完成', () => {
+test('编译镜头组：只有组内第一个镜头的首帧设置会处理，组内其他镜头的尾帧衔接在同一个视频里自然完成', () => {
   const inner = planMany([shot({ id: 10 }), shot({ id: 11, seq: 2, firstFrameMode: 'prev_tail' })]);
   assert.deepEqual(inner.warnings, []);
   const leading = planMany([shot({ id: 10, firstFrameMode: 'prev_tail' }), shot({ id: 11, seq: 2 })]);
-  assert.match(leading.warnings.join(), /尚未开放/);
+  assert.match(leading.warnings.join(), /没有上一组可用/);
+});
+
+test('编译镜头组：用上一组尾帧作首帧时不传参考图和音色参考，提示词里不再有参考编号', () => {
+  const speaker: EntityReferences = { ...GUARD, voiceFileId: 201 };
+  const dialogue = shot({ firstFrameMode: 'prev_tail', sounds: [sound({ speakerEntityId: 1, text: '要下雨了' })] });
+  const normal = planMany([dialogue], [speaker], { ...FAKE_VIDEO_CAPABILITY, audioInputMax: { count: 1, maxSeconds: 10 } });
+  assert.deepEqual([normal.referenceImageFileIds, normal.referenceAudioFileIds], [[101], [201]]);
+
+  const continued = planGroupRequest({
+    shots: [dialogue],
+    storyboardRunId: 3,
+    providerCode: 'fake',
+    modelCode: 'fake-video',
+    capability: { ...FAKE_VIDEO_CAPABILITY, audioInputMax: { count: 1, maxSeconds: 10 } },
+    params: PARAMS,
+    entities: [speaker],
+    useFirstFrame: true
+  });
+  assert.deepEqual([continued.referenceImageFileIds, continued.referenceAudioFileIds], [[], []]);
+  assert.ok(!continued.prompt.includes('图1') && !continued.prompt.includes('音频1'));
+  assert.ok(continued.prompt.includes('守夜人说：“要下雨了”'), '声音提示词仍然保留');
+  assert.match(continued.warnings.join(), /尾帧作首帧.*不传参考素材/);
+  assert.ok(!continued.warnings.join().includes('没有上一组可用'));
+});
+
+test('读取尾帧上传：类型、宽高、内容大小不合法时报错', () => {
+  const base = { resultId: 4, mimeType: 'image/jpeg', width: 640, height: 360, data: 'AAAA' };
+  assert.deepEqual(readTailFrameInput(base), { resultId: 4, mimeType: 'image/jpeg', width: 640, height: 360, dataBase64: 'AAAA' });
+  const rejected = (input: unknown) => assert.throws(() => readTailFrameInput(input), ValidationError);
+  rejected(null);
+  rejected({ ...base, resultId: 'x' });
+  rejected({ ...base, mimeType: 'image/gif' });
+  rejected({ ...base, width: 0 });
+  rejected({ ...base, height: 1.5 });
+  rejected({ ...base, width: 20000 });
+  rejected({ ...base, data: '' });
+  rejected({ ...base, data: 5 });
+  rejected({ ...base, data: 'A'.repeat(14 * 1024 * 1024) });
+});
+
+test('读取尾帧失败上报：原因去掉首尾空格并截断，缺省为空串', () => {
+  assert.deepEqual(readTailFrameFailure({ resultId: 2, reason: '  无法解码  ' }), { resultId: 2, reason: '无法解码' });
+  assert.equal(readTailFrameFailure({ resultId: 2 }).reason, '');
+  assert.equal(readTailFrameFailure({ resultId: 2, reason: 'x'.repeat(500) }).reason.length, 200);
+  assert.throws(() => readTailFrameFailure({ reason: 'x' }), ValidationError);
+});
+
+test('失败说明：本扩展自己产生的错误码有专门的说明，其他错误码按分类', () => {
+  const unavailable = describeJobFailure({ category: 'invalid_request', code: PREVIOUS_GROUP_UNAVAILABLE_CODE, message: 'x' });
+  assert.match(unavailable.label, /上一组/);
+  assert.match(describeJobFailure({ category: 'invalid_request', code: TAIL_FRAME_UNAVAILABLE_CODE, message: 'x' }).label, /尾帧/);
+  assert.equal(describeJobFailure({ category: 'server', code: 'constructor', message: 'x' }).label, '服务端错误');
 });
 
 test('编译镜头：使用中文提示词、对齐时长，默认原生声音并记录快照', () => {
@@ -203,8 +267,8 @@ test('编译镜头：选择无声时不写声音提示词；音色参考只给�
   assert.deepEqual(plan({}, [voiced], withVoiceModel).referenceAudioFileIds, [], '没有对白不需要音色参考');
 });
 
-test('编译镜头：尾帧衔接与指定图片首帧本版本不支持，给出提醒但不阻断', () => {
-  assert.match(plan({ firstFrameMode: 'prev_tail' }).warnings.join(), /上一镜头尾帧作首帧.*尚未开放/);
+test('编译镜头：没有上一组可用的尾帧衔接与指定图片首帧时给出提醒但不阻断', () => {
+  assert.match(plan({ firstFrameMode: 'prev_tail' }).warnings.join(), /上一镜头尾帧作首帧.*没有上一组可用/);
   assert.match(plan({ firstFrameMode: 'asset' }).warnings.join(), /指定图片作首帧.*尚未开放/);
   assert.deepEqual(plan({ firstFrameMode: 'none' }).warnings, []);
 });

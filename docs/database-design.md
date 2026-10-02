@@ -567,7 +567,7 @@ erDiagram
 | `submitted_at` | 文本 | 否 | | 实际提交给模型的时间 |
 | `finished_at` | 文本 | 否 | | |
 
-`request_snapshot_json` 的键（JSON 内使用 camelCase；当前实现，首帧衔接与独立音轨随步骤 9 再增加键）：
+`request_snapshot_json` 的键（JSON 内使用 camelCase；当前实现，首帧不进快照而是记录在任务的 `prev_job_id`、`first_frame_id`，独立音轨以后再增加键）：
 
 | 键 | 含义 |
 |---|---|
@@ -578,7 +578,7 @@ erDiagram
 | `referenceImageFileIds` | 组内出场实体（去重）使用的资产图片文件 ID 列表（只存引用，提交给服务商前才读取内容） |
 | `referenceAudioFileIds` | 使用的资产音频文件 ID 列表（含角色音色参考） |
 | `storyboardRunId` | 使用的分镜脚本版本 |
-| `warnings` | 提交时的提醒，如“尾帧衔接暂未支持，已忽略”“某实体没有绑定资产” |
+| `warnings` | 提交时的提醒，如“使用上一组尾帧作首帧，未传参考素材”“某实体没有绑定资产” |
 
 快照中不得出现密钥。
 
@@ -766,7 +766,7 @@ erDiagram
    - 合并之后，用户对集和实体的编辑直接保存在 `episodes`、`script_entities`（同时该版本回到待确认），再次确认不重复合并；合并之前的编辑保存在 `screenplays.structure_json`。
    - 实体按 `(kind, name)` 合并，保留已有绑定；不再出现的实体置 `is_active = 0`。
    - 若已有集存在分镜脚本或生成结果，须先向用户确认。
-3. **镜头依赖。** `first_frame_mode = prev_tail` 的镜头提交时，`prev_job_id` 指向同集上一镜头最新的成功任务；尚无成功任务则状态为 `waiting`。
+3. **镜头组依赖。** 镜头组的第一个镜头 `first_frame_mode = prev_tail`（且不是第一组）时，任务的 `prev_job_id` 指向上一组的任务：同一次提交里刚建的任务、上一组进行中的任务，或上一组已采用结果所属的任务。上一组的尾帧已入库时任务直接为 `queued` 并记下 `first_frame_id`；否则为 `waiting`，前序成功且尾帧入库后由队列转为 `queued` 并记下 `first_frame_id`。前序失败、被取消或已被删除（`prev_job_id` 置空）时，等待的任务记为 `failed`，错误码 `PreviousGroupUnavailable`；工作台截取尾帧失败时错误码为 `TailFrameUnavailable`。一个结果视频最多有一张尾帧（重复保存会替换）。
 4. **采用版本。** 每个镜头的成功结果中，只有一条 `is_selected = 1`；首次成功时自动选中，之后由用户切换。
 5. **启动恢复。** 扩展启动时，把遗留的 `running` 任务按 `remote_job_id` 重新查询状态；无远端标识的置为 `failed`。超过最长等待时间（提交后 60 分钟）的任务也要先查询，平台已完成则照常取回结果，仍在生成中才记为超时失败（关闭 VS Code 期间平台可能已经生成完）；平台只保留结果约 24 小时，超过后查询到“已不再保留”记为失败。遗留的 `running` 阶段记录（`stage_runs`）一律置为 `failed`，原因为“扩展重启，已中断”。
 6. **提交前校验（应用层）。** 实体是否都已绑定、参数是否落在模型能力范围内、参考图数量、密钥是否已配置、`prev_tail` 是否有前序，详见架构文档。

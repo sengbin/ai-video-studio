@@ -15,6 +15,7 @@ import {
   JobFailure,
   JobSnapshot,
   JobStatus,
+  NewResultFrame,
   NewVideoJob,
   NewVideoResult,
   VideoJobRecord,
@@ -110,10 +111,10 @@ export class SqliteGenerationRepository implements GenerationRepository, JobMedi
     const id = runInTransaction(this.database, () => {
       const result = this.database
         .prepare(
-          `INSERT INTO video_jobs (group_id, model_id, status, request_snapshot_json, attempt, prev_job_id, created_at)
-           VALUES (?, ?, ?, ?, (SELECT COALESCE(MAX(attempt), 0) + 1 FROM video_jobs WHERE group_id = ?), ?, ?)`
+          `INSERT INTO video_jobs (group_id, model_id, status, request_snapshot_json, attempt, prev_job_id, first_frame_id, created_at)
+           VALUES (?, ?, ?, ?, (SELECT COALESCE(MAX(attempt), 0) + 1 FROM video_jobs WHERE group_id = ?), ?, ?, ?)`
         )
-        .run(job.groupId, job.modelId, job.status, JSON.stringify(job.snapshot), job.groupId, job.prevJobId, timestamp);
+        .run(job.groupId, job.modelId, job.status, JSON.stringify(job.snapshot), job.groupId, job.prevJobId, job.firstFrameId, timestamp);
       return Number(result.lastInsertRowid);
     });
     return this.requireJob(id);
@@ -185,6 +186,44 @@ export class SqliteGenerationRepository implements GenerationRepository, JobMedi
       .prepare(`UPDATE video_jobs SET status = 'canceled', finished_at = ? WHERE id = ? AND status IN (${ACTIVE_STATUS_SQL})`)
       .run(timestamp, id);
     return Number(result.changes) > 0;
+  }
+
+  releaseWaitingJob(id: number, firstFrameId: number): boolean {
+    const result = this.database.prepare("UPDATE video_jobs SET status = 'queued', first_frame_id = ? WHERE id = ? AND status = 'waiting'").run(firstFrameId, id);
+    return Number(result.changes) > 0;
+  }
+
+  saveResultFrame(resultId: number, frame: NewResultFrame, timestamp: string): number | undefined {
+    return runInTransaction(this.database, () => {
+      if (this.findResult(resultId) === undefined) return undefined;
+      this.database.prepare('DELETE FROM result_frames WHERE result_id = ?').run(resultId);
+      const inserted = this.database
+        .prepare("INSERT INTO result_frames (result_id, kind, mime, width, height, content, created_at) VALUES (?, 'tail', ?, ?, ?, ?, ?)")
+        .run(resultId, frame.mimeType, frame.width, frame.height, frame.data, timestamp);
+      return Number(inserted.lastInsertRowid);
+    });
+  }
+
+  findResultFrameId(resultId: number): number | undefined {
+    const row = this.database.prepare('SELECT id FROM result_frames WHERE result_id = ? ORDER BY id DESC LIMIT 1').get(resultId) as unknown as { id: number } | undefined;
+    return row?.id;
+  }
+
+  findResultByJob(jobId: number): VideoResultRecord | undefined {
+    const row = this.database.prepare('SELECT * FROM video_results WHERE job_id = ? ORDER BY id DESC LIMIT 1').get(jobId) as unknown as ResultRow | undefined;
+    return row === undefined ? undefined : toResult(row);
+  }
+
+  listResultsAwaitingFrame(): VideoResultRecord[] {
+    const rows = this.database
+      .prepare(
+        `SELECT r.* FROM video_results r
+          WHERE EXISTS (SELECT 1 FROM video_jobs w WHERE w.prev_job_id = r.job_id AND w.status = 'waiting')
+            AND NOT EXISTS (SELECT 1 FROM result_frames f WHERE f.result_id = r.id)
+          ORDER BY r.id`
+      )
+      .all() as unknown as ResultRow[];
+    return rows.map(toResult);
   }
 
   listResultsByGroups(groupIds: readonly number[]): VideoResultRecord[] {

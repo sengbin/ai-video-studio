@@ -4,7 +4,7 @@
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
-// 备注：请求与事件名称与 src/app/pages/workbench-handlers.ts 一致；“编辑镜头”“确认分镜脚本”复用 stage/stage.js 的产出层（aiStage）；“实体绑定”由 workbench/bindings.js（aiBindings）提供，“生成参数”的合并与编辑由 workbench/profile.js（aiProfile）提供；依赖 shared/page-format.js（pageFormat）。
+// 备注：请求与事件名称与 src/app/pages/workbench-handlers.ts 一致；“编辑镜头”“确认分镜脚本”复用 stage/stage.js 的产出层（aiStage）；“实体绑定”由 workbench/bindings.js（aiBindings）提供，“生成参数”的合并与编辑由 workbench/profile.js（aiProfile）提供，“上一组尾帧作首帧”的尾帧截取由 workbench/tail-frames.js（aiTailFrames）提供；依赖 shared/page-format.js（pageFormat）。
 // ------------------------------------------------------------------------
 
 'use strict';
@@ -332,6 +332,7 @@
       params.resolution,
       params.durationSeconds === null ? '' : `${params.durationSeconds} 秒`,
       `${job.shotCount} 个镜头`,
+      job.usesPreviousTail ? '首帧：上一组尾帧' : '',
       AUDIO_MODE_LABELS[params.audioMode] || '',
       params.seed === null ? '' : `种子 ${params.seed}`
     ]
@@ -355,6 +356,7 @@
         text: `提交于 ${new Date(job.createdAt).toLocaleString('zh-CN')}${elapsed ? ` · 耗时 ${elapsed}` : ''}`
       })
     ];
+    if (job.waitNote) parts.push(aiUi.h('div', { class: 'status-warning', text: job.waitNote }));
     if (job.failure) parts.push(renderFailure(job.failure));
     if (job.result) {
       const { durationSeconds, sizeBytes, hasAudio } = job.result;
@@ -619,9 +621,9 @@
   /** 数据变化后稍作合并再刷新，任务状态频繁变化时避免反复重绘。 */
   function scheduleRefresh() {
     window.clearTimeout(refreshTimer);
-    refreshTimer = window.setTimeout(() => {
-      void loadAll(false);
-      void aiBindings.refresh();
+    refreshTimer = window.setTimeout(async () => {
+      await Promise.all([loadAll(false), aiBindings.refresh()]);
+      void aiTailFrames.sync();
     }, REFRESH_DELAY_MS);
   }
 
@@ -641,5 +643,5 @@
     if (document.visibilityState === 'visible') scheduleRefresh();
   });
   window.addEventListener('focus', scheduleRefresh);
-  void loadAll(true);
+  void loadAll(true).then(() => aiTailFrames.sync());
 })();

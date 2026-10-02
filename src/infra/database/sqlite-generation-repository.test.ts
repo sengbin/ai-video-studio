@@ -37,7 +37,7 @@ function createFixture() {
   const database = openDatabase(IN_MEMORY_DATABASE_PATH);
   const seed = seedGeneration(database);
   const repository = new SqliteGenerationRepository(database);
-  const insert = (groupId = seed.groupIds[0]) => repository.insertJob({ groupId, modelId: seed.modelId, status: 'queued', snapshot: SNAPSHOT, prevJobId: null }, T1);
+  const insert = (groupId = seed.groupIds[0]) => repository.insertJob({ groupId, modelId: seed.modelId, status: 'queued', snapshot: SNAPSHOT, prevJobId: null, firstFrameId: null }, T1);
   return { database, seed, repository, insert };
 }
 
@@ -156,6 +156,72 @@ test('删除镜头组时连带清除任务和结果，组内镜头保留且回�
     database.prepare('DELETE FROM storyboard_scripts WHERE run_id = ?').run(seed.runId);
     assert.equal(repository.findJob(other.id), undefined);
     assert.equal((database.prepare('SELECT COUNT(*) AS total FROM shot_groups').get() as unknown as { total: number }).total, 0);
+  } finally {
+    database.close();
+  }
+});
+
+const TAIL_FRAME = { mimeType: 'image/jpeg', width: 64, height: 36, data: new Uint8Array([7, 8, 9]) };
+
+test('尾帧：保存后可读取，重复保存替换旧的；结果不存在时不保存；删除结果时一并清除', () => {
+  const { database, repository, insert } = createFixture();
+  try {
+    const job = insert();
+    repository.markSubmitted(job.id, 'r', T2);
+    const result = repository.markSucceeded(job.id, RESULT, T2);
+    assert.ok(result);
+    assert.equal(repository.findResultByJob(job.id)?.id, result.id);
+    assert.equal(repository.findResultByJob(999), undefined);
+    assert.equal(repository.findResultFrameId(result.id), undefined);
+    assert.equal(repository.saveResultFrame(999, TAIL_FRAME, T2), undefined);
+
+    const first = repository.saveResultFrame(result.id, TAIL_FRAME, T2);
+    assert.ok(first !== undefined);
+    const media = repository.readResultFrame(first);
+    assert.equal(media?.mimeType, 'image/jpeg');
+    assert.deepEqual(Array.from(media?.data ?? []), [7, 8, 9]);
+
+    const second = repository.saveResultFrame(result.id, { ...TAIL_FRAME, data: new Uint8Array([1]) }, T2);
+    assert.notEqual(second, first);
+    assert.equal(repository.findResultFrameId(result.id), second);
+    assert.equal(repository.readResultFrame(first), undefined, '旧的尾帧被替换');
+    assert.equal((database.prepare('SELECT COUNT(*) AS total FROM result_frames').get() as unknown as { total: number }).total, 1);
+
+    database.prepare('DELETE FROM video_results WHERE id = ?').run(result.id);
+    assert.equal(repository.findResultFrameId(result.id), undefined);
+  } finally {
+    database.close();
+  }
+});
+
+test('等待前序：写入时带前序和首帧；释放时记下首帧并转为排队，只对等待中的任务生效；列出需要尾帧的结果', () => {
+  const { database, seed, repository, insert } = createFixture();
+  try {
+    const previous = insert();
+    const waiting = repository.insertJob(
+      { groupId: seed.groupIds[1], modelId: seed.modelId, status: 'waiting', snapshot: SNAPSHOT, prevJobId: previous.id, firstFrameId: null },
+      T1
+    );
+    assert.deepEqual([waiting.status, waiting.prevJobId, waiting.firstFrameId], ['waiting', previous.id, null]);
+    assert.equal(repository.hasActiveJob(seed.groupIds[1]), true, '等待前序也算进行中');
+    assert.deepEqual(repository.listResultsAwaitingFrame(), [], '前序还没有结果');
+
+    repository.markSubmitted(previous.id, 'r', T2);
+    const result = repository.markSucceeded(previous.id, RESULT, T2);
+    assert.ok(result);
+    assert.deepEqual(repository.listResultsAwaitingFrame().map((item) => item.id), [result.id]);
+
+    const frameId = repository.saveResultFrame(result.id, TAIL_FRAME, T2);
+    assert.ok(frameId !== undefined);
+    assert.deepEqual(repository.listResultsAwaitingFrame(), []);
+    assert.equal(repository.releaseWaitingJob(previous.id, frameId), false, '只有等待前序的任务才能释放');
+    assert.equal(repository.releaseWaitingJob(waiting.id, frameId), true);
+    const released = repository.findJob(waiting.id);
+    assert.deepEqual([released?.status, released?.firstFrameId], ['queued', frameId]);
+    assert.equal(repository.releaseWaitingJob(waiting.id, frameId), false);
+
+    const ready = repository.insertJob({ groupId: seed.groupIds[1], modelId: seed.modelId, status: 'queued', snapshot: SNAPSHOT, prevJobId: previous.id, firstFrameId: frameId }, T1);
+    assert.equal(ready.firstFrameId, frameId);
   } finally {
     database.close();
   }

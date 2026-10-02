@@ -7,7 +7,7 @@
 // 备注：状态变更方法只在任务仍处于允许的状态时生效并返回 true，避免覆盖已取消或已结束的任务；同步调用。
 // ------------------------------------------------------------------------
 
-import { GroupLocation, JobFailure, JobStatus, NewVideoJob, NewVideoResult, VideoJobRecord, VideoResultRecord } from '../models/generation';
+import { GroupLocation, JobFailure, JobStatus, NewResultFrame, NewVideoJob, NewVideoResult, VideoJobRecord, VideoResultRecord } from '../models/generation';
 import { MediaInput } from './provider-adapters';
 
 /** 生成任务与结果视频的数据访问接口。 */
@@ -41,6 +41,21 @@ export interface GenerationRepository {
 
   /** 取消任务。任务不是进行中的状态时返回 false。 */
   markCanceled(id: number, timestamp: string): boolean;
+
+  /** 等待前序的任务首帧已就绪：记下首帧，状态变为排队中。任务不是等待前序时返回 false。 */
+  releaseWaitingJob(id: number, firstFrameId: number): boolean;
+
+  /** 写入结果视频的尾帧（已有则替换）；结果不存在返回 undefined，否则返回尾帧标识。 */
+  saveResultFrame(resultId: number, frame: NewResultFrame, timestamp: string): number | undefined;
+
+  /** 结果视频的尾帧标识；还没有尾帧返回 undefined。 */
+  findResultFrameId(resultId: number): number | undefined;
+
+  /** 任务的结果视频；没有返回 undefined。 */
+  findResultByJob(jobId: number): VideoResultRecord | undefined;
+
+  /** 有等待前序的任务依赖、但还没有尾帧的结果视频。 */
+  listResultsAwaitingFrame(): VideoResultRecord[];
 
   /** 列出若干镜头组的全部结果视频，按创建时间从新到旧。 */
   listResultsByGroups(groupIds: readonly number[]): VideoResultRecord[];

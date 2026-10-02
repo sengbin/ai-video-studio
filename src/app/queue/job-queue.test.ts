@@ -14,6 +14,7 @@ import { JobSnapshot } from '../../domain/models/generation';
 import { ResultStore } from '../../domain/ports/generation-repository';
 import { ProviderCallContext, RemoteJobRef, RemoteJobState, VideoGenerationRequest, VideoJobResult } from '../../domain/ports/provider-adapters';
 import { FAKE_CALL_CONTEXT, FakeVideoProvider } from '../../domain/ports/testing/fake-model-providers';
+import { PREVIOUS_GROUP_UNAVAILABLE_CODE } from '../../domain/rules/generation-rules';
 import { IN_MEMORY_DATABASE_PATH, openDatabase } from '../../infra/database/database-connection';
 import { SqliteGenerationRepository } from '../../infra/database/sqlite-generation-repository';
 import { seedGeneration } from '../../infra/database/testing/seed-generation';
@@ -95,7 +96,7 @@ function createFixture(options: { maxConcurrent?: number; maxSubmitAttempts?: nu
     ...options
   });
   const enqueue = (groupIndex = 0, snapshot: JobSnapshot = SNAPSHOT) =>
-    jobs.insertJob({ groupId: seed.groupIds[groupIndex], modelId: seed.modelId, status: 'queued', snapshot, prevJobId: null }, new Date(clock.time).toISOString());
+    jobs.insertJob({ groupId: seed.groupIds[groupIndex], modelId: seed.modelId, status: 'queued', snapshot, prevJobId: null, firstFrameId: null }, new Date(clock.time).toISOString());
   return { database, seed, jobs, provider, clock, changes, saved, saveBehavior, callBehavior, queue, enqueue };
 }
 
@@ -374,6 +375,78 @@ test('同时调用 pump：正在处理时只登记再来一轮，不重复提交
     enqueue();
     await Promise.all([queue.pump(), queue.pump(), queue.pump()]);
     assert.equal(provider.submitted.length, 1);
+  } finally {
+    database.close();
+  }
+});
+
+const TAIL_FRAME = { mimeType: 'image/jpeg', width: 64, height: 36, data: new Uint8Array([7, 8, 9]) };
+
+test('等待前序：前序成功但尾帧还没入库时继续等；尾帧入库后转为排队，并带着首帧提交', async () => {
+  const { database, seed, jobs, provider, changes, queue, enqueue } = createFixture();
+  try {
+    const first = enqueue(0);
+    const second = jobs.insertJob({ groupId: seed.groupIds[1], modelId: seed.modelId, status: 'waiting', snapshot: SNAPSHOT, prevJobId: first.id, firstFrameId: null }, 't');
+    await queue.pump();
+    assert.deepEqual([first, second].map((job) => jobs.findJob(job.id)?.status), ['running', 'waiting'], '前序还在生成，继续等');
+
+    await queue.pump();
+    assert.deepEqual([first, second].map((job) => jobs.findJob(job.id)?.status), ['succeeded', 'waiting'], '前序成功但没有尾帧，继续等');
+    assert.equal(provider.submitted.length, 1);
+    const result = jobs.findResultByJob(first.id);
+    assert.ok(result);
+    assert.deepEqual(jobs.listResultsAwaitingFrame().map((item) => item.id), [result.id]);
+
+    const frameId = jobs.saveResultFrame(result.id, TAIL_FRAME, 't');
+    changes.length = 0;
+    await queue.pump();
+    const released = jobs.findJob(second.id);
+    assert.deepEqual([released?.status, released?.firstFrameId], ['running', frameId]);
+    assert.deepEqual(provider.submitted[1].firstFrame?.mimeType, 'image/jpeg');
+    assert.deepEqual(Array.from(provider.submitted[1].firstFrame?.data ?? []), [7, 8, 9]);
+    assert.ok(changes.some((change) => change.jobId === second.id), '转为排队时通知界面');
+    assert.deepEqual(jobs.listResultsAwaitingFrame(), []);
+  } finally {
+    database.close();
+  }
+});
+
+test('等待前序：前序失败、被取消或没有前序时，等待的任务一并失败并说明原因', async () => {
+  const { database, seed, jobs, provider, queue, enqueue } = createFixture();
+  try {
+    const waitOn = (groupIndex: number, prevJobId: number | null) =>
+      jobs.insertJob({ groupId: seed.groupIds[groupIndex], modelId: seed.modelId, status: 'waiting', snapshot: SNAPSHOT, prevJobId, firstFrameId: null }, 't');
+    const failing = enqueue(0);
+    const afterFailing = waitOn(1, failing.id);
+    provider.queryStates.push({ status: 'failed', result: null, errorCategory: 'server', errorCode: null, errorMessage: '平台出错' });
+    await queue.pump();
+    await queue.pump();
+    assert.equal(jobs.findJob(failing.id)?.status, 'failed');
+    const failure = jobs.findJob(afterFailing.id);
+    assert.equal(failure?.status, 'failed');
+    assert.equal(failure?.failure?.code, PREVIOUS_GROUP_UNAVAILABLE_CODE);
+
+    const canceled = enqueue(2);
+    const afterCanceled = waitOn(1, canceled.id);
+    await queue.cancel(canceled.id);
+    const orphan = waitOn(2, null);
+    await queue.pump();
+    assert.equal(jobs.findJob(afterCanceled.id)?.failure?.code, PREVIOUS_GROUP_UNAVAILABLE_CODE);
+    assert.equal(jobs.findJob(orphan.id)?.failure?.code, PREVIOUS_GROUP_UNAVAILABLE_CODE);
+  } finally {
+    database.close();
+  }
+});
+
+test('等待前序：可以直接取消等待中的任务，之后不会再被转为排队', async () => {
+  const { database, seed, jobs, queue, enqueue } = createFixture();
+  try {
+    const first = enqueue(0);
+    const waiting = jobs.insertJob({ groupId: seed.groupIds[1], modelId: seed.modelId, status: 'waiting', snapshot: SNAPSHOT, prevJobId: first.id, firstFrameId: null }, 't');
+    assert.deepEqual(await queue.cancel(waiting.id), { remoteCanceled: false });
+    await queue.pump();
+    await queue.pump();
+    assert.equal(jobs.findJob(waiting.id)?.status, 'canceled');
   } finally {
     database.close();
   }

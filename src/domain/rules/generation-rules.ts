@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：generation-rules.ts
-// 说明：视频生成的规则：提交请求的读取与校验、把镜头组的总时长对齐到模型允许的取值、把一组镜头编译为带时间段的提示词与请求快照，以及失败原因的界面说明。
+// 说明：视频生成的规则：提交请求的读取与校验、把镜头组的总时长对齐到模型允许的取值、把一组镜头编译为带时间段的提示词与请求快照（含以上一组尾帧作首帧）、工作台上传的尾帧图片的校验，以及失败原因的界面说明。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
@@ -44,9 +44,30 @@ const FAILURE_HINTS: Readonly<Record<JobFailure['category'], string>> = {
   network: '无法连接服务商，请检查网络后重新生成。'
 };
 
+/** 前序镜头组的任务失败、被取消或已不存在，等待它的任务因此失败时的错误码。 */
+export const PREVIOUS_GROUP_UNAVAILABLE_CODE = 'PreviousGroupUnavailable';
+/** 无法从前序镜头组的视频截取尾帧时的错误码。 */
+export const TAIL_FRAME_UNAVAILABLE_CODE = 'TailFrameUnavailable';
+
+/** 本扩展自己产生的失败（不来自服务商）的界面说明，按错误码查找。 */
+const SPECIAL_FAILURES: ReadonlyMap<string, { readonly label: string; readonly hint: string }> = new Map([
+  [
+    PREVIOUS_GROUP_UNAVAILABLE_CODE,
+    { label: '上一组没有可用的结果', hint: '这一组要用上一组的尾帧作首帧。请先重新生成上一组，成功后再生成这一组。' }
+  ],
+  [
+    TAIL_FRAME_UNAVAILABLE_CODE,
+    {
+      label: '无法截取上一组的尾帧',
+      hint: '工作台没能从上一组的视频里截取尾帧（视频格式可能不被 VS Code 支持）。可以点“编辑镜头”把首帧来源改为“无”，或重新生成上一组后再试。'
+    }
+  ]
+]);
+
 /** 失败原因的界面说明：分类名称与处理建议。 */
 export function describeJobFailure(failure: JobFailure): { readonly label: string; readonly hint: string } {
-  return { label: FAILURE_LABELS[failure.category], hint: FAILURE_HINTS[failure.category] };
+  const special = failure.code === null ? undefined : SPECIAL_FAILURES.get(failure.code);
+  return special ?? { label: FAILURE_LABELS[failure.category], hint: FAILURE_HINTS[failure.category] };
 }
 
 /** 读取到的提交请求：作品、集、要提交的镜头组与生成参数。 */
@@ -107,6 +128,55 @@ export function readSubmitInput(rawInput: unknown): SubmitInput {
       audioMode
     }
   };
+}
+
+/** 尾帧图片的大小上限（字节）与可接受的图片类型。 */
+export const TAIL_FRAME_MAX_BYTES = 10 * 1024 * 1024;
+const TAIL_FRAME_MIME_TYPES: readonly string[] = ['image/jpeg', 'image/png', 'image/webp'];
+/** 尾帧图片单边像素的上限。 */
+const TAIL_FRAME_MAX_SIDE = 16384;
+/** 尾帧失败说明的最大长度。 */
+const TAIL_FRAME_REASON_MAX_LENGTH = 200;
+
+/** 工作台截取到的尾帧图片：Base64 内容尚未解码。 */
+export interface TailFrameInput {
+  readonly resultId: number;
+  readonly mimeType: string;
+  readonly width: number;
+  readonly height: number;
+  readonly dataBase64: string;
+}
+
+/**
+ * 读取并校验工作台提交的尾帧图片。
+ * @param rawInput { resultId, mimeType, width, height, data（Base64） }。
+ * @throws ValidationError 内容不合法。
+ */
+export function readTailFrameInput(rawInput: unknown): TailFrameInput {
+  const source = readRecord(rawInput);
+  const mimeType = source.mimeType;
+  if (typeof mimeType !== 'string' || !TAIL_FRAME_MIME_TYPES.includes(mimeType)) {
+    throw new ValidationError({ [FORM_LEVEL_ERROR_KEY]: '尾帧图片类型必须是 JPEG、PNG 或 WebP。' });
+  }
+  const side = (key: 'width' | 'height'): number => {
+    const value = source[key];
+    if (typeof value !== 'number' || !Number.isInteger(value) || value < 1 || value > TAIL_FRAME_MAX_SIDE) {
+      throw new ValidationError({ [FORM_LEVEL_ERROR_KEY]: '尾帧图片的宽高不合法。' });
+    }
+    return value;
+  };
+  const { data } = source;
+  if (typeof data !== 'string' || data === '' || data.length > Math.ceil((TAIL_FRAME_MAX_BYTES * 4) / 3) + 4) {
+    throw new ValidationError({ [FORM_LEVEL_ERROR_KEY]: `尾帧图片不能为空，且不超过 ${TAIL_FRAME_MAX_BYTES / (1024 * 1024)} MB。` });
+  }
+  return { resultId: readIdentifier(source, 'resultId', '结果'), mimeType, width: side('width'), height: side('height'), dataBase64: data };
+}
+
+/** 读取截取尾帧失败的上报：结果标识与失败原因（截断到合理长度，缺省为空串）。 */
+export function readTailFrameFailure(rawInput: unknown): { readonly resultId: number; readonly reason: string } {
+  const source = readRecord(rawInput);
+  const reason = typeof source.reason === 'string' ? source.reason.trim().slice(0, TAIL_FRAME_REASON_MAX_LENGTH) : '';
+  return { resultId: readIdentifier(source, 'resultId', '结果'), reason };
 }
 
 /** 时长对齐的结果：对齐后的值、是否与原值不同、是否超过模型单次可生成的最长时长。 */
@@ -170,6 +240,8 @@ export interface GroupPlanInput {
   readonly params: GenerationParams;
   /** 组内出场的实体（去重）及其绑定，顺序即参考图编号顺序。 */
   readonly entities: readonly EntityReferences[];
+  /** 本次是否以上一组的尾帧作首帧；为 true 时不再传参考图和音色参考（首帧不能与参考素材同时使用）。 */
+  readonly useFirstFrame?: boolean;
 }
 
 /** 声音条目编译成一句提示词。 */
@@ -206,17 +278,18 @@ export function formatTimestamp(seconds: number): string {
 
 /**
  * 把一个镜头组编译为任务请求快照：多镜头用“(开始 - 结束)”时间段依次描述，拼上参考素材与声音说明，按模型能力对齐时长与声音，并列出提醒。
- * 上一组尾帧与指定图片首帧本版本尚未支持：组内第一个镜头设置了这两种首帧时忽略并提醒；组内其他镜头的首帧设置在同一个视频内自然衔接，不需要处理。
+ * 上一组尾帧作首帧由调用方通过 useFirstFrame 告知（尾帧图片不进快照，由任务记录）；指定图片首帧本版本尚未支持：组内第一个镜头设置了它时忽略并提醒；组内其他镜头的首帧设置在同一个视频内自然衔接，不需要处理。
  * 组总时长超过模型单次最长时长的情况由调用方先用 maxGroupSeconds 拒绝；这里对齐后的时长不会超过模型最长时长。
  * @param input 镜头组、模型能力、生成参数与出场实体的绑定。
  */
 export function planGroupRequest(input: GroupPlanInput): JobSnapshot {
   const { shots, capability, params, entities } = input;
+  const useFirstFrame = input.useFirstFrame === true;
   const warnings: string[] = [];
 
   const first = shots[0];
-  if (first !== undefined && first.firstFrameMode === 'prev_tail') {
-    warnings.push('这一组设置了“上一镜头尾帧作首帧”，该功能尚未开放，本次不指定首帧。');
+  if (first !== undefined && first.firstFrameMode === 'prev_tail' && !useFirstFrame) {
+    warnings.push('这一组设置了“上一镜头尾帧作首帧”，但没有上一组可用，本次不指定首帧。');
   } else if (first !== undefined && first.firstFrameMode === 'asset') {
     warnings.push('这一组设置了“指定图片作首帧”，该功能尚未开放，本次不指定首帧。');
   }
@@ -224,9 +297,12 @@ export function planGroupRequest(input: GroupPlanInput): JobSnapshot {
   const audioMode: VideoAudioMode | null = params.audioMode ?? (capability.audioModes.includes('native') ? 'native' : capability.audioModes.includes('none') ? 'none' : null);
   const notes: string[] = [];
 
-  // 参考图：按出场实体顺序，每个实体取形象主资产的第一张图；数量受模型上限限制。
+  // 参考图：按出场实体顺序，每个实体取形象主资产的第一张图；数量受模型上限限制。用上一组尾帧作首帧时不传参考图。
   const referenceImageFileIds: number[] = [];
-  for (const entity of entities) {
+  if (useFirstFrame) {
+    if (entities.length > 0) warnings.push('这一组以上一组的尾帧作首帧，首帧不能与参考图、音色参考同时使用，本次不传参考素材（角色、场景的形象由尾帧延续）。');
+  }
+  for (const entity of useFirstFrame ? [] : entities) {
     if (entity.visualFileId === null) {
       warnings.push(`${ENTITY_KIND_LABELS[entity.kind]}“${entity.name}”还没有绑定资产，只能按文字描述生成。`);
     } else if (referenceImageFileIds.length >= capability.referenceImagesMax) {
@@ -258,7 +334,7 @@ export function planGroupRequest(input: GroupPlanInput): JobSnapshot {
     if (skipped.size > 0) warnings.push('模型不支持部分声音内容，已忽略。');
 
     const speakerIds = new Set(shots.flatMap((shot) => shot.sounds.filter((sound) => sound.isEnabled && sound.kind === 'dialogue').map((sound) => sound.speakerEntityId)));
-    const audioLimit = capability.audioInputMax;
+    const audioLimit = useFirstFrame ? null : capability.audioInputMax;
     for (const entity of entities) {
       if (audioLimit === null || entity.voiceFileId === null || !speakerIds.has(entity.entityId) || referenceAudioFileIds.length >= audioLimit.count) continue;
       referenceAudioFileIds.push(entity.voiceFileId);

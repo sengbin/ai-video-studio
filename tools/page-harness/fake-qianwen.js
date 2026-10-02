@@ -4,12 +4,17 @@
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
-// 备注：行为约定：访问密钥必须以 sk- 开头，否则返回 401；提示词包含“违规”时失败并返回内容审核错误；任务经过排队、生成中后成功；图片结果为纯色 PNG（每张颜色不同），音频结果为 2 秒的 WAV；其他地址的请求交给真实的 fetch。
+// 备注：行为约定：访问密钥必须以 sk- 开头，否则返回 401；提示词包含“违规”时失败并返回内容审核错误；任务经过排队、生成中后成功；图片结果为纯色 PNG（每张颜色不同），音频结果为 2 秒的 WAV，视频结果为 2 秒的小视频（fake-video.mp4）；其他地址的请求交给真实的 fetch。
 // ------------------------------------------------------------------------
 
 'use strict';
 
 const zlib = require('node:zlib');
+const fs = require('node:fs');
+const path = require('node:path');
+
+/** 假视频：2 秒、160×90 的 VP9 小视频，浏览器可解码，用于验证尾帧截取。 */
+const FAKE_VIDEO_FILE = path.join(__dirname, 'fake-video.mp4');
 
 const CREATE_PATH = '/services/aigc/video-generation/video-synthesis';
 const IMAGE_CREATE_PATH = '/services/aigc/image-generation/generation';
@@ -141,7 +146,7 @@ function installFakeQianwen() {
     if (url.startsWith(FAKE_RESULT_HOST)) {
       if (url.includes('.png')) return new Response(makePng(Number(/-(\d+)\.png/.exec(url)?.[1] ?? 0)), { status: 200 });
       if (url.includes('.wav')) return new Response(makeWav(), { status: 200 });
-      return new Response(Buffer.from('fake-mp4-content'), { status: 200 });
+      return new Response(fs.readFileSync(FAKE_VIDEO_FILE), { status: 200 });
     }
 
     const authorized = String(readHeader(init.headers, 'Authorization') ?? '').startsWith('Bearer sk-');
