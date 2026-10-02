@@ -15,21 +15,28 @@ import {
   ProviderCallContext,
   RemoteJobRef,
   RemoteJobState,
-  RemoteJobStatus,
   VideoGenerationRequest,
   VideoJobResult,
   VideoModelProvider
 } from '../../../domain/ports/provider-adapters';
 import { isDurationAllowed } from '../../../domain/rules/model-capability-rules';
-import { FetchFunction, QianwenApiClient, classifyErrorCode } from './qianwen-api-client';
+import { FetchFunction, QianwenApiClient } from './qianwen-api-client';
 import { QIANWEN_PROVIDER, QIANWEN_VIDEO_MODELS, WAN3_AUDIO_MAX_BYTES, WAN3_IMAGE_MAX_BYTES, WAN3_SEED_MAX } from './qianwen-catalog';
+import {
+  ASYNC_HEADERS,
+  ExtraParamSpec,
+  QUERY_TASK_PATH,
+  buildTaskState,
+  mapExtraParams,
+  readObject,
+  readTaskId,
+  toDataUri,
+  validateExtraParams,
+  validateMediaFiles
+} from './qianwen-protocol';
 
-/** 创建任务与查询任务的接口路径。 */
+/** 创建任务的接口路径。 */
 const CREATE_TASK_PATH = '/services/aigc/video-generation/video-synthesis';
-const QUERY_TASK_PATH = '/tasks';
-
-/** 异步提交必须带的请求头。 */
-const ASYNC_HEADERS = { 'X-DashScope-Async': 'enable' };
 
 /** 素材类型（请求体 input.media[].type）。 */
 const MEDIA_TYPE_FIRST_FRAME = 'first_frame';
@@ -37,17 +44,10 @@ const MEDIA_TYPE_LAST_FRAME = 'last_frame';
 const MEDIA_TYPE_REFERENCE_IMAGE = 'reference_image';
 const MEDIA_TYPE_REFERENCE_AUDIO = 'reference_audio';
 
-/** 模型专有参数：键与请求体 parameters 中键的对应。 */
-const EXTRA_PARAMETER_KEYS: Readonly<Record<string, string>> = { promptExtend: 'prompt_extend', watermark: 'watermark' };
-
-/** 任务状态与统一状态的对应。 */
-const TASK_STATUSES: Readonly<Record<string, RemoteJobStatus>> = {
-  PENDING: 'pending',
-  RUNNING: 'running',
-  SUCCEEDED: 'succeeded',
-  FAILED: 'failed',
-  CANCELED: 'canceled',
-  UNKNOWN: 'expired'
+/** 模型专有参数：键与请求体 parameters 中键的对应，取值都是开或关。 */
+const EXTRA_PARAMETER_SPECS: Readonly<Record<string, ExtraParamSpec>> = {
+  promptExtend: { apiKey: 'prompt_extend', allowed: [true, false] },
+  watermark: { apiKey: 'watermark', allowed: [true, false] }
 };
 
 /** 千问AI平台的视频适配器。 */
@@ -79,7 +79,7 @@ export class QianwenVideoProvider implements VideoModelProvider {
     return [
       ...validateMediaCombination(request, capability),
       ...validateParameters(request, capability),
-      ...validateExtraParams(request.extraParams)
+      ...validateExtraParams(request.extraParams, EXTRA_PARAMETER_SPECS)
     ];
   }
 
@@ -89,42 +89,21 @@ export class QianwenVideoProvider implements VideoModelProvider {
       throw new ProviderError('invalid_request', issues.join('；'));
     }
     const response = await this.client.postJson(context, CREATE_TASK_PATH, buildRequestBody(request), ASYNC_HEADERS);
-    const taskId = readObject(response.output).task_id;
-    if (typeof taskId !== 'string' || taskId === '') {
-      throw new ProviderError('server', '千问AI平台没有返回任务标识。');
-    }
-    return { modelCode: request.modelCode, remoteJobId: taskId };
+    return { modelCode: request.modelCode, remoteJobId: readTaskId(response) };
   }
 
   async query(ref: RemoteJobRef, context: ProviderCallContext): Promise<RemoteJobState<VideoJobResult>> {
     const response = await this.client.getJson(context, `${QUERY_TASK_PATH}/${encodeURIComponent(ref.remoteJobId)}`);
     const output = readObject(response.output);
-    const status = typeof output.task_status === 'string' ? TASK_STATUSES[output.task_status] : undefined;
-    if (status === undefined) {
-      throw new ProviderError('server', `千问AI平台返回了无法识别的任务状态：${String(output.task_status)}。`);
-    }
-
-    if (status === 'succeeded') {
+    return buildTaskState(output, () => {
       const videoUrl = output.video_url;
       if (typeof videoUrl !== 'string' || videoUrl === '') {
         throw new ProviderError('server', '任务已成功，但千问AI平台没有返回视频地址。');
       }
       const usage = readObject(response.usage);
-      const duration = typeof usage.output_video_duration === 'number' ? usage.output_video_duration : null;
-      return { status, result: { videoUrl, durationSeconds: duration }, errorCategory: null, errorCode: null, errorMessage: null };
-    }
-    if (status === 'failed') {
-      const code = typeof output.code === 'string' ? output.code : null;
-      const message = typeof output.message === 'string' ? output.message : null;
-      return { status, result: null, errorCategory: classifyErrorCode(code) ?? 'server', errorCode: code, errorMessage: message };
-    }
-    return { status, result: null, errorCategory: null, errorCode: null, errorMessage: null };
+      return { videoUrl, durationSeconds: typeof usage.output_video_duration === 'number' ? usage.output_video_duration : null };
+    });
   }
-}
-
-/** 把未知值当作对象读取；不是对象时返回空对象。 */
-function readObject(value: unknown): Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
 
 /** 校验素材组合与素材本身：首尾帧与参考素材互斥、尾帧必须配首帧、数量、格式与大小。 */
@@ -168,20 +147,6 @@ function validateMediaCombination(request: VideoGenerationRequest, capability: V
   return issues;
 }
 
-/** 校验一组素材的类型与大小。 */
-function validateMediaFiles(files: readonly MediaInput[], mimePrefix: string, label: string, maxBytes: number): string[] {
-  const issues: string[] = [];
-  for (const file of files) {
-    if (!file.mimeType.startsWith(mimePrefix)) {
-      issues.push(`${label}素材的类型必须以 ${mimePrefix} 开头（当前 ${file.mimeType}）。`);
-    }
-    if (file.data.byteLength === 0 || file.data.byteLength > maxBytes) {
-      issues.push(`${label}素材大小必须在 1 字节到 ${maxBytes / 1024 / 1024} MB 之间。`);
-    }
-  }
-  return issues;
-}
-
 /** 校验画幅、分辨率、时长、声音模式和随机种子是否在模型能力范围内。 */
 function validateParameters(request: VideoGenerationRequest, capability: VideoCapability): string[] {
   const issues: string[] = [];
@@ -201,24 +166,6 @@ function validateParameters(request: VideoGenerationRequest, capability: VideoCa
     issues.push(`随机种子必须是 0 到 ${WAN3_SEED_MAX} 之间的整数，且模型需支持随机种子。`);
   }
   return issues;
-}
-
-/** 校验模型专有参数：只允许已知的键，且必须是布尔值。 */
-function validateExtraParams(extraParams: Readonly<Record<string, unknown>>): string[] {
-  const issues: string[] = [];
-  for (const [key, value] of Object.entries(extraParams)) {
-    if (!(key in EXTRA_PARAMETER_KEYS)) {
-      issues.push(`不支持的模型参数：${key}。`);
-    } else if (typeof value !== 'boolean') {
-      issues.push(`模型参数 ${key} 必须是开或关。`);
-    }
-  }
-  return issues;
-}
-
-/** 把素材转换为 Base64 内联地址：data:{类型};base64,{内容}。 */
-function toDataUri(media: MediaInput): string {
-  return `data:${media.mimeType};base64,${Buffer.from(media.data).toString('base64')}`;
 }
 
 /** 按素材组合构造 input.media；首尾帧与参考素材已由校验保证互斥。 */
@@ -245,8 +192,6 @@ function buildRequestBody(request: VideoGenerationRequest): Record<string, unkno
   if (request.durationSeconds !== null) parameters.duration = request.durationSeconds;
   if (request.audioMode !== null) parameters.audio = request.audioMode === 'native';
   if (request.seed !== null) parameters.seed = request.seed;
-  for (const [key, value] of Object.entries(request.extraParams)) {
-    parameters[EXTRA_PARAMETER_KEYS[key]] = value;
-  }
+  Object.assign(parameters, mapExtraParams(request.extraParams, EXTRA_PARAMETER_SPECS));
   return { model: request.modelCode, input, parameters };
 }
