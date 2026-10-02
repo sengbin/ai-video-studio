@@ -8,6 +8,7 @@
 // ------------------------------------------------------------------------
 
 import { FORM_LEVEL_ERROR_KEY, ValidationError } from '../../domain/errors';
+import { VISUAL_STYLE_OPTIONS } from '../../domain/models/option-sets';
 import { SOUND_KIND_LABELS, SoundKind, StoryboardParams } from '../../domain/models/storyboard';
 import { readEntityId, readRecord } from '../../domain/rules/field-readers';
 import {
@@ -112,10 +113,12 @@ function createStartForm(dependencies: StoryboardFormDependencies, workId: numbe
     {
       key: 'visualStyle',
       label: '画面风格',
-      description: projectStyle === null ? `可选，最多 ${STORYBOARD_STYLE_MAX_LENGTH} 字；留空则不指定风格` : `可选，最多 ${STORYBOARD_STYLE_MAX_LENGTH} 字；留空沿用项目视觉风格“${projectStyle}”`,
-      control: 'text',
+      description: projectStyle === null ? `可选；留空则不指定风格，也可选“其他”手动输入（最多 ${STORYBOARD_STYLE_MAX_LENGTH} 字）` : `可选；留空沿用项目视觉风格“${projectStyle}”，也可选“其他”手动输入（最多 ${STORYBOARD_STYLE_MAX_LENGTH} 字）`,
+      control: 'select',
       required: false,
-      maxLength: STORYBOARD_STYLE_MAX_LENGTH
+      maxLength: STORYBOARD_STYLE_MAX_LENGTH,
+      options: VISUAL_STYLE_OPTIONS,
+      allowCustom: true
     },
     {
       key: 'minShotSeconds',
