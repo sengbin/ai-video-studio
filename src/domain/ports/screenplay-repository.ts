@@ -9,6 +9,7 @@
 
 import {
   EntityEdit,
+  EntityKind,
   EntityRecord,
   EpisodeEdit,
   EpisodeRecord,
@@ -41,6 +42,19 @@ export interface ScreenplayRepository {
    * @throws ConflictError 同类型下名称重复。
    */
   updateEntity(workId: number, entityId: number, edit: EntityEdit, timestamp: string): boolean;
+  /** 在作品末尾新增一集，返回集标识。 */
+  insertEpisode(workId: number, edit: EpisodeEdit, timestamp: string): number;
+  /** 删除作品的一集（连同它的分镜脚本、绑定等下游数据），后面的集序号依次前移；集不存在时返回 false。 */
+  deleteEpisode(workId: number, episodeId: number): boolean;
+  /**
+   * 新增作品的一个实体，返回实体标识。
+   * @throws ConflictError 同类型下名称重复。
+   */
+  insertEntity(workId: number, kind: EntityKind, edit: EntityEdit, timestamp: string): number;
+  /** 统计实体被镜头、镜头声音和资产绑定引用的次数。 */
+  countEntityReferences(entityId: number): number;
+  /** 删除作品的一个实体；实体不存在时返回 false。 */
+  deleteEntity(workId: number, entityId: number): boolean;
 
   /**
    * 把阶段记录的抽取结果合并到作品的集和实体，并记录合并时间：

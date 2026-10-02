@@ -4,18 +4,25 @@
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
-// 备注：向 stage.js 的外壳登记；请求名称与 src/app/pages/stage-handlers.ts、表单名称与 src/app/forms/storyboard-form.ts 一致；镜头的 ref 就是镜头标识，页面原样回传；本期不支持新增、删除、调整镜头顺序。
+// 备注：向 stage.js 的外壳登记；请求名称与 src/app/pages/stage-handlers.ts、表单名称与 src/app/forms/storyboard-form.ts 一致；镜头的 ref 就是镜头标识，页面原样回传；支持在末尾新增和删除镜头，暂不支持调整镜头顺序。
 // ------------------------------------------------------------------------
 
 'use strict';
 
 (function () {
   const REQUEST_SAVE_SHOT = 'stage.saveShot';
+  const REQUEST_ADD_SHOT = 'stage.addShot';
+  const REQUEST_DELETE_SHOT = 'stage.deleteShot';
   const FORM_START = 'storyboard.start';
   const SAVE_TEXT = '保存';
+  const ADD_TEXT = '添加';
   const SAVED_TEXT = '已保存';
   const SAVE_STATE_DIRTY = 'dirty';
   const SAVE_STATE_SAVED = 'saved';
+  // 尚未保存的新镜头用这个标识。
+  const NEW_SHOT = 'new';
+  // 新镜头的默认时长（秒），生成时设了最短时长则取最短时长。
+  const NEW_SHOT_SECONDS = 3;
   const BODY_MAX_ROWS = 6;
   const ACTION_PREVIEW_LENGTH = 24;
   const FIRST_FRAME_NONE = 'none';
@@ -95,13 +102,27 @@
       );
     }
 
-    /** 左侧列表：镜头。 */
+    /** 左侧列表：镜头；可编辑时标题行带“添加”按钮，新增中的镜头排在末尾。 */
     function renderList(view) {
+      const isNew = selectedId === NEW_SHOT;
       return aiUi.h(
         'aside',
         { class: 'stage-list' },
-        aiUi.h('p', { class: 'stage-list__heading', text: `镜头（${view.shots.length}）` }),
-        view.shots.map(renderItem)
+        aiUi.h(
+          'div',
+          { class: 'stage-list__head' },
+          aiUi.h('p', { class: 'stage-list__heading', text: `镜头（${view.shots.length}）` }),
+          view.actions.canEdit ? aiUi.button({ kind: 'add', text: ADD_TEXT, compact: true, onClick: () => void select(NEW_SHOT) }).element : null
+        ),
+        view.shots.map(renderItem),
+        isNew
+          ? aiUi.h(
+              'button',
+              { class: 'stage-item is-selected', attrs: { type: 'button', 'aria-current': 'true' } },
+              aiUi.h('span', { class: 'stage-item__title', text: `${view.shots.length + 1}. 新增镜头` }),
+              aiUi.h('span', { class: 'stage-item__meta', text: '未保存' })
+            )
+          : null
       );
     }
 
@@ -302,31 +323,75 @@
       };
     }
 
-    /** 保存当前镜头；已确认的版本被编辑时先提示会回到待确认。 */
+    /** 保存当前镜头（新增中的镜头则添加）；已确认的版本被编辑时先提示会回到待确认。 */
     async function save() {
       const view = context.getView();
+      const isNew = selectedId === NEW_SHOT;
       if (view.actions.editNeedsConfirm) {
         const confirmed = await aiUi.confirm({
-          title: '保存修改',
-          message: '该版本已确认采用。保存后将回到待确认，需要重新确认。',
-          confirmText: '保存',
+          title: isNew ? '添加镜头' : '保存修改',
+          message: `该版本已确认采用。${isNew ? '添加' : '保存'}后将回到待确认，需要重新确认。`,
+          confirmText: isNew ? '添加' : '保存',
           cancelText: '取消'
         });
         if (!confirmed) return;
       }
       const { built } = editorControls;
-      if (await context.runAction(REQUEST_SAVE_SHOT, { id: view.run.id, ref: selectedId, ...built.collect() })) {
+      const payload = { id: view.run.id, ...built.collect() };
+      if (!isNew) payload.ref = selectedId;
+      const result = await context.runAction(isNew ? REQUEST_ADD_SHOT : REQUEST_SAVE_SHOT, payload);
+      if (result) {
         editorDirty = false;
+        // 新增成功后选中刚加入的镜头。
+        if (isNew) selectedId = result.ref;
         await context.reload();
         // 重新加载后编辑区会按最新内容重建，按钮状态要在重建后再设置。
         if (editorControls) editorControls.setSaveState(SAVE_STATE_SAVED);
-        context.showMessage('已保存。', false);
+        context.showMessage(isNew ? '已添加。' : '已保存。', false);
       }
+    }
+
+    /** 删除当前镜头；先确认，并说明影响范围。 */
+    async function remove() {
+      const view = context.getView();
+      const shot = view.shots.find((candidate) => candidate.id === selectedId);
+      const lines = [`删除第 ${shot.seq} 个镜头及其声音后，后面的镜头序号会前移。`];
+      if (view.actions.editNeedsConfirm) lines.push('该版本已确认采用，删除后将回到待确认。');
+      const confirmed = await aiUi.confirm({ title: '删除镜头', message: lines, confirmText: '删除', variant: 'danger' });
+      if (!confirmed) return;
+      if (await context.runAction(REQUEST_DELETE_SHOT, { id: view.run.id, ref: shot.id })) {
+        editorDirty = false;
+        selectedId = null;
+        await context.reload();
+        context.showMessage('已删除。', false);
+      }
+    }
+
+    /** 新增镜头的空白内容：接在末尾，默认不指定首帧。 */
+    function blankShot(view) {
+      return {
+        id: NEW_SHOT,
+        seq: view.shots.length + 1,
+        sceneLabel: '',
+        shotSize: '',
+        cameraAngle: '',
+        action: '',
+        cameraMovement: '',
+        durationSeconds: (view.params && view.params.minShotSeconds) || NEW_SHOT_SECONDS,
+        transition: '',
+        continuityNote: '',
+        firstFrameMode: FIRST_FRAME_NONE,
+        entityIds: [],
+        sounds: [],
+        promptZh: '',
+        promptEn: ''
+      };
     }
 
     /** 右侧编辑区：切换镜头时重建；同一镜头有未保存的修改时保留输入。 */
     function renderEditor(view, shot) {
       const canEdit = view.actions.canEdit;
+      const isNew = shot.id === NEW_SHOT;
       const key = `${view.run.id}:${shot.id}:${canEdit}:${view.actions.editNeedsConfirm}`;
       const signature = JSON.stringify(shot);
       if (editorControls && editorKey === key && (editorDirty || editorSignature === signature)) return editorControls.element;
@@ -334,11 +399,11 @@
       editorKey = key;
       editorSignature = signature;
       editorDirty = false;
-      const saveButton = aiUi.button({ text: SAVE_TEXT, variant: 'primary', disabled: true, onClick: () => void save() });
-      /** 保存按钮只在有修改时可点，保存后显示“已保存”，再次修改后恢复。 */
+      const saveButton = aiUi.button({ text: isNew ? ADD_TEXT : SAVE_TEXT, variant: 'primary', disabled: !isNew, onClick: () => void save() });
+      /** 保存按钮只在有修改时可点，保存后显示“已保存”，再次修改后恢复；新增的镜头始终可点“添加”。 */
       const setSaveState = (state) => {
-        saveButton.setText(state === SAVE_STATE_SAVED ? SAVED_TEXT : SAVE_TEXT);
-        saveButton.setDisabled(state !== SAVE_STATE_DIRTY);
+        saveButton.setText(state === SAVE_STATE_SAVED ? SAVED_TEXT : isNew ? ADD_TEXT : SAVE_TEXT);
+        saveButton.setDisabled(!isNew && state !== SAVE_STATE_DIRTY);
       };
       const markDirty = () => {
         editorDirty = true;
@@ -347,12 +412,21 @@
 
       const built = buildShotEditor(view, shot, canEdit, markDirty);
       const reason = readonlyReason(view);
+      // 至少保留 1 个镜头。
+      const canRemove = canEdit && !isNew && view.shots.length > 1;
       const element = aiUi.h(
         'section',
         { class: 'stage-editor stage-editor--fields' },
         built.fields,
         reason ? aiUi.h('p', { class: 'description', text: reason }) : null,
-        canEdit ? aiUi.h('div', { class: 'stage-editor__actions' }, saveButton.element) : null
+        canEdit
+          ? aiUi.h(
+              'div',
+              { class: 'stage-editor__actions' },
+              saveButton.element,
+              canRemove ? aiUi.button({ kind: 'delete', text: '删除', onClick: () => void remove() }).element : null
+            )
+          : null
       );
       editorControls = { element, built, setSaveState };
       return element;
@@ -368,11 +442,12 @@
         container.append(aiUi.h('p', { class: 'description', text: '分镜脚本生成完成后，镜头会显示在这里。' }));
         return;
       }
-      if (!view.shots.some((shot) => shot.id === selectedId)) {
+      const keepsNew = selectedId === NEW_SHOT && view.actions.canEdit;
+      if (!keepsNew && !view.shots.some((shot) => shot.id === selectedId)) {
         selectedId = view.shots[0].id;
         editorDirty = false;
       }
-      const shot = view.shots.find((candidate) => candidate.id === selectedId);
+      const shot = selectedId === NEW_SHOT ? blankShot(view) : view.shots.find((candidate) => candidate.id === selectedId);
       container.append(renderList(view), aiUi.h('div', { class: 'stage-detail' }, renderEditor(view, shot)));
     }
 

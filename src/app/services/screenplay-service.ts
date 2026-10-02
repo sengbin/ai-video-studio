@@ -15,6 +15,8 @@ import { ScreenplayRepository } from '../../domain/ports/screenplay-repository';
 import { StageRunRepository } from '../../domain/ports/stage-run-repository';
 import { readRecord } from '../../domain/rules/field-readers';
 import {
+  MAX_ENTITIES,
+  MAX_EPISODES_LIMIT,
   normalizeEntityEdit,
   normalizeEpisodeEdit,
   normalizeScreenplayTextEdit
@@ -289,6 +291,130 @@ export class ScreenplayService {
   }
 
   /**
+   * 在末尾新增一集，并让该版本回到待确认；单个短视频只有 1 集，不能新增。
+   * @param rawInput { title, synopsis, screenplayText, targetDurationSeconds }。
+   * @returns 新集的定位值（视图中的 ref）。
+   * @throws ValidationError 内容不合法、单个短视频、集数已达上限、不是最新版本或生成尚未成功。
+   */
+  addEpisode(runId: number, rawInput: unknown): number {
+    const { screenplays } = this.dependencies;
+    let ref = -1;
+    this.dependencies.stages.editLatest(runId, (run) => {
+      this.assertSeries(run.workId, '新增');
+      const edit = normalizeEpisodeEdit(rawInput);
+      if (run.appliedAt !== null) {
+        this.assertBelowLimit(screenplays.listEpisodes(run.workId).length, MAX_EPISODES_LIMIT, '集');
+        ref = screenplays.insertEpisode(run.workId, edit, this.timestamp());
+        return;
+      }
+      const structure = this.requireStructure(run.id);
+      this.assertBelowLimit(structure.episodes.length, MAX_EPISODES_LIMIT, '集');
+      ref = structure.episodes.length;
+      const episodes = [...structure.episodes, { seq: ref + 1, ...edit }];
+      screenplays.saveStructure(run.id, { ...structure, episodes }, this.timestamp());
+    });
+    return ref;
+  }
+
+  /**
+   * 删除一集，并让该版本回到待确认；后面的集序号依次前移。已合并的集连同它的分镜脚本一起删除。
+   * @param rawInput { ref }，ref 取自视图。
+   * @throws ValidationError 单个短视频、只剩最后一集、这一集正在生成分镜脚本、不是最新版本或生成尚未成功。
+   * @throws NotFoundError 记录或集不存在。
+   */
+  deleteEpisode(runId: number, rawInput: unknown): void {
+    const { screenplays, runs } = this.dependencies;
+    this.dependencies.stages.editLatest(runId, (run) => {
+      const ref = readRef(rawInput);
+      this.assertSeries(run.workId, '删除');
+      if (run.appliedAt !== null) {
+        const episodes = screenplays.listEpisodes(run.workId);
+        if (!episodes.some((episode) => episode.id === ref)) {
+          throw new NotFoundError('集不存在。');
+        }
+        this.assertKeepsOneEpisode(episodes.length);
+        if (runs.findRunning({ workId: run.workId, stage: 'storyboard_script', episodeId: ref }) !== undefined) {
+          throw new ValidationError({ [FORM_LEVEL_ERROR_KEY]: '这一集正在生成分镜脚本，请等待完成或先取消。' });
+        }
+        screenplays.deleteEpisode(run.workId, ref);
+        return;
+      }
+      const structure = this.requireStructure(run.id);
+      if (structure.episodes[ref] === undefined) {
+        throw new NotFoundError('集不存在。');
+      }
+      this.assertKeepsOneEpisode(structure.episodes.length);
+      const episodes = structure.episodes.filter((_, index) => index !== ref).map((episode, index) => ({ ...episode, seq: index + 1 }));
+      screenplays.saveStructure(run.id, { ...structure, episodes }, this.timestamp());
+    });
+  }
+
+  /**
+   * 新增一个实体，并让该版本回到待确认。
+   * @param rawInput { kind, name, aliases, description, attributes, isActive }。
+   * @returns 新实体的定位值（视图中的 ref）。
+   * @throws ValidationError 内容不合法、同类型名称重复、实体数已达上限、不是最新版本或生成尚未成功。
+   */
+  addEntity(runId: number, rawInput: unknown): number {
+    const { screenplays } = this.dependencies;
+    let ref = -1;
+    this.dependencies.stages.editLatest(runId, (run) => {
+      const kind = readRecord(rawInput).kind;
+      if (typeof kind !== 'string' || !Object.keys(ENTITY_KIND_LABELS).includes(kind)) {
+        throw new ValidationError({ kind: '请选择实体类型。' });
+      }
+      const edit = normalizeEntityEdit(rawInput, kind as EntityKind);
+      if (run.appliedAt !== null) {
+        this.assertBelowLimit(screenplays.listEntities(run.workId).length, MAX_ENTITIES, '实体');
+        ref = screenplays.insertEntity(run.workId, kind as EntityKind, edit, this.timestamp());
+        return;
+      }
+      const structure = this.requireStructure(run.id);
+      this.assertBelowLimit(structure.entities.length, MAX_ENTITIES, '实体');
+      if (structure.entities.some((entity) => entity.kind === kind && entity.name === edit.name)) {
+        throw new ValidationError({ name: '同类型下已有同名实体，请换一个名称。' });
+      }
+      ref = structure.entities.length;
+      const entities = [...structure.entities, { kind: kind as EntityKind, ...edit }];
+      screenplays.saveStructure(run.id, { ...structure, entities }, this.timestamp());
+    });
+    return ref;
+  }
+
+  /**
+   * 删除一个实体，并让该版本回到待确认。已合并的实体被镜头、镜头声音或资产绑定引用时不能删除，应改为停用。
+   * @param rawInput { ref }，ref 取自视图。
+   * @throws ValidationError 实体仍被引用、不是最新版本或生成尚未成功。
+   * @throws NotFoundError 记录或实体不存在。
+   */
+  deleteEntity(runId: number, rawInput: unknown): void {
+    const { screenplays } = this.dependencies;
+    this.dependencies.stages.editLatest(runId, (run) => {
+      const ref = readRef(rawInput);
+      if (run.appliedAt !== null) {
+        const entity = screenplays.listEntities(run.workId).find((candidate) => candidate.id === ref);
+        if (entity === undefined) {
+          throw new NotFoundError('实体不存在。');
+        }
+        const references = screenplays.countEntityReferences(ref);
+        if (references > 0) {
+          throw new ValidationError({
+            [FORM_LEVEL_ERROR_KEY]: `实体“${entity.name}”已被 ${references} 处引用（镜头、声音或资产绑定），不能删除；如不再使用，可改为停用。`
+          });
+        }
+        screenplays.deleteEntity(run.workId, ref);
+        return;
+      }
+      const structure = this.requireStructure(run.id);
+      if (structure.entities[ref] === undefined) {
+        throw new NotFoundError('实体不存在。');
+      }
+      const entities = structure.entities.filter((_, index) => index !== ref);
+      screenplays.saveStructure(run.id, { ...structure, entities }, this.timestamp());
+    });
+  }
+
+  /**
    * 用当前剧本包正文重新抽取集和实体，覆盖尚未合并的抽取结果；在后台执行，进度通过阶段事件推送。
    * @throws NotFoundError 记录不存在。
    * @throws ValidationError 不是最新版本、生成尚未成功或抽取结果已合并到作品。
@@ -327,6 +453,27 @@ export class ScreenplayService {
       throw new NotFoundError('还没有抽取集和实体。');
     }
     return structure;
+  }
+
+  /** 单个短视频只有 1 集，不允许增删集。 */
+  private assertSeries(workId: number, action: string): void {
+    if (this.dependencies.works.getWork(workId).kind === 'single') {
+      throw new ValidationError({ [FORM_LEVEL_ERROR_KEY]: `单个短视频只有 1 集，不能${action}集。` });
+    }
+  }
+
+  /** 数量已达上限时不能再新增。 */
+  private assertBelowLimit(count: number, limit: number, label: string): void {
+    if (count >= limit) {
+      throw new ValidationError({ [FORM_LEVEL_ERROR_KEY]: `${label}数量已达上限 ${limit}，不能再新增。` });
+    }
+  }
+
+  /** 至少保留 1 集，不能删到只剩零集。 */
+  private assertKeepsOneEpisode(count: number): void {
+    if (count <= 1) {
+      throw new ValidationError({ [FORM_LEVEL_ERROR_KEY]: '至少保留 1 集，不能删除。' });
+    }
   }
 
   private timestamp(): string {

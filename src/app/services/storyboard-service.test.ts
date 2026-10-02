@@ -182,6 +182,58 @@ test('编辑：保存镜头与声音后回到待确认；已确认的版本编�
   }
 });
 
+test('新增与删除镜头：新增接在末尾，删除后序号重排；新的第 1 个镜头不再接上一镜头尾帧；至少保留 1 个镜头', async () => {
+  const fixture = await createFixture();
+  try {
+    const episodeId = firstEpisodeId(fixture);
+    const [run] = await fixture.storyboards.start(fixture.work.id, [episodeId], {});
+    await fixture.runner.whenIdle();
+    fixture.stages.approve(run.id);
+    const [first, second] = fixture.storyboards.getView(fixture.work.id, episodeId).shots;
+    assert.equal(second.firstFrameMode, 'prev_tail');
+
+    const revision = fixture.runs.findById(run.id)!.revision;
+    const added = fixture.storyboards.addShot(run.id, {
+      action: '守夜人走出灯塔',
+      durationSeconds: '4',
+      firstFrameMode: 'prev_tail',
+      entityIds: [second.entityIds[0]],
+      sounds: [{ kind: 'sfx', text: '脚步声' }],
+      promptZh: '中文',
+      promptEn: 'english'
+    });
+    let view = fixture.storyboards.getView(fixture.work.id, episodeId);
+    assert.equal(view.run.display, 'pending');
+    assert.equal(fixture.runs.findById(run.id)!.revision, revision + 1);
+    assert.deepEqual(view.shots.map((shot) => [shot.id, shot.seq]), [[first.id, 1], [second.id, 2], [added, 3]]);
+    const shot = view.shots[2];
+    assert.deepEqual([shot.action, shot.durationSeconds, shot.firstFrameMode, shot.entityIds], ['守夜人走出灯塔', 4, 'prev_tail', [second.entityIds[0]]]);
+    assert.deepEqual(shot.sounds.map((sound) => [sound.kind, sound.text]), [['sfx', '脚步声']]);
+    assert.equal(view.totalSeconds, 12);
+
+    // 非法内容与不存在的镜头被拒绝，不改变修订号。
+    assert.throws(() => fixture.storyboards.addShot(run.id, { action: '', durationSeconds: 3 }), (error) => {
+      return error instanceof ValidationError && error.fieldErrors.action !== undefined;
+    });
+    assert.throws(() => fixture.storyboards.deleteShot(run.id, { ref: 99999 }), NotFoundError);
+    assert.equal(fixture.runs.findById(run.id)!.revision, revision + 1);
+
+    // 删除第 1 个镜头：原第 2 个镜头成为第 1 个，且不再接上一镜头尾帧。
+    fixture.storyboards.deleteShot(run.id, { ref: first.id });
+    view = fixture.storyboards.getView(fixture.work.id, episodeId);
+    assert.deepEqual(view.shots.map((item) => [item.id, item.seq, item.firstFrameMode]), [[second.id, 1, 'none'], [added, 2, 'prev_tail']]);
+    assert.equal(fixture.database.prepare('SELECT COUNT(*) AS n FROM shot_sounds WHERE shot_id = ?').get(first.id)?.n, 0);
+
+    fixture.storyboards.deleteShot(run.id, { ref: second.id });
+    assert.throws(() => fixture.storyboards.deleteShot(run.id, { ref: added }), /至少保留 1 个镜头/);
+    view = fixture.storyboards.getView(fixture.work.id, episodeId);
+    assert.deepEqual(view.shots.map((item) => [item.id, item.seq, item.firstFrameMode]), [[added, 1, 'none']]);
+    assert.equal(fixture.runs.findById(run.id)!.reviewStatus, 'pending');
+  } finally {
+    fixture.database.close();
+  }
+});
+
 test('上游变更：剧本被修改或重新生成后，分镜脚本显示“上游已变更”', async () => {
   const fixture = await createFixture();
   try {

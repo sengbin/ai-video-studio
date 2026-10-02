@@ -12,6 +12,9 @@ import { FirstFrameMode, ShotDraft, ShotEdit, ShotRecord, SoundDraft, SoundKind,
 import { StoryboardRepository } from '../../domain/ports/storyboard-repository';
 import { runInTransaction } from './transaction';
 
+/** 重排序号时临时移出正常范围的偏移量。 */
+const SEQ_SHIFT = 1000000;
+
 /** storyboard_scripts 表的一行。 */
 interface ScriptRow {
   readonly id: number;
@@ -196,6 +199,71 @@ export class SqliteStoryboardRepository implements StoryboardRepository {
       this.database.prepare('DELETE FROM shot_entities WHERE shot_id = ?').run(shotId);
       this.database.prepare('DELETE FROM shot_sounds WHERE shot_id = ?').run(shotId);
       this.replaceRelations(shotId, edit.entityIds, edit.sounds);
+      return true;
+    });
+  }
+
+  insertShot(runId: number, edit: ShotEdit, timestamp: string): number {
+    return runInTransaction(this.database, () => {
+      const script = this.find(runId);
+      if (script === undefined) {
+        throw new Error(`阶段记录 ${runId} 还没有分镜脚本。`);
+      }
+      const inserted = this.database
+        .prepare(
+          `INSERT INTO shots
+             (storyboard_script_id, seq, scene_label, shot_size, camera_angle, action, camera_movement, duration_seconds,
+              transition, continuity_note, first_frame_mode, prompt_zh, prompt_en, created_at, updated_at)
+           VALUES (?, (SELECT COALESCE(MAX(seq), 0) + 1 FROM shots WHERE storyboard_script_id = ?), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .run(
+          script.id,
+          script.id,
+          edit.sceneLabel,
+          edit.shotSize,
+          edit.cameraAngle,
+          edit.action,
+          edit.cameraMovement,
+          edit.durationSeconds,
+          edit.transition,
+          edit.continuityNote,
+          edit.firstFrameMode,
+          edit.promptZh,
+          edit.promptEn,
+          timestamp,
+          timestamp
+        );
+      const shotId = Number(inserted.lastInsertRowid);
+      this.replaceRelations(shotId, edit.entityIds, edit.sounds);
+      return shotId;
+    });
+  }
+
+  deleteShot(runId: number, shotId: number, timestamp: string): boolean {
+    return runInTransaction(this.database, () => {
+      const current = this.database
+        .prepare(
+          `SELECT s.seq, s.storyboard_script_id AS script_id FROM shots s JOIN storyboard_scripts ss ON ss.id = s.storyboard_script_id
+           WHERE s.id = ? AND ss.run_id = ?`
+        )
+        .get(shotId, runId) as unknown as { seq: number; script_id: number } | undefined;
+      if (current === undefined) {
+        return false;
+      }
+      this.database.prepare('DELETE FROM shots WHERE id = ?').run(shotId);
+      // 序号有唯一约束，先整体移出范围再前移，避免逐行更新时与未处理的行冲突。
+      this.database
+        .prepare('UPDATE shots SET seq = seq + ? WHERE storyboard_script_id = ? AND seq > ?')
+        .run(SEQ_SHIFT, current.script_id, current.seq);
+      this.database
+        .prepare('UPDATE shots SET seq = seq - ? - 1 WHERE storyboard_script_id = ? AND seq > ?')
+        .run(SEQ_SHIFT, current.script_id, SEQ_SHIFT);
+      this.database
+        .prepare(
+          `UPDATE shots SET first_frame_mode = 'none', updated_at = ?
+           WHERE storyboard_script_id = ? AND seq = 1 AND first_frame_mode = 'prev_tail'`
+        )
+        .run(timestamp, current.script_id);
       return true;
     });
   }

@@ -115,6 +115,19 @@
   font-weight: 600;
 }
 
+/* 分组标题行：标题在左，“添加”按钮在右 */
+.stage-list__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 8px 0 0;
+}
+
+.stage-list__head .stage-list__heading {
+  margin: 0;
+}
+
 .stage-detail {
   flex: 1 1 360px;
   min-width: 0;

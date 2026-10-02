@@ -20,9 +20,13 @@ import {
   ScreenplayText
 } from '../../domain/models/screenplay';
 import { ScreenplayRepository } from '../../domain/ports/screenplay-repository';
+import { runInTransaction } from './transaction';
 
 /** 同类型下实体重名时的提示。 */
 export const DUPLICATE_ENTITY_NAME_MESSAGE = '同类型下已有同名实体，请换一个名称。';
+
+/** 重排序号时临时移出正常范围的偏移量。 */
+const SEQ_SHIFT = 1000000;
 
 /** screenplays 表的一行。 */
 interface ScreenplayRow {
@@ -180,6 +184,74 @@ export class SqliteScreenplayRepository implements ScreenplayRepository {
         workId
       );
     return true;
+  }
+
+  insertEpisode(workId: number, edit: EpisodeEdit, timestamp: string): number {
+    const result = this.database
+      .prepare(
+        `INSERT INTO episodes (work_id, seq, title, synopsis, screenplay_text, target_duration_seconds, created_at, updated_at)
+         VALUES (?, (SELECT COALESCE(MAX(seq), 0) + 1 FROM episodes WHERE work_id = ?), ?, ?, ?, ?, ?, ?)`
+      )
+      .run(workId, workId, edit.title, edit.synopsis, edit.screenplayText, edit.targetDurationSeconds, timestamp, timestamp);
+    return Number(result.lastInsertRowid);
+  }
+
+  deleteEpisode(workId: number, episodeId: number): boolean {
+    return runInTransaction(this.database, () => {
+      const current = this.database.prepare('SELECT seq FROM episodes WHERE id = ? AND work_id = ?').get(episodeId, workId) as unknown as
+        | { seq: number }
+        | undefined;
+      if (current === undefined) {
+        return false;
+      }
+      this.database.prepare('DELETE FROM episodes WHERE id = ?').run(episodeId);
+      // 序号有唯一约束，先整体移出范围再前移，避免逐行更新时与未处理的行冲突。
+      this.database.prepare('UPDATE episodes SET seq = seq + ? WHERE work_id = ? AND seq > ?').run(SEQ_SHIFT, workId, current.seq);
+      this.database.prepare('UPDATE episodes SET seq = seq - ? - 1 WHERE work_id = ? AND seq > ?').run(SEQ_SHIFT, workId, SEQ_SHIFT);
+      return true;
+    });
+  }
+
+  insertEntity(workId: number, kind: EntityKind, edit: EntityEdit, timestamp: string): number {
+    const duplicate = this.database
+      .prepare('SELECT id FROM script_entities WHERE work_id = ? AND kind = ? AND name = ?')
+      .get(workId, kind, edit.name);
+    if (duplicate !== undefined) {
+      throw new ConflictError('name', DUPLICATE_ENTITY_NAME_MESSAGE);
+    }
+    const result = this.database
+      .prepare(
+        `INSERT INTO script_entities (work_id, kind, name, aliases_json, description, attributes_json, is_active, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        workId,
+        kind,
+        edit.name,
+        JSON.stringify(edit.aliases),
+        edit.description,
+        JSON.stringify(edit.attributes),
+        edit.isActive ? 1 : 0,
+        timestamp,
+        timestamp
+      );
+    return Number(result.lastInsertRowid);
+  }
+
+  countEntityReferences(entityId: number): number {
+    const row = this.database
+      .prepare(
+        `SELECT (SELECT COUNT(*) FROM shot_entities WHERE entity_id = ?)
+              + (SELECT COUNT(*) FROM shot_sounds WHERE speaker_entity_id = ?)
+              + (SELECT COUNT(*) FROM entity_bindings WHERE entity_id = ?) AS total`
+      )
+      .get(entityId, entityId, entityId) as unknown as { total: number };
+    return row.total;
+  }
+
+  deleteEntity(workId: number, entityId: number): boolean {
+    const result = this.database.prepare('DELETE FROM script_entities WHERE id = ? AND work_id = ?').run(entityId, workId);
+    return Number(result.changes) > 0;
   }
 
   merge(runId: number, timestamp: string): void {

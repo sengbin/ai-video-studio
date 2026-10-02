@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：stage-screenplay.js
-// 说明：剧本阶段的产出内容：左侧列表（剧本包正文、集、实体）、右侧编辑区、重新抽取，以及生成结束后的汇总。
+// 说明：剧本阶段的产出内容：左侧列表（剧本包正文、集、实体）、右侧编辑区、集与实体的新增和删除、重新抽取，以及生成结束后的汇总。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
@@ -13,9 +13,14 @@
   const REQUEST_SAVE_TEXT = 'stage.saveScreenplayText';
   const REQUEST_SAVE_EPISODE = 'stage.saveEpisode';
   const REQUEST_SAVE_ENTITY = 'stage.saveEntity';
+  const REQUEST_ADD_EPISODE = 'stage.addEpisode';
+  const REQUEST_DELETE_EPISODE = 'stage.deleteEpisode';
+  const REQUEST_ADD_ENTITY = 'stage.addEntity';
+  const REQUEST_DELETE_ENTITY = 'stage.deleteEntity';
   const REQUEST_REEXTRACT = 'stage.reextract';
   const FORM_START = 'screenplay.start';
   const SAVE_TEXT = '保存';
+  const ADD_TEXT = '添加';
   const SAVED_TEXT = '已保存';
   const SAVE_STATE_DIRTY = 'dirty';
   const SAVE_STATE_SAVED = 'saved';
@@ -24,13 +29,16 @@
   const TYPE_TEXT = 'text';
   const TYPE_EPISODE = 'episode';
   const TYPE_ENTITY = 'entity';
+  // 尚未保存的新条目用这个定位值。
+  const NEW_REF = 'new';
+  const ALIAS_SEPARATORS = /[,，、\n]/;
 
   /**
    * 创建剧本阶段的内容。
    * @param context 外壳提供的 { runAction, showMessage, reload, getView, confirmDiscard }。
    */
   function create(context) {
-    /** 当前选中的条目：{ type, ref }；ref 仅集和实体有。 */
+    /** 当前选中的条目：{ type, ref, kind?, draft? }；ref 仅集和实体有，为 NEW_REF 表示正在新增（实体带 kind）。 */
     let selection = { type: TYPE_TEXT, ref: null };
     /** 编辑器当前对应的“版本:条目”，用来判断切换后是否需要重建。 */
     let editorKey = '';
@@ -38,8 +46,13 @@
     let editorControls = null;
     let bodyContainer = null;
 
-    /** 在最新视图中找到选中的集或实体；找不到返回 undefined。 */
+    /** 在最新视图中找到选中的集或实体；新增中的条目返回空白内容；找不到返回 undefined。 */
     function findItem(view, current) {
+      if (current.ref === NEW_REF) {
+        if (current.type === TYPE_EPISODE) return { title: '', synopsis: '', screenplayText: '', targetDurationSeconds: null };
+        const draft = current.draft || {};
+        return { kind: current.kind, name: draft.name || '', aliases: draft.aliases || [], description: draft.description || '', attributes: {}, isActive: true };
+      }
       if (current.type === TYPE_EPISODE) return view.episodes.find((episode) => episode.ref === current.ref);
       if (current.type === TYPE_ENTITY) return view.entities.find((entity) => entity.ref === current.ref);
       return view.screenplay || undefined;
@@ -85,15 +98,31 @@
       );
     }
 
+    /** 左侧列表的分组标题；可编辑时右侧带“添加”按钮。 */
+    function renderHeading(text, onAdd) {
+      return aiUi.h(
+        'div',
+        { class: 'stage-list__head' },
+        aiUi.h('p', { class: 'stage-list__heading', text }),
+        onAdd ? aiUi.button({ kind: 'add', text: ADD_TEXT, compact: true, onClick: onAdd }).element : null
+      );
+    }
+
     /** 左侧列表：剧本包正文、集、实体。 */
     function renderList(view) {
       const hasStructure = view.episodes.length > 0 || view.entities.length > 0;
+      const canEdit = view.actions.canEdit;
+      const isNew = (type) => selection.type === type && selection.ref === NEW_REF;
+      // 单个短视频只有 1 集，不能增删集。
+      const canAddEpisode = canEdit && view.work.kind !== 'single';
       return aiUi.h(
         'aside',
         { class: 'stage-list' },
         renderItem({ type: TYPE_TEXT, ref: null }, '剧本包正文', view.screenplay ? `${view.screenplay.fullText.length} 字` : ''),
         hasStructure ? null : aiUi.h('p', { class: 'description', text: '集和实体抽取完成后会显示在这里。' }),
-        hasStructure ? aiUi.h('p', { class: 'stage-list__heading', text: `集（${view.episodes.length}）` }) : null,
+        hasStructure
+          ? renderHeading(`集（${view.episodes.length}）`, canAddEpisode ? () => void select({ type: TYPE_EPISODE, ref: NEW_REF }) : null)
+          : null,
         view.episodes.map((episode) =>
           renderItem(
             { type: TYPE_EPISODE, ref: episode.ref },
@@ -101,10 +130,17 @@
             episode.targetDurationSeconds ? `${episode.targetDurationSeconds} 秒` : ''
           )
         ),
-        hasStructure ? aiUi.h('p', { class: 'stage-list__heading', text: `实体（${view.entities.length}）` }) : null,
+        isNew(TYPE_EPISODE) ? renderItem({ type: TYPE_EPISODE, ref: NEW_REF }, '新增集', '未保存') : null,
+        hasStructure
+          ? renderHeading(
+              `实体（${view.entities.length}）`,
+              canEdit ? () => void select({ type: TYPE_ENTITY, ref: NEW_REF, kind: view.entityKinds[0].kind }) : null
+            )
+          : null,
         view.entities.map((entity) =>
           renderItem({ type: TYPE_ENTITY, ref: entity.ref }, `[${kindLabel(view, entity.kind)}] ${entity.name}`, entity.isActive ? '' : '已停用')
-        )
+        ),
+        isNew(TYPE_ENTITY) ? renderItem({ type: TYPE_ENTITY, ref: NEW_REF }, '新增实体', '未保存') : null
       );
     }
 
@@ -172,9 +208,18 @@
       };
     }
 
-    /** 实体编辑：名称、别名、摘要、按类型区分的设定、是否启用。 */
-    function buildEntityEditor(view, entity, canEdit, markDirty) {
+    /** 实体编辑：名称、别名、摘要、按类型区分的设定、是否启用；新增时可选类型，切换类型由 onKindChange 重建编辑区。 */
+    function buildEntityEditor(view, entity, canEdit, markDirty, onKindChange) {
       const kind = view.entityKinds.find((candidate) => candidate.kind === entity.kind);
+      const kindControl = onKindChange
+        ? aiUi.select({
+            options: view.entityKinds.map((item) => ({ value: item.kind, label: item.label })),
+            value: entity.kind,
+            allowEmpty: false,
+            ariaLabel: '实体类型',
+            onChange: () => onKindChange(kindControl.getValue())
+          })
+        : null;
       const name = aiUi.textInput({ value: entity.name, disabled: !canEdit, onChange: markDirty });
       const aliases = aiUi.textInput({ value: entity.aliases.join('，'), disabled: !canEdit, onChange: markDirty });
       const description = aiUi.textArea({ value: entity.description, minRows: 1, maxRows: 3, disabled: !canEdit, onChange: markDirty });
@@ -187,7 +232,7 @@
       );
       return {
         fields: [
-          aiUi.h('p', { class: 'description', text: `类型：${kind.label}（不能修改）` }),
+          kindControl ? field('类型', kindControl, '切换类型会重置下面的设定字段') : aiUi.h('p', { class: 'description', text: `类型：${kind.label}（不能修改）` }),
           field('名称', name, '同类型内不能重复；改名不影响已有绑定和镜头引用'),
           field('别名', aliases, '多个别名用逗号分隔'),
           field('设定摘要', description),
@@ -213,27 +258,62 @@
       };
     }
 
-    /** 保存当前条目；已确认的版本被编辑时先提示会回到待确认。 */
+    /** 保存当前条目（新增中的条目则添加）；已确认的版本被编辑时先提示会回到待确认。 */
     async function save() {
       const view = context.getView();
+      const isNew = selection.ref === NEW_REF;
       if (view.actions.editNeedsConfirm) {
         const confirmed = await aiUi.confirm({
-          title: '保存修改',
-          message: '该版本已确认采用。保存后将回到待确认，需要重新确认。',
-          confirmText: '保存',
+          title: isNew ? '添加' : '保存修改',
+          message: `该版本已确认采用。${isNew ? '添加' : '保存'}后将回到待确认，需要重新确认。`,
+          confirmText: isNew ? '添加' : '保存',
           cancelText: '取消'
         });
         if (!confirmed) return;
       }
       const { built } = editorControls;
       const payload = { id: view.run.id, ...built.collect() };
-      if (selection.type !== TYPE_TEXT) payload.ref = selection.ref;
-      if (await context.runAction(built.request, payload)) {
+      if (isNew) {
+        if (selection.type === TYPE_ENTITY) payload.kind = selection.kind;
+      } else if (selection.type !== TYPE_TEXT) {
+        payload.ref = selection.ref;
+      }
+      const addRequest = selection.type === TYPE_EPISODE ? REQUEST_ADD_EPISODE : REQUEST_ADD_ENTITY;
+      const result = await context.runAction(isNew ? addRequest : built.request, payload);
+      if (result) {
         editorDirty = false;
+        // 新增成功后选中刚加入的条目。
+        if (isNew) selection = { type: selection.type, ref: result.ref };
         await context.reload();
         // 重新加载后编辑区可能被重建（如已确认的版本保存后回到待确认），按钮状态要在重建后再设置。
         if (editorControls) editorControls.setSaveState(SAVE_STATE_SAVED);
-        context.showMessage(built.note ? `已保存。${built.note}` : '已保存。', false);
+        context.showMessage(isNew ? '已添加。' : built.note ? `已保存。${built.note}` : '已保存。', false);
+      }
+    }
+
+    /** 删除当前的集或实体；先确认，并说明影响范围。 */
+    async function remove() {
+      const view = context.getView();
+      const item = findItem(view, selection);
+      const isEpisode = selection.type === TYPE_EPISODE;
+      const lines = isEpisode
+        ? [`删除第 ${item.seq} 集“${item.title}”后，后面的集序号会前移。`]
+        : [`删除实体“${item.name}”。`];
+      if (isEpisode && view.merged && (view.downstreamEpisodes || []).includes(item.seq)) lines.push('这一集的分镜脚本也会一并删除。');
+      if (!isEpisode && view.merged) lines.push('已被镜头、声音或资产绑定引用的实体不能删除，可改为停用。');
+      if (view.actions.editNeedsConfirm) lines.push('该版本已确认采用，删除后将回到待确认。');
+      const confirmed = await aiUi.confirm({
+        title: isEpisode ? '删除集' : '删除实体',
+        message: lines,
+        confirmText: '删除',
+        variant: 'danger'
+      });
+      if (!confirmed) return;
+      if (await context.runAction(isEpisode ? REQUEST_DELETE_EPISODE : REQUEST_DELETE_ENTITY, { id: view.run.id, ref: selection.ref })) {
+        editorDirty = false;
+        selection = { type: TYPE_TEXT, ref: null };
+        await context.reload();
+        context.showMessage('已删除。', false);
       }
     }
 
@@ -254,7 +334,7 @@
     function renderEditor(view) {
       const item = findItem(view, selection);
       const canEdit = view.actions.canEdit;
-      const key = `${view.run.id}:${selection.type}:${selection.ref}:${view.merged}:${canEdit}:${view.actions.editNeedsConfirm}`;
+      const key = `${view.run.id}:${selection.type}:${selection.ref}:${selection.kind || ''}:${view.merged}:${canEdit}:${view.actions.editNeedsConfirm}`;
       if (editorControls && editorKey === key) {
         if (!editorDirty) editorControls.built.refresh(item);
         return editorControls.element;
@@ -262,29 +342,42 @@
 
       editorKey = key;
       editorDirty = false;
-      const saveButton = aiUi.button({ text: SAVE_TEXT, variant: 'primary', disabled: true, onClick: () => void save() });
-      /** 保存按钮只在有修改时可点，保存后显示“已保存”，再次修改后恢复。 */
+      const isNew = selection.ref === NEW_REF;
+      const saveButton = aiUi.button({ text: isNew ? ADD_TEXT : SAVE_TEXT, variant: 'primary', disabled: !isNew, onClick: () => void save() });
+      /** 保存按钮只在有修改时可点，保存后显示“已保存”，再次修改后恢复；新增的条目始终可点“添加”。 */
       const setSaveState = (state) => {
-        saveButton.setText(state === SAVE_STATE_SAVED ? SAVED_TEXT : SAVE_TEXT);
-        saveButton.setDisabled(state !== SAVE_STATE_DIRTY);
+        saveButton.setText(state === SAVE_STATE_SAVED ? SAVED_TEXT : isNew ? ADD_TEXT : SAVE_TEXT);
+        saveButton.setDisabled(!isNew && state !== SAVE_STATE_DIRTY);
       };
       const markDirty = () => {
         editorDirty = true;
         setSaveState(SAVE_STATE_DIRTY);
+      };
+      /** 新增实体时切换类型：保留已填的名称、别名和摘要，重建编辑区。 */
+      const changeKind = (nextKind) => {
+        const values = editorControls.built.collect();
+        const wasDirty = editorDirty;
+        const aliases = values.aliases.split(ALIAS_SEPARATORS).map((alias) => alias.trim()).filter(Boolean);
+        selection = { type: TYPE_ENTITY, ref: NEW_REF, kind: nextKind, draft: { name: values.name, aliases, description: values.description } };
+        renderBody(context.getView(), bodyContainer);
+        editorDirty = wasDirty;
       };
 
       const built =
         selection.type === TYPE_EPISODE
           ? buildEpisodeEditor(view, item, canEdit, markDirty)
           : selection.type === TYPE_ENTITY
-            ? buildEntityEditor(view, item, canEdit, markDirty)
+            ? buildEntityEditor(view, item, canEdit, markDirty, isNew ? changeKind : null)
             : buildTextEditor(view, canEdit, markDirty);
       const reason = readonlyReason(view);
+      // 单个短视频只有 1 集，不能删除。
+      const canRemove = canEdit && !isNew && selection.type !== TYPE_TEXT && !(selection.type === TYPE_EPISODE && view.work.kind === 'single');
       const actions = [
         canEdit ? saveButton.element : null,
         canEdit && selection.type === TYPE_TEXT && view.actions.canReextract
           ? aiUi.button({ text: '重新抽取', onClick: () => void reextract() }).element
-          : null
+          : null,
+        canRemove ? aiUi.button({ kind: 'delete', text: '删除', onClick: () => void remove() }).element : null
       ].filter(Boolean);
 
       const element = aiUi.h(
@@ -308,7 +401,7 @@
         container.append(renderList(view), aiUi.h('div', { class: 'stage-detail' }, aiUi.h('p', { class: 'description', text: '剧本包正文生成后会显示在这里。' })));
         return;
       }
-      if (selection.type !== TYPE_TEXT && !findItem(view, selection)) {
+      if (selection.type !== TYPE_TEXT && (!findItem(view, selection) || (selection.ref === NEW_REF && !view.actions.canEdit))) {
         selection = { type: TYPE_TEXT, ref: null };
         editorDirty = false;
       }

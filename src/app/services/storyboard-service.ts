@@ -17,7 +17,7 @@ import { StageRunRepository } from '../../domain/ports/stage-run-repository';
 import { StoryboardRepository } from '../../domain/ports/storyboard-repository';
 import { readRecord } from '../../domain/rules/field-readers';
 import { canApprove, canCancel, canRetry, isStale, toDisplayStatus } from '../../domain/rules/stage-review-rules';
-import { normalizeShotEdit, normalizeStoryboardParams } from '../../domain/rules/storyboard-rules';
+import { MAX_SHOTS_LIMIT, normalizeShotEdit, normalizeStoryboardParams } from '../../domain/rules/storyboard-rules';
 import { StageRunner } from '../stages/stage-runner';
 import { ProjectService } from './project-service';
 import { StageActions, StageRunView, StageService, StageVersionItem, toRunView, toVersionItem } from './stage-service';
@@ -265,6 +265,56 @@ export class StoryboardService {
         .map(({ id, kind, name, aliases }) => ({ id, kind, name, aliases }));
       const edit = normalizeShotEdit(rawInput, entities, shot.seq === 1);
       if (!storyboards.updateShot(run.id, shot.id, edit, this.timestamp())) {
+        throw new NotFoundError('镜头不存在。');
+      }
+    });
+  }
+
+  /**
+   * 在末尾新增一个镜头（含出场实体与声音），并让该版本回到待确认。
+   * @param rawInput 镜头字段，同 saveShot（不带 ref）。
+   * @returns 新镜头的标识。
+   * @throws ValidationError 内容不合法、镜头数已达上限、不是最新版本或生成尚未成功。
+   * @throws NotFoundError 记录不存在或还没有分镜脚本。
+   */
+  addShot(runId: number, rawInput: unknown): number {
+    const { screenplays, storyboards } = this.dependencies;
+    let shotId = -1;
+    this.dependencies.stages.editLatest(runId, (run) => {
+      if (storyboards.find(run.id) === undefined) {
+        throw new NotFoundError('分镜脚本还没有生成。');
+      }
+      const count = storyboards.countShots(run.id);
+      if (count >= MAX_SHOTS_LIMIT) {
+        throw new ValidationError({ [FORM_LEVEL_ERROR_KEY]: `镜头数量已达上限 ${MAX_SHOTS_LIMIT}，不能再新增。` });
+      }
+      const entities: StoryboardEntity[] = screenplays
+        .listEntities(run.workId)
+        .map(({ id, kind, name, aliases }) => ({ id, kind, name, aliases }));
+      const edit = normalizeShotEdit(rawInput, entities, count === 0);
+      shotId = storyboards.insertShot(run.id, edit, this.timestamp());
+    });
+    return shotId;
+  }
+
+  /**
+   * 删除一个镜头，并让该版本回到待确认；后面的镜头序号依次前移。
+   * @param rawInput { ref }，ref 为视图中的镜头标识。
+   * @throws ValidationError 只剩最后一个镜头、不是最新版本或生成尚未成功。
+   * @throws NotFoundError 记录或镜头不存在。
+   */
+  deleteShot(runId: number, rawInput: unknown): void {
+    const { storyboards } = this.dependencies;
+    this.dependencies.stages.editLatest(runId, (run) => {
+      const ref = readRecord(rawInput).ref;
+      const shots = storyboards.listShots(run.id);
+      if (!shots.some((candidate) => candidate.id === ref)) {
+        throw new NotFoundError('镜头不存在。');
+      }
+      if (shots.length <= 1) {
+        throw new ValidationError({ [FORM_LEVEL_ERROR_KEY]: '至少保留 1 个镜头，不能删除。' });
+      }
+      if (!storyboards.deleteShot(run.id, ref as number, this.timestamp())) {
         throw new NotFoundError('镜头不存在。');
       }
     });

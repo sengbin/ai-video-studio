@@ -23,4 +23,14 @@ export interface StoryboardRepository {
    * 修改一个镜头：出场实体与声音整体替换；镜头不属于该记录时返回 false。
    */
   updateShot(runId: number, shotId: number, edit: ShotEdit, timestamp: string): boolean;
+  /**
+   * 在分镜脚本末尾新增一个镜头，返回镜头标识。
+   * @throws Error 记录还没有分镜脚本。
+   */
+  insertShot(runId: number, edit: ShotEdit, timestamp: string): number;
+  /**
+   * 删除一个镜头，后面的镜头序号依次前移；新的第 1 个镜头若接上一镜头尾帧则改为不指定。
+   * 镜头不属于该记录时返回 false。
+   */
+  deleteShot(runId: number, shotId: number, timestamp: string): boolean;
 }

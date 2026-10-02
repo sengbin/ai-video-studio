@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：stage-handlers.ts
-// 说明：阶段产出（P7）的请求处理：读取视图、确认采用、取消、重试、读取失败时的原始输出，以及创意章节、剧本正文、集、实体、分镜脚本镜头的编辑保存、重新抽取。
+// 说明：阶段产出（P7）的请求处理：读取视图、确认采用、取消、重试、读取失败时的原始输出，以及创意章节、剧本正文、集、实体、分镜脚本镜头的编辑保存、新增与删除（集、实体、镜头）、重新抽取。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-09-30
@@ -27,6 +27,12 @@ export const STAGE_REQUESTS = {
   saveEpisode: 'stage.saveEpisode',
   saveEntity: 'stage.saveEntity',
   saveShot: 'stage.saveShot',
+  addEpisode: 'stage.addEpisode',
+  deleteEpisode: 'stage.deleteEpisode',
+  addEntity: 'stage.addEntity',
+  deleteEntity: 'stage.deleteEntity',
+  addShot: 'stage.addShot',
+  deleteShot: 'stage.deleteShot',
   reextract: 'stage.reextract'
 } as const;
 
@@ -124,6 +130,27 @@ export function registerStageHandlers(
   router.register(STAGE_REQUESTS.saveShot, (payload) => {
     storyboards.saveShot(readOwnRunId(payload), payload);
     return { saved: true };
+  });
+
+  router.register(STAGE_REQUESTS.addEpisode, (payload) => ({ ref: screenplays.addEpisode(readOwnRunId(payload), payload) }));
+
+  router.register(STAGE_REQUESTS.deleteEpisode, (payload) => {
+    screenplays.deleteEpisode(readOwnRunId(payload), payload);
+    return { deleted: true };
+  });
+
+  router.register(STAGE_REQUESTS.addEntity, (payload) => ({ ref: screenplays.addEntity(readOwnRunId(payload), payload) }));
+
+  router.register(STAGE_REQUESTS.deleteEntity, (payload) => {
+    screenplays.deleteEntity(readOwnRunId(payload), payload);
+    return { deleted: true };
+  });
+
+  router.register(STAGE_REQUESTS.addShot, (payload) => ({ ref: storyboards.addShot(readOwnRunId(payload), payload) }));
+
+  router.register(STAGE_REQUESTS.deleteShot, (payload) => {
+    storyboards.deleteShot(readOwnRunId(payload), payload);
+    return { deleted: true };
   });
 
   router.register(STAGE_REQUESTS.reextract, async (payload) => {

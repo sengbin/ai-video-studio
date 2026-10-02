@@ -247,6 +247,119 @@ test('编辑（合并后）：集与实体直接改作品的数据，版本回�
   }
 });
 
+test('新增与删除（合并前）：改的是抽取结果，序号重排，修订号加 1；单个短视频不能增删集，至少保留 1 集', async () => {
+  const fixture = await createFixture('多集短片', twoCharacters);
+  const { database, screenplays, runs, work } = fixture;
+  try {
+    const run = await screenplays.start(work.id, PARAMS);
+    await fixture.runner.whenIdle();
+    const revision = runs.findById(run.id)!.revision;
+
+    const episodeRef = screenplays.addEpisode(run.id, { title: '第三集', synopsis: '新梗概', screenplayText: '第三集正文', targetDurationSeconds: '20' });
+    assert.equal(episodeRef, 2);
+    let view = screenplays.getView(work.id);
+    assert.deepEqual(view.episodes.map((episode) => [episode.ref, episode.seq, episode.title]), [[0, 1, '第一集'], [1, 2, '第二集'], [2, 3, '第三集']]);
+    assert.equal(view.episodes[2].targetDurationSeconds, 20);
+
+    screenplays.deleteEpisode(run.id, { ref: 0 });
+    view = screenplays.getView(work.id);
+    assert.deepEqual(view.episodes.map((episode) => [episode.ref, episode.seq, episode.title]), [[0, 1, '第二集'], [1, 2, '第三集']]);
+
+    assert.throws(() => screenplays.addEpisode(run.id, { title: '' }), (error) => error instanceof ValidationError && error.fieldErrors.title !== undefined);
+    assert.throws(() => screenplays.deleteEpisode(run.id, { ref: 9 }), NotFoundError);
+    screenplays.deleteEpisode(run.id, { ref: 0 });
+    assert.throws(() => screenplays.deleteEpisode(run.id, { ref: 0 }), /至少保留 1 集/);
+
+    const entityRef = screenplays.addEntity(run.id, { kind: 'prop', name: '钥匙', aliases: '铜钥匙', description: '灯塔的钥匙', attributes: { usage: '开门' }, isActive: true });
+    assert.equal(entityRef, 3);
+    const added = screenplays.getView(work.id).entities[3];
+    assert.deepEqual([added.kind, added.name, added.aliases, added.attributes], ['prop', '钥匙', ['铜钥匙'], { usage: '开门' }]);
+    assert.throws(() => screenplays.addEntity(run.id, { kind: 'prop', name: '钥匙' }), (error) => error instanceof ValidationError && error.fieldErrors.name !== undefined);
+    assert.throws(() => screenplays.addEntity(run.id, { kind: 'bogus', name: 'x' }), (error) => error instanceof ValidationError && error.fieldErrors.kind !== undefined);
+    screenplays.addEntity(run.id, { kind: 'scene', name: '钥匙' });
+
+    screenplays.deleteEntity(run.id, { ref: 0 });
+    assert.deepEqual(screenplays.getView(work.id).entities.map((entity) => entity.name), ['灯塔', '学徒', '钥匙', '钥匙']);
+    assert.throws(() => screenplays.deleteEntity(run.id, { ref: 9 }), NotFoundError);
+    assert.equal(runs.findById(run.id)!.revision, revision + 6, '成功的编辑各加 1，被拒绝的不改变修订号');
+    assert.equal(database.prepare('SELECT COUNT(*) AS n FROM script_entities').get()?.n, 0, '确认前不影响作品的实体');
+  } finally {
+    database.close();
+  }
+
+  const single = await createFixture('单个短视频');
+  try {
+    const run = await generate(single);
+    assert.throws(() => single.screenplays.addEpisode(run.id, { title: '另一集' }), /单个短视频只有 1 集/);
+    assert.throws(() => single.screenplays.deleteEpisode(run.id, { ref: 0 }), /单个短视频只有 1 集/);
+    single.screenplays.addEntity(run.id, { kind: 'prop', name: '钥匙' });
+    assert.equal(single.screenplays.getView(single.work.id).entities.length, 3);
+  } finally {
+    single.database.close();
+  }
+});
+
+test('新增与删除（合并后）：直接改作品的集和实体，序号重排；删集连同分镜脚本，被引用的实体不能删', async () => {
+  const fixture = await createFixture('多集短片', twoCharacters);
+  const { database, screenplays, storyboards, stages, runs, work } = fixture;
+  try {
+    const run = await screenplays.start(work.id, PARAMS);
+    await fixture.runner.whenIdle();
+    stages.approve(run.id);
+    const [first, second] = screenplays.getView(work.id).episodes;
+    await storyboards.start(work.id, [first.ref, second.ref], {});
+    await fixture.runner.whenIdle();
+
+    const ref = screenplays.addEpisode(run.id, { title: '第三集', synopsis: '', screenplayText: '正文', targetDurationSeconds: '' });
+    assert.equal(database.prepare('SELECT seq FROM episodes WHERE id = ?').get(ref)?.seq, 3);
+    assert.equal(runs.findById(run.id)!.reviewStatus, 'pending');
+
+    // 第 1 集已有分镜脚本：删除后序号前移，它的分镜脚本记录一并清除。
+    screenplays.deleteEpisode(run.id, { ref: first.ref });
+    const rows = database.prepare('SELECT id, seq FROM episodes WHERE work_id = ? ORDER BY seq').all(work.id);
+    assert.deepEqual(rows.map((row) => [row.id, row.seq]), [[second.ref, 1], [ref, 2]]);
+    assert.equal(database.prepare('SELECT COUNT(*) AS n FROM stage_runs WHERE episode_id = ?').get(first.ref)?.n, 0);
+    assert.equal(database.prepare('SELECT COUNT(*) AS n FROM stage_runs WHERE episode_id = ?').get(second.ref)?.n, 1);
+    assert.throws(() => screenplays.deleteEpisode(run.id, { ref: first.ref }), NotFoundError);
+
+    // 实体：被镜头引用的“守夜人”不能删；没被引用的“学徒”和新增的实体可以删。
+    const entities = screenplays.getView(work.id).entities;
+    const guard = entities.find((entity) => entity.name === '守夜人')!;
+    const apprentice = entities.find((entity) => entity.name === '学徒')!;
+    const revision = runs.findById(run.id)!.revision;
+    assert.throws(() => screenplays.deleteEntity(run.id, { ref: guard.ref }), /已被 \d+ 处引用/);
+    assert.equal(runs.findById(run.id)!.revision, revision);
+    screenplays.deleteEntity(run.id, { ref: apprentice.ref });
+    const keyRef = screenplays.addEntity(run.id, { kind: 'prop', name: '钥匙' });
+    assert.equal(database.prepare('SELECT kind FROM script_entities WHERE id = ?').get(keyRef)?.kind, 'prop');
+    assert.throws(() => screenplays.addEntity(run.id, { kind: 'prop', name: '钥匙' }), ConflictError);
+    screenplays.deleteEntity(run.id, { ref: keyRef });
+    assert.equal(database.prepare('SELECT COUNT(*) AS n FROM script_entities WHERE name = ?').get('学徒')?.n, 0);
+
+    stages.approve(run.id);
+    assert.equal(database.prepare('SELECT COUNT(*) AS n FROM episodes WHERE work_id = ?').get(work.id)?.n, 2, '再次确认不会把已删除的集合并回来');
+  } finally {
+    database.close();
+  }
+});
+
+test('新增与删除（合并后）：这一集正在生成分镜脚本时不能删除', async () => {
+  const fixture = await createFixture('多集短片');
+  const { database, screenplays, storyboards, stages, work } = fixture;
+  try {
+    const run = await screenplays.start(work.id, PARAMS);
+    await fixture.runner.whenIdle();
+    stages.approve(run.id);
+    const [first] = screenplays.getView(work.id).episodes;
+    await storyboards.start(work.id, [first.ref], {});
+    assert.throws(() => screenplays.deleteEpisode(run.id, { ref: first.ref }), /正在生成分镜脚本/);
+    await fixture.runner.whenIdle();
+    assert.equal(database.prepare('SELECT COUNT(*) AS n FROM episodes WHERE work_id = ?').get(work.id)?.n, 2);
+  } finally {
+    database.close();
+  }
+});
+
 test('重新抽取：清除并按当前正文重新抽取，修订号加 1；合并后不允许；只能对最新版本', async () => {
   const fixture = await createFixture('多集短片');
   const { database, screenplays, stages, runs, runner, text, work } = fixture;

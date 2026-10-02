@@ -169,3 +169,50 @@ test('分镜脚本产出：按集读取视图、编辑镜头、确认采用；�
     database.close();
   }
 });
+
+test('新增与删除：实体、镜头经请求完成并返回定位值；单个短视频不能增删集；删除的记录必须属于所属作品', async () => {
+  const { database, sendStage, work, stages, screenplays, storyboards, runner } = createFixture();
+  try {
+    const creative = await stages.startCreative(work.id, PARAMS);
+    await runner.whenIdle();
+    stages.approve(creative.id);
+    const screenplay = await screenplays.start(work.id, { maxEpisodeDurationSeconds: 60 });
+    await runner.whenIdle();
+
+    const addEntity = await sendStage(STAGE_REQUESTS.addEntity, { id: screenplay.id, kind: 'prop', name: '钥匙' }, 'screenplay');
+    assert.ok(addEntity?.ok);
+    const ref = (addEntity.data as { ref: number }).ref;
+    assert.equal(screenplays.getView(work.id).entities[ref].name, '钥匙');
+    const duplicate = await sendStage(STAGE_REQUESTS.addEntity, { id: screenplay.id, kind: 'prop', name: '钥匙' }, 'screenplay');
+    assert.ok(duplicate && !duplicate.ok && duplicate.error.fieldErrors?.name);
+    const deleted = await sendStage(STAGE_REQUESTS.deleteEntity, { id: screenplay.id, ref }, 'screenplay');
+    assert.ok(deleted?.ok);
+
+    const addEpisode = await sendStage(STAGE_REQUESTS.addEpisode, { id: screenplay.id, title: '另一集' }, 'screenplay');
+    assert.ok(addEpisode && !addEpisode.ok && addEpisode.error.kind === 'validation');
+    const deleteEpisode = await sendStage(STAGE_REQUESTS.deleteEpisode, { id: screenplay.id, ref: 0 }, 'screenplay');
+    assert.ok(deleteEpisode && !deleteEpisode.ok && deleteEpisode.error.kind === 'validation');
+
+    stages.approve(screenplay.id);
+    const [episode] = storyboards.listEpisodeStatuses(work.id);
+    const [run] = await storyboards.start(work.id, [episode.episodeId], {});
+    await runner.whenIdle();
+    const send = (name: string, payload: object = {}) => sendStage(name, { episodeId: episode.episodeId, ...payload }, 'storyboard_script');
+
+    const added = await send(STAGE_REQUESTS.addShot, { id: run.id, action: '新镜头', durationSeconds: '3' });
+    assert.ok(added?.ok);
+    const shotId = (added.data as { ref: number }).ref;
+    assert.equal(storyboards.getView(work.id, episode.episodeId).shots.length, 3);
+    const invalid = await send(STAGE_REQUESTS.addShot, { id: run.id, action: '', durationSeconds: '3' });
+    assert.ok(invalid && !invalid.ok && invalid.error.fieldErrors?.action);
+    const removed = await send(STAGE_REQUESTS.deleteShot, { id: run.id, ref: shotId });
+    assert.ok(removed?.ok);
+    assert.equal(storyboards.getView(work.id, episode.episodeId).shots.length, 2);
+
+    // 别的集的标识不能操作这一集的版本。
+    const wrongEpisode = await sendStage(STAGE_REQUESTS.deleteShot, { id: run.id, ref: shotId, episodeId: episode.episodeId + 100 }, 'storyboard_script');
+    assert.ok(wrongEpisode && !wrongEpisode.ok && wrongEpisode.error.kind === 'not-found');
+  } finally {
+    database.close();
+  }
+});
