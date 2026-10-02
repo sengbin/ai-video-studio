@@ -8,7 +8,7 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/sengbin/ai-video-studio.git"
+    "url": "https://github.com/sengbin/aigc-video-studio.git"
   },
   "engines": {
     "vscode": "^1.108.0"

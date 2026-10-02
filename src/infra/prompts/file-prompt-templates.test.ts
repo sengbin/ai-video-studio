@@ -23,7 +23,7 @@ test('读取扩展自带的提示词模板', () => {
 });
 
 test('统一为 LF 换行，重复读取使用缓存', () => {
-  const directory = mkdtempSync(join(tmpdir(), 'ai-video-studio-prompts-'));
+  const directory = mkdtempSync(join(tmpdir(), 'aigc-video-studio-prompts-'));
   try {
     writeFileSync(join(directory, 'demo.md'), '第一行\r\n第二行\r\n');
     const templates = new FilePromptTemplates(directory);

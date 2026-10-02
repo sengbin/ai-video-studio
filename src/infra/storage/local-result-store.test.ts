@@ -18,7 +18,7 @@ const LOCATION = { projectId: 1, workId: 2, episodeId: 3 };
 
 /** 在临时目录中创建存储。 */
 async function createStore(fetchFunction: typeof fetch) {
-  const root = await mkdtemp(path.join(tmpdir(), 'ai-video-studio-store-'));
+  const root = await mkdtemp(path.join(tmpdir(), 'aigc-video-studio-store-'));
   return { root, store: new LocalResultStore(root, fetchFunction), cleanup: () => rm(root, { recursive: true, force: true }) };
 }
 

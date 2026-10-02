@@ -277,7 +277,7 @@ test('迁移执行失败时抛出迁移错误并带上原因', () => {
 });
 
 test('迁移失败后已创建的表被回滚', () => {
-  const directory = mkdtempSync(join(tmpdir(), 'ai-video-studio-test-'));
+  const directory = mkdtempSync(join(tmpdir(), 'aigc-video-studio-test-'));
   const filePath = join(directory, 'rollback.sqlite');
   const goodMigration: Migration = { version: 1, name: 'good', sql: 'CREATE TABLE alpha (id INTEGER PRIMARY KEY);' };
   const badMigration: Migration = {
@@ -302,7 +302,7 @@ test('迁移失败后已创建的表被回滚', () => {
 });
 
 test('数据库版本高于程序支持的版本时拒绝打开', () => {
-  const directory = mkdtempSync(join(tmpdir(), 'ai-video-studio-test-'));
+  const directory = mkdtempSync(join(tmpdir(), 'aigc-video-studio-test-'));
   const filePath = join(directory, 'newer.sqlite');
   const migrationOne: Migration = { version: 1, name: 'one', sql: 'CREATE TABLE alpha (id INTEGER PRIMARY KEY);' };
   const migrationTwo: Migration = { version: 2, name: 'two', sql: 'CREATE TABLE beta (id INTEGER PRIMARY KEY);' };
@@ -320,7 +320,7 @@ test('迁移版本号必须从 1 开始连续', () => {
 });
 
 test('升级已有数据的库之前先备份，新库不备份', () => {
-  const directory = mkdtempSync(join(tmpdir(), 'ai-video-studio-test-'));
+  const directory = mkdtempSync(join(tmpdir(), 'aigc-video-studio-test-'));
   const filePath = join(directory, 'upgrade.sqlite');
   const migrationOne: Migration = { version: 1, name: 'one', sql: 'CREATE TABLE alpha (id INTEGER PRIMARY KEY);' };
   const migrationTwo: Migration = { version: 2, name: 'two', sql: 'CREATE TABLE beta (id INTEGER PRIMARY KEY);' };
@@ -453,7 +453,7 @@ test('剧本包结构快照默认为空对象且必须是合法 JSON；模型类
 });
 
 test('从版本 5 升级到 6：保留项目、作品和集，丢弃阶段记录及其下游数据', () => {
-  const directory = mkdtempSync(join(tmpdir(), 'ai-video-studio-test-'));
+  const directory = mkdtempSync(join(tmpdir(), 'aigc-video-studio-test-'));
   const filePath = join(directory, 'upgrade-v5.sqlite');
   try {
     const legacy = openDatabase(filePath, MIGRATIONS.slice(0, 5));
@@ -496,7 +496,7 @@ test('从版本 5 升级到 6：保留项目、作品和集，丢弃阶段记录
 });
 
 test('从版本 8 升级到 9：已有资产保留，已有提示词视为基于当前内容，新增版本表', () => {
-  const directory = mkdtempSync(join(tmpdir(), 'ai-video-studio-test-'));
+  const directory = mkdtempSync(join(tmpdir(), 'aigc-video-studio-test-'));
   const filePath = join(directory, 'upgrade-v8.sqlite');
   try {
     const legacy = openDatabase(filePath, MIGRATIONS.slice(0, 8));

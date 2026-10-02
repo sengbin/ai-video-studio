@@ -18,7 +18,7 @@ const path = require('node:path');
 
 const extensionRoot = path.resolve(__dirname, '..', '..');
 const port = Number(process.argv[2] ?? process.env.HARNESS_PORT ?? 5177);
-const dataDirectory = process.env.HARNESS_DATA ?? fs.mkdtempSync(path.join(os.tmpdir(), 'ai-video-studio-harness-'));
+const dataDirectory = process.env.HARNESS_DATA ?? fs.mkdtempSync(path.join(os.tmpdir(), 'aigc-video-studio-harness-'));
 
 // 让扩展代码里的 require('vscode') 得到假模块。
 const fakeVscode = require('./fake-vscode');
