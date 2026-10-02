@@ -47,7 +47,7 @@ export interface AssetOptionSet {
 /** 图像类资产各自的选项集；音频资产不使用。 */
 export const ASSET_OPTION_SETS: Readonly<Record<'character' | 'scene' | 'prop' | 'effect', AssetOptionSet>> = {
   character: {
-    composition: ['正面全身像', '三视图（正面、侧面、背面）', '正面半身像', '侧面全身像', '面部特写'],
+    composition: ['正面全身像', '三视图（正面、侧面、背面）', '三视图加正脸特写（左侧一张正脸特写，右侧正面、侧面、背面三张全身图）', '正面半身像', '侧面全身像', '面部特写'],
     background: ['纯白背景', '浅灰纯色背景', '纯色背景', '简洁渐变背景', '与角色设定相符的环境背景'],
     aspectRatio: ['2:3', '3:2', '1:1', '4:3', '16:9', '9:16'],
     style: VISUAL_STYLE_OPTIONS
