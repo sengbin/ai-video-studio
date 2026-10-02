@@ -1,7 +1,7 @@
 /*
  * ------------------------------------------------------------------------
  * 名称：workbench.css
- * 说明：生成工作台页样式：工具栏的选择器宽度、操作结果与提示、批量操作行、镜头内容、任务状态、失败原因和历史记录，以及实体绑定弹出页。
+ * 说明：生成工作台页样式：工具栏的选择器宽度、操作结果与提示、批量操作行、左栏镜头组列表与分隔条、选中镜头组的详情、底部可折叠的队列与结果、镜头内容、任务状态、失败原因和历史记录，以及实体绑定弹出页。
  * 作者：Lion
  * 邮箱：chengbin@3578.cn
  * 日期：2026-10-02
@@ -280,4 +280,238 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   user-select: text;
+}
+/* 主体：左栏镜头组列表、分隔条、选中镜头组的详情；窄屏时左栏换成顶部的下拉 */
+.wb-layout {
+  display: flex;
+  align-items: flex-start;
+  margin: 0 0 12px;
+}
+
+.wb-tree {
+  position: sticky;
+  top: 8px;
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  max-height: calc(100vh - 32px);
+  min-width: 0;
+  border: 1px solid var(--table-border);
+  border-radius: 6px;
+  background: var(--table-surface);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.wb-tree--collapsed {
+  padding: 4px;
+}
+
+/* 折叠按钮只有一个箭头，不需要紧凑按钮的最小宽度 */
+.wb-tree .ui-button {
+  min-width: 24px;
+}
+
+.wb-tree__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 5px 6px;
+  border-bottom: 1px solid var(--table-row-divider);
+}
+
+.wb-tree__list {
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.wb-tree__group + .wb-tree__group {
+  border-top: 1px solid var(--table-row-divider);
+}
+
+.wb-tree__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 6px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.wb-tree__item:hover {
+  background: var(--table-row-hover);
+}
+
+/* 选中项：主色 22% 的底色加 3px 的内侧左标记，同时有 aria-current */
+.wb-tree__item--selected {
+  background: color-mix(in srgb, var(--vscode-button-background) 22%, transparent);
+  box-shadow: inset 3px 0 0 var(--vscode-button-background);
+}
+
+.wb-tree__item:focus-visible {
+  outline: 1px solid var(--focus-border);
+  outline-offset: -1px;
+}
+
+.wb-tree__title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 6px;
+  min-width: 0;
+}
+
+.wb-tree__title .description {
+  font-size: 11px;
+}
+
+.wb-tree__status {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.wb-tree__shots {
+  margin: 0;
+  padding: 0 6px 6px 14px;
+  list-style: none;
+  color: var(--text-muted);
+}
+
+.wb-tree__shot {
+  padding: 1px 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 分隔条：悬停或键盘聚焦时显示一条主题焦点色的细线 */
+.wb-splitter {
+  position: relative;
+  flex: 0 0 8px;
+  align-self: stretch;
+  cursor: col-resize;
+}
+
+.wb-splitter::after {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 2px;
+  border-radius: 1px;
+  background: transparent;
+  content: '';
+}
+
+.wb-splitter:hover::after,
+.wb-splitter:focus-visible::after {
+  background: var(--focus-border);
+}
+
+.wb-splitter:focus-visible {
+  outline: none;
+}
+
+.wb-main {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.wb-tree--collapsed + .wb-main {
+  margin-left: 8px;
+}
+
+.wb-group-select {
+  display: none;
+  margin: 0 0 8px;
+}
+
+.wb-detail__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0 0;
+}
+
+.wb-detail__title {
+  margin: 12px 0 6px;
+  padding-top: 10px;
+  border-top: 1px solid var(--divider);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* 底部队列与结果：折叠标题是一个按钮，展开后是任务表 */
+.wb-queue {
+  margin: 12px 0 0;
+  padding-top: 8px;
+  border-top: 1px solid var(--divider);
+}
+
+.wb-queue__toggle {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  margin: -2px -4px 0;
+  padding: 2px 4px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.wb-queue__toggle:focus-visible {
+  outline: 1px solid var(--focus-border);
+  outline-offset: 1px;
+}
+
+.wb-queue__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.wb-queue__panel {
+  margin: 8px 0 0;
+}
+
+.wb-queue__failure {
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 899px) {
+  .wb-layout {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .wb-tree,
+  .wb-splitter {
+    display: none;
+  }
+
+  .wb-group-select {
+    display: block;
+  }
 }

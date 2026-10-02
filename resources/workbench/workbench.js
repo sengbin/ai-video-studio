@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：workbench.js
-// 说明：生成工作台页脚本：选择作品的一集，按“本集 → 作品 → 项目默认”的生成参数按镜头组提交生成（一组一次生成一个多镜头视频）；显示每组的镜头、总时长、任务状态与历史，失败时显示平台返回的具体原因；支持重新分组、拆分与合并镜头组、取消、编辑镜头后再次生成、打开结果视频、在结果版本之间切换采用和对比。
+// 说明：生成工作台页脚本：选择作品的一集，按“本集 → 作品 → 项目默认”的生成参数按镜头组提交生成（一组一次生成一个多镜头视频）；左栏列出镜头组（状态徽标，选中组展开镜头），中栏显示选中组的镜头、总时长、任务状态与历史，底部可折叠的队列列出全部任务，失败时显示平台返回的具体原因；支持重新分组、拆分与合并镜头组、取消、编辑镜头后再次生成、打开结果视频、在结果版本之间切换采用和对比。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
@@ -41,6 +41,15 @@
   const MEGABYTE = 1024 * KILOBYTE;
   const ACTION_PREVIEW_LENGTH = 40;
   const AUDIO_MODE_LABELS = { native: '模型生成声音', none: '无声', external: '独立音轨' };
+  /** 状态前的图标，让状态不只靠颜色区分。 */
+  const STATUS_ICONS = { waiting: '…', queued: '…', running: '●', succeeded: '✓', failed: '✕', canceled: '–' };
+  /** 左栏宽度的范围与键盘调整的步长（像素）。 */
+  const TREE_DEFAULT_WIDTH = 240;
+  const TREE_MIN_WIDTH = 200;
+  const TREE_MAX_WIDTH = 480;
+  const TREE_KEY_STEP = 16;
+  /** 底部队列最多显示的任务数。 */
+  const QUEUE_MAX_ROWS = 100;
   const MS_PER_SECOND = 1000;
   const SECONDS_PER_MINUTE = 60;
 
@@ -69,6 +78,14 @@
   let toolbarElement = null;
   let messageElement = null;
   let contentElement = null;
+  /** 当前选中的镜头组标识；没有选中或已不存在时按第一组显示。 */
+  let selectedGroupId = null;
+  /** 左栏宽度与是否折叠；队列区是否展开。 */
+  let treeWidth = TREE_DEFAULT_WIDTH;
+  let treeCollapsed = false;
+  let queueOpen = false;
+  let treeElement = null;
+  let splitterElement = null;
 
   /** 取错误载荷中的说明文字：有字段错误时列出各项，否则用错误说明。 */
   function errorText(error) {
@@ -537,11 +554,230 @@
     return buttons.map((button) => button.element);
   }
 
-  const GROUP_COLUMNS = [
-    { title: '镜头组', minWidth: 320, render: renderGroupContent },
-    { title: '生成状态', minWidth: 260, render: renderGroupStatus },
-    { title: '操作', type: 'actions', render: renderGroupActions }
-  ];
+  /** 镜头组状态：最新一次任务的状态；还没有任务时，有未绑定资产的实体为“待绑定”，否则为“可生成”。图标让状态不只靠颜色区分。 */
+  function groupStatus(group) {
+    const [latest] = group.jobs;
+    if (latest) {
+      return { text: `${STATUS_ICONS[latest.status] || ''} ${latest.statusLabel}`.trim(), className: STATUS_CLASSES[latest.status] || 'description' };
+    }
+    if (group.entities.some((entity) => !entity.bound)) return { text: '! 待绑定', className: 'status-warning' };
+    return { text: '○ 可生成', className: 'description' };
+  }
+
+  /** 当前选中的镜头组及其序号；没有选中（或已不存在）时取第一组。 */
+  function selectedGroupIndex() {
+    const index = view ? view.groups.findIndex((group) => group.id === selectedGroupId) : -1;
+    return index >= 0 ? index : 0;
+  }
+
+  /** 选中一个镜头组并刷新页面。 */
+  function selectGroup(group) {
+    selectedGroupId = group.id;
+    render();
+  }
+
+  /** 设置左栏宽度（限制在最小与最大宽度之间）并同步分隔条的取值。 */
+  function setTreeWidth(width) {
+    treeWidth = Math.min(TREE_MAX_WIDTH, Math.max(TREE_MIN_WIDTH, Math.round(width)));
+    if (treeElement) treeElement.style.width = `${treeWidth}px`;
+    if (splitterElement) splitterElement.setAttribute('aria-valuenow', String(treeWidth));
+  }
+
+  /** 左栏与中栏之间的分隔条：可拖动，也可用左右方向键调整宽度。 */
+  function renderSplitter() {
+    splitterElement = aiUi.h('div', {
+      class: 'wb-splitter',
+      attrs: {
+        role: 'separator',
+        'aria-orientation': 'vertical',
+        'aria-label': '调整镜头组栏宽度',
+        'aria-valuemin': TREE_MIN_WIDTH,
+        'aria-valuemax': TREE_MAX_WIDTH,
+        'aria-valuenow': treeWidth,
+        tabindex: 0
+      },
+      on: {
+        pointerdown: (event) => {
+          const start = treeWidth;
+          aiUi.trackPointer(splitterElement, event, (deltaX) => setTreeWidth(start + deltaX));
+        },
+        keydown: (event) => {
+          if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+          event.preventDefault();
+          setTreeWidth(treeWidth + (event.key === 'ArrowRight' ? TREE_KEY_STEP : -TREE_KEY_STEP));
+        }
+      }
+    });
+    return splitterElement;
+  }
+
+  /** 左栏：镜头组列表，选中的组展开列出组内镜头；可折叠为窄条。 */
+  function renderTree(selectedId) {
+    const collapseButton = aiUi.button({
+      text: treeCollapsed ? '›' : '‹',
+      compact: true,
+      ariaLabel: treeCollapsed ? '展开镜头组栏' : '折叠镜头组栏',
+      onClick: () => {
+        treeCollapsed = !treeCollapsed;
+        render();
+      }
+    });
+    if (treeCollapsed) {
+      treeElement = aiUi.h('nav', { class: 'wb-tree wb-tree--collapsed', attrs: { 'aria-label': '镜头组' } }, collapseButton.element);
+      return treeElement;
+    }
+    const items = view.groups.map((group) => {
+      const isSelected = group.id === selectedId;
+      const status = groupStatus(group);
+      const shotsId = `wb-tree-shots-${group.id}`;
+      return aiUi.h(
+        'li',
+        { class: 'wb-tree__group' },
+        aiUi.h(
+          'button',
+          {
+            class: `wb-tree__item${isSelected ? ' wb-tree__item--selected' : ''}`,
+            attrs: { type: 'button', 'aria-current': isSelected ? 'true' : undefined, 'aria-expanded': String(isSelected), 'aria-controls': shotsId },
+            on: { click: () => selectGroup(group) }
+          },
+          aiUi.h('span', { class: 'wb-tree__title' }, aiUi.h('strong', { text: `第 ${group.seq} 组` }), aiUi.h('span', { class: 'description', text: `${group.totalSeconds} 秒` })),
+          aiUi.h('span', { class: `wb-tree__status ${status.className}`, text: status.text })
+        ),
+        isSelected
+          ? aiUi.h(
+              'ul',
+              { class: 'wb-tree__shots', attrs: { id: shotsId } },
+              group.shots.map((shot) =>
+                aiUi.h('li', { class: 'wb-tree__shot', attrs: { title: shot.action } }, [`镜头 ${shot.seq}`, shot.shotSize, `${shot.durationSeconds} 秒`].filter(Boolean).join(' · '))
+              )
+            )
+          : null
+      );
+    });
+    treeElement = aiUi.h(
+      'nav',
+      { class: 'wb-tree', attrs: { 'aria-label': '镜头组' } },
+      aiUi.h('div', { class: 'wb-tree__head' }, aiUi.h('strong', { text: `镜头组（${view.groups.length}）` }), collapseButton.element),
+      aiUi.h('ul', { class: 'wb-tree__list' }, items)
+    );
+    treeElement.style.width = `${treeWidth}px`;
+    return treeElement;
+  }
+
+  /** 窄屏时代替左栏的镜头组下拉。 */
+  function renderGroupSelect(selectedId) {
+    const select = aiUi.select({
+      options: view.groups.map((group) => ({ value: String(group.id), label: `第 ${group.seq} 组 · ${group.totalSeconds} 秒 · ${groupStatus(group).text}` })),
+      value: String(selectedId),
+      allowEmpty: false,
+      ariaLabel: '选择镜头组',
+      onChange: (value) => {
+        selectedGroupId = Number(value);
+        render();
+      }
+    });
+    return aiUi.h('div', { class: 'wb-group-select' }, select.element);
+  }
+
+  /** 中栏：选中镜头组的内容、操作与生成状态。 */
+  function renderDetail(group, index) {
+    return aiUi.h(
+      'section',
+      { class: 'wb-detail', attrs: { 'aria-label': `第 ${group.seq} 组` } },
+      renderGroupContent(group),
+      aiUi.h('div', { class: 'wb-detail__actions' }, renderGroupActions(group, index)),
+      aiUi.h('h3', { class: 'wb-detail__title', text: '生成状态' }),
+      renderGroupStatus(group)
+    );
+  }
+
+  /** 队列里的全部任务，最新的在前，最多显示一定数量。 */
+  function queueRows() {
+    return view.groups
+      .flatMap((group) => group.jobs.map((job, order) => ({ job, group, isLatest: order === 0 })))
+      .sort((left, right) => Date.parse(right.job.createdAt) - Date.parse(left.job.createdAt) || right.job.id - left.job.id)
+      .slice(0, QUEUE_MAX_ROWS);
+  }
+
+  /** 队列摘要：进行中的任务数、最新任务失败的组数、已有结果的组数。 */
+  function queueSummary() {
+    const active = view.groups.reduce((sum, group) => sum + group.jobs.filter((job) => ACTIVE_STATUSES.includes(job.status)).length, 0);
+    const failed = view.groups.filter((group) => group.jobs[0] && group.jobs[0].status === 'failed').length;
+    const done = view.groups.filter((group) => resultCount(group) > 0).length;
+    return `生成中 ${active} · 失败 ${failed} · 已完成 ${done}（共 ${view.groups.length} 组）`;
+  }
+
+  /** 底部队列与结果：默认折叠为一行摘要，展开后列出每个任务。 */
+  function renderQueue() {
+    const panelId = 'wb-queue-panel';
+    const header = aiUi.h(
+      'button',
+      {
+        class: 'wb-queue__toggle',
+        attrs: { type: 'button', 'aria-expanded': String(queueOpen), 'aria-controls': panelId },
+        on: {
+          click: () => {
+            queueOpen = !queueOpen;
+            render();
+          }
+        }
+      },
+      aiUi.h('span', { class: 'wb-queue__icon', text: queueOpen ? '▾' : '▸', attrs: { 'aria-hidden': 'true' } }),
+      aiUi.h('strong', { text: '队列与结果' }),
+      aiUi.h('span', { class: 'description', text: queueSummary() })
+    );
+    const rows = queueRows();
+    const columns = [
+      {
+        title: '镜头组',
+        nowrap: true,
+        render: ({ group }) => aiUi.button({ text: `第 ${group.seq} 组`, compact: true, ariaLabel: `定位到第 ${group.seq} 组`, onClick: () => selectGroup(group) }).element
+      },
+      { title: '模型', render: ({ job }) => job.modelName },
+      {
+        title: '状态',
+        minWidth: 160,
+        render: ({ job }) =>
+          aiUi.h(
+            'div',
+            {},
+            aiUi.h('span', { class: STATUS_CLASSES[job.status] || 'description', text: `${STATUS_ICONS[job.status] || ''} ${job.statusLabel}`.trim() }),
+            job.failure ? aiUi.h('div', { class: 'description wb-queue__failure', text: job.failure.label, attrs: { title: job.failure.message } }) : null,
+            job.waitNote ? aiUi.h('div', { class: 'status-warning', text: job.waitNote }) : null
+          )
+      },
+      { title: '耗时', nowrap: true, muted: true, render: ({ job }) => formatElapsed(job) },
+      { title: '尝试', type: 'number', render: ({ job }) => job.attempt },
+      {
+        title: '操作',
+        type: 'actions',
+        render: ({ job, group, isLatest }) => {
+          const buttons = [];
+          if (ACTIVE_STATUSES.includes(job.status)) {
+            buttons.push(aiUi.button({ text: '取消', compact: true, variant: 'danger', ariaLabel: `取消第 ${group.seq} 组的任务`, onClick: () => void cancelJob(job) }));
+          }
+          if (isLatest && (job.status === 'failed' || job.status === 'canceled')) {
+            const canRetry = view.canGenerate && paramsReady() && !submitting.has(group.id) && !exceedsModel(group);
+            buttons.push(aiUi.button({ text: '重试', compact: true, disabled: !canRetry, ariaLabel: `重新生成第 ${group.seq} 组`, onClick: () => void submit([group]) }));
+          }
+          if (job.result) {
+            buttons.push(aiUi.button({ text: '打开视频', compact: true, ariaLabel: `打开第 ${group.seq} 组第 ${job.attempt} 次的视频`, onClick: () => void openResult(job.result) }));
+          }
+          return buttons.map((button) => button.element);
+        }
+      }
+    ];
+    return aiUi.h(
+      'section',
+      { class: 'wb-queue', attrs: { 'aria-label': '队列与结果' } },
+      header,
+      aiUi.h(
+        'div',
+        { class: 'wb-queue__panel', hidden: !queueOpen, attrs: { id: panelId } },
+        rows.length === 0 ? aiUi.h('p', { class: 'description', text: '还没有提交过生成任务。' }) : aiUi.table({ columns, rows, ariaLabel: '生成任务' }).element
+      )
+    );
+  }
 
   /** 空状态和错误状态。 */
   function renderState(text, button) {
@@ -617,7 +853,9 @@
 
   /** 按当前状态刷新内容区。 */
   function render() {
+    const treeScroll = treeElement && treeElement.querySelector('.wb-tree__list') ? treeElement.querySelector('.wb-tree__list').scrollTop : 0;
     contentElement.textContent = '';
+    treeElement = null;
     if (isLoading) {
       contentElement.append(renderState('加载中…'));
       return;
@@ -632,10 +870,26 @@
     }
     contentElement.append(...renderNotices());
     if (!view) return;
+    contentElement.append(renderBatchBar());
+    if (view.groups.length === 0) {
+      contentElement.append(renderState('这一集没有镜头。'));
+      return;
+    }
+    const index = selectedGroupIndex();
+    const group = view.groups[index];
+    selectedGroupId = group.id;
     contentElement.append(
-      renderBatchBar(),
-      view.groups.length === 0 ? renderState('这一集没有镜头。') : aiUi.table({ columns: GROUP_COLUMNS, rows: view.groups, ariaLabel: '镜头组' }).element
+      aiUi.h(
+        'div',
+        { class: 'wb-layout' },
+        renderTree(group.id),
+        treeCollapsed ? null : renderSplitter(),
+        aiUi.h('div', { class: 'wb-main' }, renderGroupSelect(group.id), renderDetail(group, index))
+      ),
+      renderQueue()
     );
+    const list = treeElement && treeElement.querySelector('.wb-tree__list');
+    if (list) list.scrollTop = treeScroll;
   }
 
   /** 加载当前集的视图。 */
