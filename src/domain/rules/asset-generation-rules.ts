@@ -132,7 +132,7 @@ export function checkGenerationAvailability(
     return { available: false, reason: '请先生成或填写提示词。' };
   }
   if (summary.latest !== null && (summary.latest.status === 'queued' || summary.latest.status === 'running')) {
-    return { available: false, reason: '正在生成，请等待完成或取消。' };
+    return { available: false, reason: '正在生成，请等待完成。' };
   }
   if (!hasUsableModel) {
     return { available: false, reason: `请先在“设置 > 模型”中启用${noun}模型并配置访问密钥。` };

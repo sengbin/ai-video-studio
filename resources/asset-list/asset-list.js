@@ -16,7 +16,6 @@
   const REQUEST_DELETE = 'assets.delete';
   const REQUEST_GENERATE_PROMPT = 'assets.generatePrompt';
   const REQUEST_CANCEL_PROMPT = 'assets.cancelPrompt';
-  const REQUEST_CANCEL_VERSION = 'assets.cancelVersion';
   const EVENT_CHANGED = 'assets.changed';
   const EVENT_ACTION = 'assets.action';
   const ACTION_CREATE = 'create';
@@ -251,7 +250,7 @@
     return aiUi.h('span', { class: 'description', text: asset.fileCount > 0 ? '手动上传' : '无' });
   }
 
-  /** 操作列的按钮：提示词（生成、重试、取消）、生成图片（音频）、取消生成、查看、修改、删除。 */
+  /** 操作列的按钮：提示词（生成、重试、取消）、生成图片（音频）、提示词、版本、修改、删除；图片生成无法取消，提示词或图片生成中“提示词”“生成”按钮不可用。 */
   function renderActions(asset) {
     const buttons = [];
     const hasPrompt = Boolean(asset.promptZh || asset.promptEn);
@@ -265,23 +264,28 @@
     }
     const latest = asset.generation.latest;
     const generating = latest !== null && (latest.status === 'queued' || latest.status === 'running');
-    if (generating) {
-      buttons.push(aiUi.button({ text: '取消生成', compact: true, ariaLabel: `取消生成：${asset.name}`, onClick: () => void cancelVersion(latest.id) }).element);
-    } else {
-      const noun = asset.kind === KIND_AUDIO ? '音频' : '图片';
-      const generate = aiUi.button({
-        text: `生成${noun}`,
-        compact: true,
-        variant: 'primary',
-        disabled: !asset.availability.available,
-        ariaLabel: `生成${noun}：${asset.name}`,
-        onClick: () => void window.aiAssetGenerate.open(asset)
-      });
-      if (!asset.availability.available) generate.element.title = asset.availability.reason || '';
-      buttons.push(generate.element);
-    }
+    const busy = generating || asset.promptStatus === 'running';
+    const noun = asset.kind === KIND_AUDIO ? '音频' : '图片';
+    const generate = aiUi.button({
+      text: `生成${noun}`,
+      compact: true,
+      variant: 'primary',
+      disabled: !asset.availability.available,
+      ariaLabel: `生成${noun}：${asset.name}`,
+      onClick: () => void window.aiAssetGenerate.open(asset)
+    });
+    if (!asset.availability.available) generate.element.title = asset.availability.reason || '';
+    const promptButton = aiUi.button({
+      text: '提示词',
+      compact: true,
+      disabled: busy,
+      ariaLabel: `查看或修改提示词：${asset.name}`,
+      onClick: () => openPromptForm(asset)
+    });
+    if (busy) promptButton.element.title = generating ? '正在生成，请等待完成。' : '提示词生成中，完成后再修改。';
     buttons.push(
-      aiUi.button({ text: '提示词', compact: true, ariaLabel: `查看或修改提示词：${asset.name}`, onClick: () => openPromptForm(asset) }).element,
+      generate.element,
+      promptButton.element,
       aiUi.button({ text: '版本', compact: true, ariaLabel: `查看版本：${asset.name}`, onClick: () => window.aiAssetVersions.open(asset) }).element,
       aiUi.button({ kind: 'edit', compact: true, ariaLabel: `修改：${asset.name}`, onClick: () => openEditForm(asset) }).element,
       aiUi.button({ kind: 'delete', compact: true, ariaLabel: `删除：${asset.name}`, onClick: () => void deleteAsset(asset) }).element
@@ -296,12 +300,6 @@
       if (!confirmed) return;
     }
     await runAction(REQUEST_GENERATE_PROMPT, { id: asset.id });
-  }
-
-  /** 取消进行中的版本；服务商不支持取消时提示平台任务可能仍会计费。 */
-  async function cancelVersion(versionId) {
-    const result = await runAction(REQUEST_CANCEL_VERSION, { versionId });
-    if (result && !result.remoteCanceled) showMessage('该服务商不支持取消，平台上的任务可能仍会继续并计费。', false);
   }
 
   /** 资产表格的列；“图片”列的标题随资产类型变化。 */

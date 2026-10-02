@@ -125,6 +125,8 @@ export interface AssetVersionList {
   /** 资产现在有参考文件但不对应任何版本（手动上传）。 */
   readonly hasManualFiles: boolean;
   readonly isPromptOutdated: boolean;
+  /** 提示词正在后台生成。 */
+  readonly isPromptRunning: boolean;
   readonly hasUngeneratedChanges: boolean;
   readonly availability: GenerationAvailability;
 }
@@ -286,7 +288,7 @@ export class AssetGenerationService {
     }
     const active = versions.listVersions(version.assetId).some((item) => item.status === 'queued' || item.status === 'running');
     if (active) {
-      throw new ValidationError({ [FORM_LEVEL_ERROR_KEY]: '正在生成，请等待完成或取消。' });
+      throw new ValidationError({ [FORM_LEVEL_ERROR_KEY]: '正在生成，请等待完成。' });
     }
     versions.restart(versionId);
     this.dependencies.notify();
@@ -310,6 +312,7 @@ export class AssetGenerationService {
       adoptedVersionId: asset.adoptedVersionId,
       hasManualFiles: asset.adoptedVersionId === null && this.dependencies.assets.countReferenceFiles(assetId) > 0,
       isPromptOutdated: asset.promptContentRevision < asset.contentRevision && (asset.promptZh !== '' || asset.promptEn !== ''),
+      isPromptRunning: asset.promptStatus === 'running',
       hasUngeneratedChanges: hasUngeneratedChanges(asset, summary),
       availability: checkGenerationAvailability(asset, summary, usable.length > 0)
     };

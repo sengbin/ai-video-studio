@@ -16,7 +16,6 @@
   const REQUEST_SAVE_THUMBNAILS = 'assets.saveThumbnails';
   const REQUEST_ADOPT = 'assets.adopt';
   const REQUEST_DELETE_VERSION = 'assets.deleteVersion';
-  const REQUEST_CANCEL_VERSION = 'assets.cancelVersion';
   const REQUEST_RETRY_VERSION = 'assets.retryVersion';
   const FORM_PROMPT = 'asset.prompt';
 
@@ -25,7 +24,6 @@
   const GENERIC_ERROR_TEXT = '操作失败，请重试。';
   const STATUS_LABELS = { queued: '排队中', running: '生成中', succeeded: '已生成', failed: '失败', canceled: '已取消' };
   const LANGUAGE_LABELS = { zh: '中文', en: '英文' };
-  const REMOTE_NOT_CANCELED_NOTICE = '该服务商不支持取消，平台上的任务可能仍会继续并计费。';
 
   /** 当前打开的版本层；没有打开时为 null。 */
   let session = null;
@@ -234,10 +232,12 @@
     const buttons = session.buttons;
     buttons.generate.setDisabled(!list.availability.available);
     buttons.generate.element.title = list.availability.reason || '';
+    // 提示词或图片生成中不能编辑提示词
+    const busy = list.isPromptRunning || list.versions.some((item) => item.status === 'queued' || item.status === 'running');
+    buttons.editPrompt.setDisabled(busy);
     if (!session.detail) {
       buttons.adopt.setDisabled(true);
       buttons.remove.setDisabled(true);
-      buttons.cancel.element.hidden = true;
       buttons.retry.element.hidden = true;
       return;
     }
@@ -246,7 +246,6 @@
     const ready = version.status === 'succeeded' && missingThumbnails.length === 0 && session.selectedFileIds.size > 0;
     buttons.adopt.setDisabled(!ready);
     buttons.remove.setDisabled(active || version.isAdopted);
-    buttons.cancel.element.hidden = !active;
     buttons.retry.element.hidden = version.status !== 'failed' && version.status !== 'canceled';
   }
 
@@ -361,12 +360,6 @@
     if (await request(REQUEST_DELETE_VERSION, { versionId: version.id })) showMessage(`已删除 v${version.version}。`, false);
   }
 
-  /** 取消当前版本；服务商不支持取消时提示平台可能仍计费。 */
-  async function cancelCurrent() {
-    const result = await request(REQUEST_CANCEL_VERSION, { versionId: session.detail.version.id });
-    if (result && !result.remoteCanceled) showMessage(REMOTE_NOT_CANCELED_NOTICE, false);
-  }
-
   /** 重试当前版本（失败或已取消）。 */
   async function retryCurrent() {
     session.thumbnailTried.delete(session.detail.version.id);
@@ -399,12 +392,10 @@
     const buttons = {
       adopt: aiUi.button({ text: '采用此版本', variant: 'primary', compact: true, disabled: true, onClick: () => void adoptSelected() }),
       remove: aiUi.button({ text: '删除此版本', compact: true, disabled: true, onClick: () => void deleteCurrent() }),
-      cancel: aiUi.button({ text: '取消生成', compact: true, onClick: () => void cancelCurrent() }),
       retry: aiUi.button({ text: '重试', compact: true, onClick: () => void retryCurrent() }),
       generate: aiUi.button({ text: '生成', compact: true, onClick: generateNew }),
       editPrompt: aiUi.button({ text: '编辑提示词', compact: true, onClick: editPrompt })
     };
-    buttons.cancel.element.hidden = true;
     buttons.retry.element.hidden = true;
     const bar = aiUi.h(
       'div',
