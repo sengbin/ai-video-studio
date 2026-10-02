@@ -43,6 +43,23 @@ export interface FormFieldSchema {
   readonly preview?: 'image';
   /** 提交前由页面从文件中读取的附加信息：image 为缩略图与宽高，audio 为时长；不填则不读取；仅 file 使用。 */
   readonly derive?: 'image' | 'audio';
+  /** 字段只读：显示当前值但不能修改，提交时仍带着该值。 */
+  readonly disabled?: boolean;
+}
+
+/** 表单里的一个提交按钮：一个表单可以有多个，提交请求带所选按钮的键。 */
+export interface FormSubmitActionSchema {
+  readonly key: string;
+  readonly label: string;
+  /** 主按钮：突出显示，并负责回车提交；没有标记时最后一个是主按钮。 */
+  readonly primary?: boolean;
+  /** 提交前的覆盖确认：指定字段已有内容时询问。 */
+  readonly confirmOverwrite?: {
+    readonly fields: readonly string[];
+    readonly title: string;
+    readonly message: string;
+    readonly confirmText?: string;
+  };
 }
 
 /** 表单里的一个动作按钮：把当前字段值发给宿主执行（可能较慢，可取消），结果回填到指定字段。 */
@@ -69,4 +86,6 @@ export interface FormSchema {
   readonly fields: readonly FormFieldSchema[];
   /** 字段动作按钮，显示在指定字段之前。 */
   readonly actions?: readonly FormActionSchema[];
+  /** 多个提交按钮；不填则只有 submitLabel 一个提交按钮。 */
+  readonly submitActions?: readonly FormSubmitActionSchema[];
 }

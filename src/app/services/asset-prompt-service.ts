@@ -1,123 +1,187 @@
 // ------------------------------------------------------------------------
 // 名称：asset-prompt-service.ts
-// 说明：资产提示词生成服务：把表单草稿（及参考图）交给 Copilot，返回中英文提示词，不写库。
+// 说明：资产提示词的后台生成服务：创建后或手动触发时，在后台调用 Copilot 生成中英文提示词，状态保存在资产上，支持取消与重启恢复。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
-// 备注：草稿来自尚未保存的表单；用户检查、修改并保存即视为确认；不自动重试，输出不合格以文本生成错误告知用户。
+// 备注：不依赖 VS Code；一个资产同时只有一个任务；生成依据开始时已保存的内容，完成后提示词记录的是开始时的表单修订号，期间改了表单会显示“需更新”；不自动重试。
 // ------------------------------------------------------------------------
 
-import { FORM_LEVEL_ERROR_KEY, TextGenerationError, ValidationError } from '../../domain/errors';
-import { ASSET_KIND_LABELS, AssetKind } from '../../domain/models/asset';
+import { NotFoundError, TextGenerationError, ValidationError, FORM_LEVEL_ERROR_KEY } from '../../domain/errors';
+import { AssetRecord } from '../../domain/models/asset';
+import { AssetRepository } from '../../domain/ports/asset-repository';
 import { PromptTemplates } from '../../domain/ports/prompt-templates';
 import { ImageInput, TextGenerationPort } from '../../domain/ports/text-generation-port';
 import {
-  ASSET_PROMPT_FOCUS,
+  ASSET_PROMPT_IMAGE_MAX_BYTES,
   ASSET_PROMPT_MAX_IMAGES,
-  AssetPrompts,
+  assetToDraftValues,
   describeAssetDraft,
-  isPromptAssetKind,
-  parseAssetPrompts
+  parseAssetPrompts,
+  promptFocus,
+  promptKindLabel
 } from '../../domain/rules/asset-prompt-rules';
-import { ASSET_FILE_FIELD_KEY, ASSET_IMAGE_MAX_BYTES } from '../../domain/rules/asset-rules';
-import { FieldErrors } from '../../domain/rules/field-readers';
-import { readUploadedFiles } from '../../domain/rules/upload-readers';
 import { detectImageMime } from '../../domain/rules/work-rules';
 import { askModel } from '../stages/ask-model';
 import { SUBMIT_ASSET_PROMPTS_TOOL } from '../stages/output-tools/asset-prompt-output-tools';
-import { InvalidOutputError } from '../stages/structured-generation';
 import { wrapMaterial } from '../stages/prompt-templates';
+import { InvalidOutputError } from '../stages/structured-generation';
 import { ProjectService } from './project-service';
-
-const NO_DETAIL_MESSAGE = '请先填写名称，并至少填写一项描述或添加一张参考图，再生成提示词。';
-const AUDIO_MESSAGE = '音频资产没有提示词。';
 
 /** 资产提示词模板使用的变量，模板文件必须与之完全一致（测试校验）。 */
 export const ASSET_PROMPT_VARIABLES: Readonly<Record<string, readonly string[]>> = {
-  'asset-prompt': ['kindLabel', 'material', 'imageNote', 'focus']
+  'asset-prompt': ['kindLabel', 'material', 'imageNote', 'focus'],
+  'asset-audio-prompt': ['kindLabel', 'material', 'focus']
 };
 
-/** 一次生成请求。 */
-export interface AssetPromptRequest {
-  readonly kind: AssetKind;
-  /** 表单当前值；参考图字段只带最多几张已缩小的图片。 */
-  readonly values: Readonly<Record<string, unknown>>;
-  /** 资产所属项目；尚未选择项目时为 undefined，此时画面风格只取资产自己的设置。 */
-  readonly projectId?: number;
+/** 信息不足、无法生成提示词时的提示。 */
+export const NO_PROMPT_DETAIL_MESSAGE = '请先填写名称，并至少填写一项描述（图像类也可以添加一张参考图），再生成提示词。';
+
+const INTERRUPTED_MESSAGE = '扩展重启，已中断。';
+const ALREADY_RUNNING_MESSAGE = '提示词正在生成中。';
+
+/** 资产提示词服务的依赖。 */
+export interface AssetPromptServiceDependencies {
+  readonly text: TextGenerationPort;
+  readonly prompts: PromptTemplates;
+  readonly projects: ProjectService;
+  readonly assets: AssetRepository;
+  /** 提示词状态变化后通知界面刷新。 */
+  readonly notify: () => void;
+  readonly now?: () => Date;
 }
 
-/** 资产提示词生成服务。 */
+/** 资产提示词后台生成服务。 */
 export class AssetPromptService {
-  constructor(
-    private readonly dependencies: {
-      readonly text: TextGenerationPort;
-      readonly prompts: PromptTemplates;
-      readonly projects: ProjectService;
-    }
-  ) {}
+  private readonly running = new Map<number, AbortController>();
+  private readonly now: () => Date;
+
+  constructor(private readonly dependencies: AssetPromptServiceDependencies) {
+    this.now = dependencies.now ?? (() => new Date());
+  }
 
   /**
-   * 生成中英文提示词。
-   * @param request 资产类型、表单草稿和所属项目。
-   * @param signal 取消信号。
-   * @throws ValidationError 类型不支持、草稿信息不足或参考图格式不对。
-   * @throws TextGenerationError 模型不可用、调用失败、被拒绝、已取消，或输出不符合要求。
+   * 检查草稿是否有足够的信息生成提示词：有名称，且至少有一项描述或一张参考图。
+   * @param asset 资产或还没有保存的草稿内容。
+   * @throws ValidationError 信息不足。
    */
-  async generate(request: AssetPromptRequest, signal: AbortSignal): Promise<AssetPrompts> {
-    const { kind, values } = request;
-    if (!isPromptAssetKind(kind)) {
-      throw new ValidationError({ [FORM_LEVEL_ERROR_KEY]: AUDIO_MESSAGE });
+  assertCanGenerate(kind: AssetRecord['kind'], values: Readonly<Record<string, unknown>>, hasImages: boolean): void {
+    const draft = describeAssetDraft(kind, values, null);
+    if (draft.name === '' || (draft.detailCount === 0 && !hasImages)) {
+      throw new ValidationError({ [FORM_LEVEL_ERROR_KEY]: NO_PROMPT_DETAIL_MESSAGE });
     }
-    const { text, prompts, projects } = this.dependencies;
-    const projectStyle = request.projectId === undefined ? null : (projects.findProject(request.projectId)?.visualStyle ?? null);
-    const images = readReferenceImages(values[ASSET_FILE_FIELD_KEY]);
-    const draft = describeAssetDraft(kind, values, projectStyle);
-    if (draft.name.length === 0 || (draft.detailCount === 0 && images.length === 0)) {
-      throw new ValidationError({ [FORM_LEVEL_ERROR_KEY]: NO_DETAIL_MESSAGE });
-    }
+  }
 
-    const model = await text.resolveModel();
+  /**
+   * 启动后台生成：立即返回，生成在后台进行，状态与结果保存在资产上。
+   * @returns done 在后台任务结束（成功、失败或取消）后完成，从不拒绝，供测试等待。
+   * @throws NotFoundError 资产不存在。
+   * @throws ValidationError 信息不足，或已在生成中。
+   */
+  start(assetId: number): { readonly done: Promise<void> } {
+    const { assets } = this.dependencies;
+    const asset = assets.findById(assetId);
+    if (asset === undefined) {
+      throw new NotFoundError(`资产 ${assetId} 不存在。`);
+    }
+    const images = this.readImages(asset);
+    this.assertCanGenerate(asset.kind, assetToDraftValues(asset), images.length > 0);
+    if (!assets.beginPrompt(assetId, this.timestamp())) {
+      throw new ValidationError({ [FORM_LEVEL_ERROR_KEY]: ALREADY_RUNNING_MESSAGE });
+    }
+    this.dependencies.notify();
+    const controller = new AbortController();
+    this.running.set(assetId, controller);
+    return { done: this.run(asset, images, controller) };
+  }
+
+  /** 取消正在进行的提示词生成；没有进行中的任务时不做任何事。 */
+  cancel(assetId: number): void {
+    this.running.get(assetId)?.abort();
+  }
+
+  /** 扩展启动时调用：遗留的生成中任务无法继续，置为失败。返回处理的数量。 */
+  recoverInterrupted(): number {
+    const { assets } = this.dependencies;
+    let count = 0;
+    for (const id of assets.listPromptRunning()) {
+      if (!this.running.has(id) && assets.endPrompt(id, 'failed', INTERRUPTED_MESSAGE, this.timestamp())) {
+        count += 1;
+      }
+    }
+    return count;
+  }
+
+  /** 执行一次生成并把结果写回资产。 */
+  private async run(asset: AssetRecord, images: readonly ImageInput[], controller: AbortController): Promise<void> {
+    const { text, prompts, projects, assets } = this.dependencies;
     try {
-      return await askModel(
-        { model, text, signal },
+      const model = await text.resolveModel();
+      const projectStyle = asset.kind === 'audio' ? null : (projects.findProject(asset.projectId)?.visualStyle ?? null);
+      const draft = describeAssetDraft(asset.kind, assetToDraftValues(asset), projectStyle);
+      const common = { kindLabel: promptKindLabel(asset), material: wrapMaterial(draft.lines.join('\n')), focus: promptFocus(asset) };
+      const isAudio = asset.kind === 'audio';
+      const result = await askModel(
+        { model, text, signal: controller.signal },
         prompts,
-        'asset-prompt',
-        {
-          kindLabel: ASSET_KIND_LABELS[kind],
-          material: wrapMaterial(draft.lines.join('\n')),
-          imageNote:
-            images.length === 0
-              ? ''
-              : `## 参考图\n\n已附 ${images.length} 张参考图：提取其中的外观、材质和风格作为依据；与上面的文字设定冲突时，以文字设定为准。`,
-          focus: ASSET_PROMPT_FOCUS[kind]
-        },
+        isAudio ? 'asset-audio-prompt' : 'asset-prompt',
+        isAudio
+          ? common
+          : {
+              ...common,
+              imageNote:
+                images.length === 0
+                  ? ''
+                  : `## 参考图\n\n已附 ${images.length} 张参考图：提取其中的外观、材质和风格作为依据；与上面的文字设定冲突时，以文字设定为准。`
+            },
         parseAssetPrompts,
         { images, overflowHint: '请精简描述字段后重试。', tool: SUBMIT_ASSET_PROMPTS_TOOL }
       );
+      assets.finishPrompt(asset.id, result, asset.contentRevision, this.timestamp());
     } catch (error) {
-      if (error instanceof InvalidOutputError) {
-        throw new TextGenerationError('failed', `${error.message} 请重试。`, { cause: error });
-      }
-      throw error;
+      const canceled = error instanceof TextGenerationError && error.category === 'canceled';
+      assets.endPrompt(asset.id, canceled ? 'canceled' : 'failed', canceled ? null : describeFailure(error), this.timestamp());
+    } finally {
+      this.running.delete(asset.id);
+      this.dependencies.notify();
     }
+  }
+
+  /** 取资产的参考图作为模型输入：最多取前几张；原文件太大时改发缩略图。 */
+  private readImages(asset: AssetRecord): ImageInput[] {
+    if (asset.kind === 'audio') {
+      return [];
+    }
+    const { assets } = this.dependencies;
+    const references = assets.listReferenceFiles(asset.id).slice(0, ASSET_PROMPT_MAX_IMAGES);
+    if (references.length === 0) {
+      return [];
+    }
+    const thumbnails = assets.listThumbnailFiles(asset.id);
+    const images: ImageInput[] = [];
+    for (const file of references) {
+      const source = file.content.length > ASSET_PROMPT_IMAGE_MAX_BYTES ? (thumbnails.find((item) => item.sortOrder === file.sortOrder) ?? file) : file;
+      const mimeType = detectImageMime(source.content);
+      if (mimeType !== null) {
+        images.push({ mimeType, data: source.content });
+      }
+    }
+    return images;
+  }
+
+  private timestamp(): string {
+    return this.now().toISOString();
   }
 }
 
-/** 读取表单带来的参考图：最多取前几张，按文件头识别格式；格式不对时报参考图字段错误。 */
-function readReferenceImages(value: unknown): ImageInput[] {
-  const errors: FieldErrors = {};
-  const files = readUploadedFiles(value, ASSET_FILE_FIELD_KEY, '参考图', ASSET_IMAGE_MAX_BYTES, errors) ?? [];
-  const images: ImageInput[] = [];
-  for (const file of files.slice(0, ASSET_PROMPT_MAX_IMAGES)) {
-    const mimeType = detectImageMime(file.content);
-    if (mimeType === null) {
-      errors[ASSET_FILE_FIELD_KEY] = `“${file.name}”不是有效的 PNG、JPEG 或 WebP 图片。`;
-      break;
-    }
-    images.push({ mimeType, data: file.content });
+/** 把失败转换为给用户看的原因。 */
+function describeFailure(error: unknown): string {
+  if (error instanceof InvalidOutputError) {
+    return `${error.message} 请重试。`;
   }
-  if (Object.keys(errors).length > 0) {
-    throw new ValidationError(errors);
+  if (error instanceof TextGenerationError) {
+    return error.message;
   }
-  return images;
+  const detail = error instanceof Error ? error.message : String(error);
+  return `内部错误：${detail}`;
 }

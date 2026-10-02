@@ -196,7 +196,7 @@ test('修改：更新内容并整体替换文件，所属项目与类型不变�
   }
 });
 
-test('音频资产：保存类型、描述、语言与时长；语言只对音色参考保留；文件必填且按内容校验', () => {
+test('音频资产：保存类型、描述、语言与时长；语言只对音色参考保留；文件可以暂时为空，有文件时按内容校验', () => {
   const { database, service } = createFixture();
   try {
     const voice = service.createAsset('audio', {
@@ -234,13 +234,13 @@ test('音频资产：保存类型、描述、语言与时长；语言只对音�
       }
       return undefined;
     };
-    assert.ok(errorOf({})?.files, '音频文件必填');
+    assert.deepEqual(errorOf({}), undefined, '音频文件可以暂时没有，之后上传或由模型生成');
     assert.ok(errorOf({ audioKind: '', files: files(audioItem('a.wav')) })?.audioKind);
     assert.match(errorOf({ files: files(audioItem('a.wav', WAV, 61)) })?.files ?? '', /超过 60 秒/);
     assert.match(errorOf({ files: files(audioItem('a.wav', WAV, null)) })?.files ?? '', /无法读取/);
     assert.match(errorOf({ files: files(audioItem('a.wav', Buffer.from('plain text'))) })?.files ?? '', /不是有效的/);
     assert.match(errorOf({ files: files(audioItem('a.ogg', WAV)) })?.files ?? '', /只支持/);
-    assert.match(errorOf({ files: files(audioItem('a.wav'), audioItem('b.wav')) })?.files ?? '', /1 个音频文件/);
+    assert.match(errorOf({ name: '另一个', files: files(audioItem('a.wav'), audioItem('b.wav')) })?.files ?? '', /1 个音频文件/);
   } finally {
     database.close();
   }

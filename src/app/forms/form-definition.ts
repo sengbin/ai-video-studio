@@ -35,9 +35,10 @@ export interface FormDefinition {
   readonly actions?: Readonly<Record<string, FormAction>>;
   /**
    * 提交表单，可以是异步的（例如需要先确认 Copilot 可用）；完成前表单会话保持有效。
+   * @param submitKey 所点提交按钮的键（schema.submitActions）；只有一个提交按钮时为空串。
    * @throws ValidationError、ConflictError 等领域错误。
    */
-  submit(values: FormValues): void | Promise<void>;
+  submit(values: FormValues, submitKey?: string): void | Promise<void>;
 }
 
 /**

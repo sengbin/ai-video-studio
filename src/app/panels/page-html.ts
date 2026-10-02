@@ -38,7 +38,7 @@ export function createPageHtml(options: PageHtmlOptions): string {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${options.cspSource}; img-src data:; script-src 'nonce-${nonce}';">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${options.cspSource}; img-src data:; media-src data:; script-src 'nonce-${nonce}';">
   <title>${escapeHtml(options.title)}</title>
 ${styleTags}
 </head>

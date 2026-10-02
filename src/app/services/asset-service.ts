@@ -12,6 +12,7 @@ import { AssetFileRecord, AssetKind, AssetListItem, AssetRecord, AssetUsageSumma
 import { ProjectSummary } from '../../domain/models/project';
 import { AssetRepository } from '../../domain/ports/asset-repository';
 import { normalizeAssetContent } from '../../domain/rules/asset-rules';
+import { computeRevisionUpdate, sameReferenceFiles } from '../../domain/rules/asset-generation-rules';
 import { FieldErrors, readRecord } from '../../domain/rules/field-readers';
 import { ChangeNotifier } from './change-notifier';
 import { ProjectService } from './project-service';
@@ -24,6 +25,7 @@ export const ASSET_PROJECT_FIELD_KEY = 'projectName';
 
 const PROJECT_REQUIRED_MESSAGE = '请选择所属项目。';
 const AUDIO_KIND_LOCKED_MESSAGE = '该音频已被绑定或引用，不能修改音频类型。';
+const PROMPT_RUNNING_MESSAGE = '提示词生成中，完成后再修改提示词。';
 
 /** 创建资产时的可选来源：由哪个脚本实体创建。 */
 export interface CreateAssetOptions {
@@ -54,6 +56,11 @@ export class AssetService {
   /** 订阅资产数据变化；返回取消订阅的函数。 */
   onDidChangeAssets(listener: () => void): () => void {
     return this.changeNotifier.subscribe(listener);
+  }
+
+  /** 通知订阅者资产数据已变化；提示词、生成版本的后台任务在状态变化后调用。 */
+  notifyChanged(): void {
+    this.changeNotifier.notify();
   }
 
   /** 列出某类型全部项目的资产，按更新时间倒序。 */
@@ -129,7 +136,15 @@ export class AssetService {
     if (asset.kind === 'audio' && normalized.content.attributes.audio_kind !== asset.attributes.audio_kind && this.isInUse(id)) {
       throw new ValidationError({ audioKind: AUDIO_KIND_LOCKED_MESSAGE });
     }
-    if (!this.repository.update(id, normalized.content, normalized.files, this.timestamp())) {
+    if (
+      asset.promptStatus === 'running' &&
+      (normalized.content.promptZh !== asset.promptZh || normalized.content.promptEn !== asset.promptEn)
+    ) {
+      throw new ValidationError({ promptZh: PROMPT_RUNNING_MESSAGE });
+    }
+    const filesChanged = !sameReferenceFiles(this.repository.listReferenceFiles(id), normalized.files);
+    const revision = computeRevisionUpdate(asset, normalized.content, filesChanged);
+    if (!this.repository.update(id, normalized.content, normalized.files, this.timestamp(), revision)) {
       throw new NotFoundError(`资产 ${id} 不存在。`);
     }
     this.changeNotifier.notify();

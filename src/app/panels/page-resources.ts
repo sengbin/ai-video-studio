@@ -80,10 +80,10 @@ export const WORK_LIST_PAGE_RESOURCES: PageResources = createEditorPageResources
   ]
 );
 
-/** 资产列表页：新建与编辑表单在页内弹出，因此一并加载表单引擎。 */
+/** 资产列表页：新建与编辑表单在页内弹出，因此一并加载表单引擎；生成图片（音频）与版本层在列表脚本之前加载。 */
 export const ASSET_LIST_PAGE_RESOURCES: PageResources = createEditorPageResources(
   ['form/form.css', 'asset-list/asset-list.css'],
-  ['form/form-runtime.js', 'shared/page-format.js', 'asset-list/asset-list.js']
+  ['form/form-runtime.js', 'shared/page-format.js', 'asset-list/asset-generate.js', 'asset-list/asset-versions.js', 'asset-list/asset-list.js']
 );
 
 /** 生成工作台页：镜头的编辑与分镜脚本确认复用阶段产出层，因此一并加载表单引擎与分镜脚本产出层；实体绑定页由 bindings.js 提供，生成参数页由 profile.js 提供。 */

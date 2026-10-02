@@ -1,24 +1,39 @@
 // ------------------------------------------------------------------------
 // 名称：asset-list-handlers.ts
-// 说明：资产列表页的请求处理：读取某类型全部项目的资产、取走待执行动作、删除（先取使用情况，再删除）。
+// 说明：资产列表页的请求处理：读取某类型全部项目的资产（带提示词与图片的状态）、取走待执行动作、删除（先取使用情况，再删除）、提示词后台生成的启动与取消、图片（音频）生成的提交与版本管理。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
-// 备注：不依赖 VS Code；一个页面绑定一种资产类型，请求不需要再带类型；新建、编辑表单由页面用表单请求在弹出页面中完成，删除确认在页面内对话框完成。
+// 备注：不依赖 VS Code；一个页面绑定一种资产类型，请求不需要再带类型；新建、编辑表单由页面用表单请求在弹出页面中完成，删除确认在页面内对话框完成；版本列表、采用等请求直接交给资产生成服务。
 // ------------------------------------------------------------------------
 
 import { AssetKind, AssetListItem } from '../../domain/models/asset';
-import { readEntityId } from '../../domain/rules/field-readers';
+import { checkGenerationAvailability, GenerationAvailability, hasUngeneratedChanges, isPromptOutdated } from '../../domain/rules/asset-generation-rules';
+import { readEntityId, readRecord } from '../../domain/rules/field-readers';
 import { MessageRouter } from '../messaging/message-router';
+import { AssetGenerationService } from '../services/asset-generation-service';
+import { AssetPromptService } from '../services/asset-prompt-service';
 import { AssetService } from '../services/asset-service';
 import { ProjectService } from '../services/project-service';
 
-/** 资产列表页使用的请求名称，需与 resources/asset-list/asset-list.js 一致。 */
+/** 资产列表页使用的请求名称，需与 resources/asset-list/ 下的脚本一致。 */
 export const ASSET_LIST_REQUESTS = {
   load: 'assets.load',
   takePending: 'assets.takePending',
   prepareDelete: 'assets.prepareDelete',
-  delete: 'assets.delete'
+  delete: 'assets.delete',
+  generatePrompt: 'assets.generatePrompt',
+  cancelPrompt: 'assets.cancelPrompt',
+  generateCatalog: 'assets.generateCatalog',
+  generate: 'assets.generate',
+  versions: 'assets.versions',
+  version: 'assets.version',
+  fileData: 'assets.fileData',
+  saveThumbnails: 'assets.saveThumbnails',
+  adopt: 'assets.adopt',
+  deleteVersion: 'assets.deleteVersion',
+  cancelVersion: 'assets.cancelVersion',
+  retryVersion: 'assets.retryVersion'
 } as const;
 
 /** 宿主推送给资产列表页的事件名称：changed 要求刷新数据，action 要求执行动作。 */
@@ -35,9 +50,15 @@ export interface AssetListRequest {
   readonly action?: AssetListAction;
 }
 
-/** 列表中的一行：资产加所属项目的名称。 */
+/** 列表中的一行：资产加所属项目的名称与生成状态标记。 */
 export interface AssetListRow extends AssetListItem {
   readonly projectName: string;
+  /** 提示词需更新：表单字段在提示词之后改过。 */
+  readonly isPromptOutdated: boolean;
+  /** 图片（音频）有改动未生成。 */
+  readonly hasUngeneratedChanges: boolean;
+  /** 能否提交图片（音频）生成及不能时的原因。 */
+  readonly availability: GenerationAvailability;
 }
 
 /** 资产列表页需要外部提供的能力。 */
@@ -50,21 +71,33 @@ export interface AssetListActions {
  * 在路由器上注册资产列表页的请求处理函数。
  * @param router 面板的请求路由器。
  * @param kind 页面绑定的资产类型。
- * @param services 项目与资产服务。
+ * @param services 项目、资产、提示词生成和资产生成服务。
  * @param actions 外部提供的能力。
  */
 export function registerAssetListHandlers(
   router: MessageRouter,
   kind: AssetKind,
-  services: { readonly projects: ProjectService; readonly assets: AssetService },
+  services: {
+    readonly projects: ProjectService;
+    readonly assets: AssetService;
+    readonly prompts: AssetPromptService;
+    readonly generation: AssetGenerationService;
+  },
   actions: AssetListActions
 ): void {
-  const { projects, assets } = services;
+  const { projects, assets, prompts, generation } = services;
 
-  router.register(ASSET_LIST_REQUESTS.load, () => {
+  router.register(ASSET_LIST_REQUESTS.load, async () => {
     const summaries = projects.listProjects();
     const names = new Map(summaries.map((project) => [project.id, project.name]));
-    const rows: AssetListRow[] = assets.listAssets(kind).map((asset) => ({ ...asset, projectName: names.get(asset.projectId) ?? '' }));
+    const hasUsableModel = await generation.hasUsableModel(kind);
+    const rows: AssetListRow[] = assets.listAssets(kind).map((asset) => ({
+      ...asset,
+      projectName: names.get(asset.projectId) ?? '',
+      isPromptOutdated: isPromptOutdated(asset),
+      hasUngeneratedChanges: hasUngeneratedChanges(asset, asset.generation),
+      availability: checkGenerationAvailability(asset, asset.generation, hasUsableModel)
+    }));
     return { kind, projects: summaries.map(({ id, name }) => ({ id, name })), assets: rows };
   });
 
@@ -76,5 +109,41 @@ export function registerAssetListHandlers(
     const asset = assets.getAsset(readEntityId(payload, '资产'));
     assets.deleteAsset(asset.id);
     return { deleted: true, name: asset.name };
+  });
+
+  router.register(ASSET_LIST_REQUESTS.generatePrompt, (payload) => {
+    prompts.start(readEntityId(payload, '资产'));
+    return { started: true };
+  });
+
+  router.register(ASSET_LIST_REQUESTS.cancelPrompt, (payload) => {
+    prompts.cancel(readEntityId(payload, '资产'));
+    return { canceled: true };
+  });
+
+  const readAssetId = (payload: unknown): number => readEntityId({ id: readRecord(payload).assetId }, '资产');
+  const readVersionId = (payload: unknown): number => readEntityId({ id: readRecord(payload).versionId }, '版本');
+
+  router.register(ASSET_LIST_REQUESTS.generateCatalog, (payload) => generation.getCatalog(readAssetId(payload)));
+  router.register(ASSET_LIST_REQUESTS.generate, (payload) => generation.submit(payload));
+  router.register(ASSET_LIST_REQUESTS.versions, (payload) => generation.listVersions(readAssetId(payload)));
+  router.register(ASSET_LIST_REQUESTS.version, (payload) => generation.getVersion(readVersionId(payload)));
+  router.register(ASSET_LIST_REQUESTS.fileData, (payload) => generation.getFileData(readEntityId({ id: readRecord(payload).fileId }, '文件')));
+  router.register(ASSET_LIST_REQUESTS.saveThumbnails, (payload) => {
+    generation.saveThumbnails(payload);
+    return { saved: true };
+  });
+  router.register(ASSET_LIST_REQUESTS.adopt, (payload) => {
+    generation.adopt(payload);
+    return { adopted: true };
+  });
+  router.register(ASSET_LIST_REQUESTS.deleteVersion, (payload) => {
+    generation.deleteVersion(readVersionId(payload));
+    return { deleted: true };
+  });
+  router.register(ASSET_LIST_REQUESTS.cancelVersion, (payload) => generation.cancel(readVersionId(payload)));
+  router.register(ASSET_LIST_REQUESTS.retryVersion, async (payload) => {
+    await generation.retry(readVersionId(payload));
+    return { retried: true };
   });
 }

@@ -12,15 +12,18 @@ import {
   AssetContent,
   AssetFileRecord,
   AssetFileRole,
+  AssetGenerationSummary,
   AssetInput,
   AssetKind,
   AssetListItem,
   AssetRecord,
   AssetUsage,
   AssetUsageSummary,
-  NewAssetFile
+  NewAssetFile,
+  PromptStatus
 } from '../../domain/models/asset';
-import { AssetRepository } from '../../domain/ports/asset-repository';
+import { AssetRepository, GeneratedPrompts } from '../../domain/ports/asset-repository';
+import { AssetRevisionUpdate } from '../../domain/rules/asset-generation-rules';
 import { runInTransaction } from './transaction';
 
 /** assets 表的一行。 */
@@ -38,6 +41,12 @@ interface AssetRow {
   readonly extra_requirements: string;
   readonly prompt_zh: string;
   readonly prompt_en: string;
+  readonly content_revision: number;
+  readonly prompt_revision: number;
+  readonly prompt_content_revision: number;
+  readonly prompt_status: PromptStatus;
+  readonly prompt_error: string | null;
+  readonly adopted_version_id: number | null;
   readonly created_at: string;
   readonly updated_at: string;
 }
@@ -49,6 +58,10 @@ interface AssetListRow extends AssetRow {
   readonly episode_count: number;
   readonly thumb_mime: string | null;
   readonly thumb_content: Uint8Array | null;
+  readonly version_count: number;
+  readonly latest_json: string | null;
+  readonly latest_succeeded: number | null;
+  readonly adopted_version: number | null;
 }
 
 /** asset_files 表的一行（含内容）。 */
@@ -80,8 +93,24 @@ function toRecord(row: AssetRow): AssetRecord {
     extraRequirements: row.extra_requirements,
     promptZh: row.prompt_zh,
     promptEn: row.prompt_en,
+    contentRevision: row.content_revision,
+    promptRevision: row.prompt_revision,
+    promptContentRevision: row.prompt_content_revision,
+    promptStatus: row.prompt_status,
+    promptError: row.prompt_error,
+    adoptedVersionId: row.adopted_version_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at
+  };
+}
+
+/** 把列表查询的版本统计列转换为生成摘要。 */
+function toGenerationSummary(row: AssetListRow): AssetGenerationSummary {
+  return {
+    versionCount: row.version_count,
+    latest: row.latest_json === null ? null : (JSON.parse(row.latest_json) as AssetGenerationSummary['latest']),
+    latestSucceeded: row.latest_succeeded,
+    adoptedVersion: row.adopted_version
   };
 }
 
@@ -100,7 +129,14 @@ export class SqliteAssetRepository implements AssetRepository {
            (SELECT t.mime FROM asset_files t WHERE t.asset_id = a.id AND t.role = 'thumbnail'
              ORDER BY t.sort_order, t.id LIMIT 1) AS thumb_mime,
            (SELECT t.content FROM asset_files t WHERE t.asset_id = a.id AND t.role = 'thumbnail'
-             ORDER BY t.sort_order, t.id LIMIT 1) AS thumb_content
+             ORDER BY t.sort_order, t.id LIMIT 1) AS thumb_content,
+           (SELECT COUNT(*) FROM asset_versions v WHERE v.asset_id = a.id) AS version_count,
+           (SELECT json_object('id', v.id, 'version', v.version, 'status', v.status, 'contentRevision', v.content_revision,
+                               'promptRevision', v.prompt_revision, 'errorMessage', v.error_message)
+              FROM asset_versions v WHERE v.asset_id = a.id AND v.status <> 'canceled'
+             ORDER BY v.version DESC LIMIT 1) AS latest_json,
+           (SELECT MAX(v.version) FROM asset_versions v WHERE v.asset_id = a.id AND v.status = 'succeeded') AS latest_succeeded,
+           (SELECT v.version FROM asset_versions v WHERE v.id = a.adopted_version_id) AS adopted_version
          FROM assets a WHERE a.kind = ? ORDER BY a.updated_at DESC, a.id DESC`
       )
       .all(kind) as unknown as AssetListRow[];
@@ -112,7 +148,8 @@ export class SqliteAssetRepository implements AssetRepository {
           : { mime: row.thumb_mime, data: Buffer.from(row.thumb_content).toString('base64') },
       fileCount: row.file_count,
       durationSeconds: row.duration_seconds,
-      episodeCount: row.episode_count
+      episodeCount: row.episode_count,
+      generation: toGenerationSummary(row)
     }));
   }
 
@@ -135,12 +172,27 @@ export class SqliteAssetRepository implements AssetRepository {
   }
 
   listReferenceFiles(assetId: number): AssetFileRecord[] {
+    return this.listFiles(assetId, 'reference');
+  }
+
+  listThumbnailFiles(assetId: number): AssetFileRecord[] {
+    return this.listFiles(assetId, 'thumbnail');
+  }
+
+  countReferenceFiles(assetId: number): number {
+    const row = this.database
+      .prepare("SELECT COUNT(*) AS total FROM asset_files WHERE asset_id = ? AND role = 'reference'")
+      .get(assetId) as unknown as { total: number };
+    return row.total;
+  }
+
+  private listFiles(assetId: number, role: AssetFileRole): AssetFileRecord[] {
     const rows = this.database
       .prepare(
         `SELECT id, asset_id, role, file_name, mime, width, height, duration_seconds, content, sort_order
-           FROM asset_files WHERE asset_id = ? AND role = 'reference' ORDER BY sort_order, id`
+           FROM asset_files WHERE asset_id = ? AND role = ? ORDER BY sort_order, id`
       )
-      .all(assetId) as unknown as AssetFileRow[];
+      .all(assetId, role) as unknown as AssetFileRow[];
     return rows.map((row) => ({
       id: row.id,
       assetId: row.asset_id,
@@ -160,8 +212,9 @@ export class SqliteAssetRepository implements AssetRepository {
       const result = this.database
         .prepare(
           `INSERT INTO assets (project_id, kind, name, source_entity_id, attributes_json, composition, style, background,
-             reference_aspect_ratio, extra_requirements, prompt_zh, prompt_en, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+             reference_aspect_ratio, extra_requirements, prompt_zh, prompt_en, prompt_revision, prompt_content_revision,
+             created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
         .run(
           input.projectId,
@@ -176,6 +229,8 @@ export class SqliteAssetRepository implements AssetRepository {
           input.extraRequirements,
           input.promptZh,
           input.promptEn,
+          input.promptZh !== '' || input.promptEn !== '' ? 1 : 0,
+          input.promptZh !== '' || input.promptEn !== '' ? 1 : 0,
           timestamp,
           timestamp
         );
@@ -185,12 +240,14 @@ export class SqliteAssetRepository implements AssetRepository {
     });
   }
 
-  update(id: number, content: AssetContent, files: readonly NewAssetFile[], timestamp: string): boolean {
+  update(id: number, content: AssetContent, files: readonly NewAssetFile[], timestamp: string, revision: AssetRevisionUpdate): boolean {
     return runInTransaction(this.database, () => {
       const result = this.database
         .prepare(
           `UPDATE assets SET name = ?, attributes_json = ?, composition = ?, style = ?, background = ?,
-             reference_aspect_ratio = ?, extra_requirements = ?, prompt_zh = ?, prompt_en = ?, updated_at = ?
+             reference_aspect_ratio = ?, extra_requirements = ?, prompt_zh = ?, prompt_en = ?,
+             content_revision = ?, prompt_revision = ?, prompt_content_revision = ?,
+             adopted_version_id = CASE WHEN ? = 1 THEN NULL ELSE adopted_version_id END, updated_at = ?
            WHERE id = ?`
         )
         .run(
@@ -203,6 +260,10 @@ export class SqliteAssetRepository implements AssetRepository {
           content.extraRequirements,
           content.promptZh,
           content.promptEn,
+          revision.contentRevision,
+          revision.promptRevision,
+          revision.promptContentRevision,
+          revision.clearAdopted ? 1 : 0,
           timestamp,
           id
         );
@@ -213,6 +274,36 @@ export class SqliteAssetRepository implements AssetRepository {
       this.insertFiles(id, files, timestamp);
       return true;
     });
+  }
+
+  beginPrompt(id: number, timestamp: string): boolean {
+    const result = this.database
+      .prepare("UPDATE assets SET prompt_status = 'running', prompt_error = NULL, updated_at = ? WHERE id = ? AND prompt_status <> 'running'")
+      .run(timestamp, id);
+    return Number(result.changes) > 0;
+  }
+
+  finishPrompt(id: number, prompts: GeneratedPrompts, basedOnContentRevision: number, timestamp: string): boolean {
+    const result = this.database
+      .prepare(
+        `UPDATE assets SET prompt_zh = ?, prompt_en = ?, prompt_revision = prompt_revision + 1, prompt_content_revision = ?,
+           prompt_status = 'succeeded', prompt_error = NULL, updated_at = ?
+         WHERE id = ? AND prompt_status = 'running'`
+      )
+      .run(prompts.promptZh, prompts.promptEn, basedOnContentRevision, timestamp, id);
+    return Number(result.changes) > 0;
+  }
+
+  endPrompt(id: number, status: 'failed' | 'canceled', error: string | null, timestamp: string): boolean {
+    const result = this.database
+      .prepare("UPDATE assets SET prompt_status = ?, prompt_error = ?, updated_at = ? WHERE id = ? AND prompt_status = 'running'")
+      .run(status, error, timestamp, id);
+    return Number(result.changes) > 0;
+  }
+
+  listPromptRunning(): number[] {
+    const rows = this.database.prepare("SELECT id FROM assets WHERE prompt_status = 'running' ORDER BY id").all() as unknown as Array<{ id: number }>;
+    return rows.map((row) => row.id);
   }
 
   remove(id: number): boolean {

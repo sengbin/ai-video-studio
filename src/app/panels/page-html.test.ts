@@ -33,6 +33,7 @@ test('不允许内联脚本和外部来源，样式只允许 Webview 来源', ()
   assert.match(html, /default-src 'none'/);
   assert.match(html, /style-src https:\/\/webview\.test;/);
   assert.match(html, /img-src data:;/);
+  assert.match(html, /media-src data:;/);
   assert.doesNotMatch(html, /unsafe-inline/);
 });
 

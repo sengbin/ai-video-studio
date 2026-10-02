@@ -29,6 +29,7 @@ export const BINDING_NOTE_MAX_LENGTH = 200;
 const NOT_FOUND_MESSAGE = '集或实体不存在，或实体不属于这一集所在的作品。';
 const OTHER_PROJECT_MESSAGE = '资产不属于这个作品所在的项目。';
 const DUPLICATE_MESSAGE = '这个实体在本集已经绑定过该资产。';
+const NO_AUDIO_FILE_MESSAGE = '这个音频资产还没有音频文件，请先上传，或生成并采用。';
 
 /** 绑定界面里的一个可选资产。 */
 export interface BindingAssetOption {
@@ -167,7 +168,7 @@ export class BindingService {
         prop: optionsOf((asset) => asset.kind === 'prop'),
         effect: optionsOf((asset) => asset.kind === 'effect')
       },
-      voiceAssets: optionsOf((asset) => asset.kind === 'audio' && asset.attributes.audio_kind === 'voice')
+      voiceAssets: optionsOf((asset) => asset.kind === 'audio' && asset.attributes.audio_kind === 'voice' && asset.fileCount > 0)
     };
   }
 
@@ -197,6 +198,9 @@ export class BindingService {
       throw new NotFoundError(`资产 ${assetId} 不存在。`);
     }
     assertCompatible(context, asset, purpose);
+    if (purpose === 'voice' && this.assets.countReferenceFiles(assetId) === 0) {
+      throw new ValidationError({ assetId: NO_AUDIO_FILE_MESSAGE });
+    }
     if (this.bindings.findExisting(episodeId, entityId, assetId) !== undefined) {
       throw new ConflictError('assetId', DUPLICATE_MESSAGE);
     }

@@ -11,20 +11,34 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { IN_MEMORY_DATABASE_PATH, openDatabase } from '../../infra/database/database-connection';
 import { SqliteAssetRepository } from '../../infra/database/sqlite-asset-repository';
+import { SqliteAssetVersionRepository } from '../../infra/database/sqlite-asset-version-repository';
 import { SqliteProjectRepository } from '../../infra/database/sqlite-project-repository';
 import { MessageRouter } from '../messaging/message-router';
+import { AssetGenerationService } from '../services/asset-generation-service';
+import { AssetPromptService } from '../services/asset-prompt-service';
 import { AssetService } from '../services/asset-service';
 import { ProjectService } from '../services/project-service';
+import { FILE_PROMPTS, ScriptedText } from '../stages/testing/scripted-text';
 import { ASSET_LIST_REQUESTS, AssetListRequest, AssetListRow, registerAssetListHandlers } from './asset-list-handlers';
 
 function createFixture() {
   const database = openDatabase(IN_MEMORY_DATABASE_PATH);
   const projects = new ProjectService(new SqliteProjectRepository(database));
-  const assets = new AssetService(new SqliteAssetRepository(database), projects);
+  const assetRepository = new SqliteAssetRepository(database);
+  const assets = new AssetService(assetRepository, projects);
   projects.createProject({ name: '项目甲' });
+  const text = new ScriptedText(() => ({ promptZh: '中文', promptEn: 'english' }));
+  const prompts = new AssetPromptService({ text, prompts: FILE_PROMPTS, projects, assets: assetRepository, notify: () => undefined });
+  const generation = new AssetGenerationService({
+    assets: assetRepository,
+    versions: new SqliteAssetVersionRepository(database),
+    providers: { listUsableModels: async () => [] },
+    scheduler: { pump: async () => undefined, cancel: async () => ({ remoteCanceled: false }) },
+    notify: () => undefined
+  });
   const state: { pending: AssetListRequest | undefined } = { pending: undefined };
   const router = new MessageRouter();
-  registerAssetListHandlers(router, 'scene', { projects, assets }, {
+  registerAssetListHandlers(router, 'scene', { projects, assets, prompts, generation }, {
     takePending: () => {
       const taken = state.pending;
       state.pending = undefined;
@@ -32,7 +46,7 @@ function createFixture() {
     }
   });
   const send = (name: string, payload?: unknown) => router.handle({ type: 'request', requestId: 1, name, payload });
-  return { database, assets, state, send };
+  return { database, assets, prompts, state, send };
 }
 
 test('读取列表只返回页面绑定类型的资产，并带所属项目名称与项目清单', async () => {

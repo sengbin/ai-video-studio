@@ -13,6 +13,7 @@ import { registerFormHandlers } from '../forms/form-handlers';
 import { MessageRouter } from '../messaging/message-router';
 import { ASSET_LIST_PAGE_RESOURCES } from '../panels/page-resources';
 import { OpenedPanel, PanelManager } from '../panels/panel-manager';
+import { AssetGenerationService } from '../services/asset-generation-service';
 import { AssetPromptService } from '../services/asset-prompt-service';
 import { AssetService } from '../services/asset-service';
 import { ProjectService } from '../services/project-service';
@@ -50,6 +51,7 @@ export class AssetListPages {
       readonly projects: ProjectService;
       readonly assets: AssetService;
       readonly prompts: AssetPromptService;
+      readonly generation: AssetGenerationService;
     },
     private readonly panels: PanelManager
   ) {}

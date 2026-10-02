@@ -194,6 +194,23 @@ test('绑定界面视图：只含启用的实体与同项目资产，主资产�
   }
 });
 
+test('音色绑定要求音频已有文件：还没有文件的音频不在可选列表里，也不能绑定', () => {
+  const { database, assets, service, episode1, guard } = createFixture();
+  try {
+    const empty = assets.createAsset('audio', { projectName: '项目甲', name: '还没有文件', audioKind: '音色参考' });
+    assert.deepEqual(service.getEpisodeView(episode1).voiceAssets, []);
+    assert.throws(
+      () => service.bind({ episodeId: episode1, entityId: guard, assetId: empty.id, purpose: 'voice' }),
+      (error) => error instanceof ValidationError && /还没有音频文件/.test(error.fieldErrors.assetId)
+    );
+    const ready = assets.createAsset('audio', { projectName: '项目甲', name: '有文件', audioKind: '音色参考', files: AUDIO_FILES });
+    assert.deepEqual(service.getEpisodeView(episode1).voiceAssets.map((asset) => asset.name), ['有文件']);
+    assert.equal(service.bind({ episodeId: episode1, entityId: guard, assetId: ready.id, purpose: 'voice' }).isPrimary, true);
+  } finally {
+    database.close();
+  }
+});
+
 test('数据变化通知，以及删除资产、集时绑定随之清除', () => {
   const { database, assets, service, episode1, guard } = createFixture();
   try {

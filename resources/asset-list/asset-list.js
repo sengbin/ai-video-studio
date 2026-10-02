@@ -1,10 +1,10 @@
 // ------------------------------------------------------------------------
 // 名称：asset-list.js
-// 说明：资产列表页脚本：列出某种资产类型下所有项目的资产，按项目与名称关键字筛选，在页内弹出页面中新建、编辑资产，带使用情况提示地删除资产。
+// 说明：资产列表页脚本：列出某种资产类型下所有项目的资产，按项目与名称关键字筛选，在页内弹出页面中新建、编辑资产，显示提示词与图片（音频）生成状态，发起提示词生成、图片（音频）生成并打开版本层，带使用情况提示地删除资产。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
-// 备注：请求与事件名称与 src/app/pages/asset-list-handlers.ts、src/app/forms/asset-form.ts 一致；依赖 form/form-runtime.js（aiForm）与 shared/page-format.js（pageFormat）。
+// 备注：请求与事件名称与 src/app/pages/asset-list-handlers.ts、src/app/forms/asset-form.ts 一致；依赖 form/form-runtime.js（aiForm）、shared/page-format.js（pageFormat）、asset-list/asset-generate.js（aiAssetGenerate）与 asset-list/asset-versions.js（aiAssetVersions）。
 // ------------------------------------------------------------------------
 
 'use strict';
@@ -14,6 +14,9 @@
   const REQUEST_TAKE_PENDING = 'assets.takePending';
   const REQUEST_PREPARE_DELETE = 'assets.prepareDelete';
   const REQUEST_DELETE = 'assets.delete';
+  const REQUEST_GENERATE_PROMPT = 'assets.generatePrompt';
+  const REQUEST_CANCEL_PROMPT = 'assets.cancelPrompt';
+  const REQUEST_CANCEL_VERSION = 'assets.cancelVersion';
   const EVENT_CHANGED = 'assets.changed';
   const EVENT_ACTION = 'assets.action';
   const ACTION_CREATE = 'create';
@@ -103,6 +106,8 @@
     isLoading = false;
     renderProjectFilter();
     renderContent();
+    // 版本层打开时跟着刷新（状态、缩略图、资产被删除）。
+    void window.aiAssetVersions.refresh();
   }
 
   /** 数据变化后稍作合并再刷新。 */
@@ -200,47 +205,125 @@
     return [asset.composition, asset.style].filter(Boolean).join(' · ');
   }
 
-  /** 资产表格的列。 */
-  const ASSET_COLUMNS = [
-    { title: '预览', width: 96, minWidth: 80, render: (asset) => renderPreview(asset) },
-    {
-      title: '名称',
-      width: '30%',
-      minWidth: 160,
-      render: (asset) => aiUi.tableMainCell({ text: asset.name, description: describeAsset(asset) })
-    },
-    { title: '所属项目', width: '18%', minWidth: 120, render: (asset) => aiUi.chip({ text: asset.projectName }) },
-    {
-      title: '参考文件',
-      width: 80,
-      nowrap: true,
-      muted: (asset) => asset.fileCount === 0,
-      render: (asset) => String(asset.fileCount)
-    },
-    {
-      title: '使用',
-      width: 80,
-      nowrap: true,
-      muted: (asset) => asset.episodeCount === 0,
-      render: (asset) => (asset.episodeCount === 0 ? '未使用' : `${asset.episodeCount} 集`)
-    },
-    {
-      title: '更新时间',
-      width: 110,
-      nowrap: true,
-      muted: true,
-      render: (asset) => formatRelativeTime(asset.updatedAt),
-      tooltip: (asset) => new Date(asset.updatedAt).toLocaleString('zh-CN')
-    },
-    {
-      title: '操作',
-      type: 'actions',
-      render: (asset) => [
-        aiUi.button({ kind: 'edit', compact: true, ariaLabel: `修改：${asset.name}`, onClick: () => openEditForm(asset) }).element,
-        aiUi.button({ kind: 'delete', compact: true, ariaLabel: `删除：${asset.name}`, onClick: () => void deleteAsset(asset) }).element
-      ]
+  /** 提示词列：生成中、失败、已取消、未生成、已生成（可能需更新）。 */
+  function renderPromptStatus(asset) {
+    const hasPrompt = Boolean(asset.promptZh || asset.promptEn);
+    if (asset.promptStatus === 'running') return aiUi.h('span', { class: 'description', text: '生成中…' });
+    if (asset.promptStatus === 'failed') {
+      return aiUi.h('span', { class: 'status-error', text: '失败', attrs: { title: asset.promptError || '' } });
     }
-  ];
+    if (asset.promptStatus === 'canceled') return aiUi.h('span', { class: 'description', text: '已取消' });
+    if (!hasPrompt) return aiUi.h('span', { class: 'description', text: '未生成' });
+    if (asset.isPromptOutdated) return aiUi.h('span', { class: 'status-warning', text: '已生成，需更新' });
+    return aiUi.h('span', { class: 'status-success', text: '已生成' });
+  }
+
+  /** 图片（音频）列：未生成、生成中、失败、最新的成功版本，以及“有改动未生成”。 */
+  function renderGenerationStatus(asset) {
+    const { latest, latestSucceeded } = asset.generation;
+    const parts = [];
+    if (latest === null) {
+      parts.push(aiUi.h('span', { class: 'description', text: '未生成' }));
+    } else if (latest.status === 'queued' || latest.status === 'running') {
+      parts.push(aiUi.h('span', { class: 'description', text: `v${latest.version} 生成中…` }));
+    } else if (latest.status === 'failed') {
+      parts.push(aiUi.h('span', { class: 'status-error', text: `v${latest.version} 失败`, attrs: { title: latest.errorMessage || '' } }));
+    } else {
+      parts.push(aiUi.h('span', { class: 'status-success', text: `v${latestSucceeded === null ? latest.version : latestSucceeded} 已生成` }));
+    }
+    if (asset.hasUngeneratedChanges) parts.push(aiUi.h('span', { class: 'status-warning', text: '有改动未生成' }));
+    return aiUi.h('div', { class: 'asset-status' }, parts);
+  }
+
+  /** 当前采用列：采用的版本、手动上传或无；有更新的版本未采用时一眼可见。 */
+  function renderAdopted(asset) {
+    const { adoptedVersion, latestSucceeded } = asset.generation;
+    if (adoptedVersion !== null) {
+      const newer = latestSucceeded !== null && latestSucceeded > adoptedVersion;
+      return aiUi.h('div', { class: 'asset-status' }, aiUi.h('span', { text: `v${adoptedVersion}` }), newer ? aiUi.h('span', { class: 'description', text: `最新 v${latestSucceeded} 未采用` }) : null);
+    }
+    return aiUi.h('span', { class: 'description', text: asset.fileCount > 0 ? '手动上传' : '无' });
+  }
+
+  /** 操作列的按钮：提示词（生成、重试、取消）、生成图片（音频）、取消生成、查看、修改、删除。 */
+  function renderActions(asset) {
+    const buttons = [];
+    const hasPrompt = Boolean(asset.promptZh || asset.promptEn);
+    if (asset.promptStatus === 'running') {
+      buttons.push(aiUi.button({ text: '取消提示词', compact: true, ariaLabel: `取消提示词：${asset.name}`, onClick: () => void runAction(REQUEST_CANCEL_PROMPT, { id: asset.id }) }).element);
+    } else if (asset.promptStatus === 'failed' || asset.promptStatus === 'canceled') {
+      buttons.push(aiUi.button({ text: '重试提示词', compact: true, ariaLabel: `重试提示词：${asset.name}`, onClick: () => void runAction(REQUEST_GENERATE_PROMPT, { id: asset.id }) }).element);
+    } else if (!hasPrompt || asset.isPromptOutdated) {
+      const text = hasPrompt ? '重新生成提示词' : '生成提示词';
+      buttons.push(aiUi.button({ text, compact: true, ariaLabel: `${text}：${asset.name}`, onClick: () => void generatePrompt(asset, hasPrompt) }).element);
+    }
+    const latest = asset.generation.latest;
+    const generating = latest !== null && (latest.status === 'queued' || latest.status === 'running');
+    if (generating) {
+      buttons.push(aiUi.button({ text: '取消生成', compact: true, ariaLabel: `取消生成：${asset.name}`, onClick: () => void cancelVersion(latest.id) }).element);
+    } else {
+      const noun = asset.kind === KIND_AUDIO ? '音频' : '图片';
+      const generate = aiUi.button({
+        text: `生成${noun}`,
+        compact: true,
+        variant: 'primary',
+        disabled: !asset.availability.available,
+        ariaLabel: `生成${noun}：${asset.name}`,
+        onClick: () => void window.aiAssetGenerate.open(asset)
+      });
+      if (!asset.availability.available) generate.element.title = asset.availability.reason || '';
+      buttons.push(generate.element);
+    }
+    buttons.push(
+      aiUi.button({ text: '查看', compact: true, ariaLabel: `查看版本：${asset.name}`, onClick: () => window.aiAssetVersions.open(asset) }).element,
+      aiUi.button({ kind: 'edit', compact: true, ariaLabel: `修改：${asset.name}`, onClick: () => openEditForm(asset) }).element,
+      aiUi.button({ kind: 'delete', compact: true, ariaLabel: `删除：${asset.name}`, onClick: () => void deleteAsset(asset) }).element
+    );
+    return buttons;
+  }
+
+  /** 重新生成提示词时已有内容先确认覆盖，再请求后台生成。 */
+  async function generatePrompt(asset, hasPrompt) {
+    if (hasPrompt) {
+      const confirmed = await aiUi.confirm({ title: '覆盖现有提示词', message: '将用重新生成的提示词覆盖现有提示词，确定吗？', confirmText: '覆盖', cancelText: '取消' });
+      if (!confirmed) return;
+    }
+    await runAction(REQUEST_GENERATE_PROMPT, { id: asset.id });
+  }
+
+  /** 取消进行中的版本；服务商不支持取消时提示平台任务可能仍会计费。 */
+  async function cancelVersion(versionId) {
+    const result = await runAction(REQUEST_CANCEL_VERSION, { versionId });
+    if (result && !result.remoteCanceled) showMessage('该服务商不支持取消，平台上的任务可能仍会继续并计费。', false);
+  }
+
+  /** 资产表格的列；“图片”列的标题随资产类型变化。 */
+  function buildColumns() {
+    return [
+      { title: '预览', width: 80, minWidth: 64, render: (asset) => renderPreview(asset) },
+      { title: '名称', width: '20%', minWidth: 140, render: (asset) => aiUi.tableMainCell({ text: asset.name, description: describeAsset(asset) }) },
+      { title: '所属项目', width: '12%', minWidth: 96, render: (asset) => aiUi.chip({ text: asset.projectName }) },
+      { title: '提示词', width: 110, minWidth: 90, render: renderPromptStatus },
+      { title: kind === KIND_AUDIO ? '音频' : '图片', width: 130, minWidth: 100, render: renderGenerationStatus },
+      { title: '当前采用', width: 100, minWidth: 80, render: renderAdopted },
+      {
+        title: '使用',
+        width: 70,
+        nowrap: true,
+        muted: (asset) => asset.episodeCount === 0,
+        render: (asset) => (asset.episodeCount === 0 ? '未使用' : `${asset.episodeCount} 集`)
+      },
+      {
+        title: '更新时间',
+        width: 100,
+        nowrap: true,
+        muted: true,
+        render: (asset) => formatRelativeTime(asset.updatedAt),
+        tooltip: (asset) => new Date(asset.updatedAt).toLocaleString('zh-CN')
+      },
+      { title: '操作', type: 'actions', render: renderActions }
+    ];
+  }
 
   /** 空状态和错误状态。 */
   function renderState(text, button) {
@@ -266,7 +349,7 @@
     const visible = assets.filter(
       (asset) => (filterProjectId === FILTER_ALL || String(asset.projectId) === filterProjectId) && asset.name.toLowerCase().includes(text)
     );
-    contentElement.append(visible.length === 0 ? renderState('没有匹配的资产。') : aiUi.table({ columns: ASSET_COLUMNS, rows: visible, ariaLabel: '资产' }).element);
+    contentElement.append(visible.length === 0 ? renderState('没有匹配的资产。') : aiUi.table({ columns: buildColumns(), rows: visible, ariaLabel: '资产' }).element);
   }
 
   /** 渲染页面骨架：搜索框与项目筛选、操作结果、资产区。 */

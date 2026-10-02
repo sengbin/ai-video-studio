@@ -4,7 +4,7 @@
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
-// 备注：类型由入口决定、创建后不能修改；新建时在表单里选择所属项目（入口可传默认项目），编辑时不显示项目；字段约束取自领域规则常量，保证界面与宿主校验一致；表单引擎不支持字段联动和折叠，风格留空表示沿用项目风格，语言仅对音色参考有效；图像类资产带“生成提示词”动作；从实体新建（参数带 episodeId、entityId）时按实体设定预填、项目固定为作品所在项目，保存后自动绑定为形象。
+// 备注：类型由入口决定、创建后不能修改；新建时在表单里选择所属项目（入口可传默认项目），编辑时不显示项目；字段约束取自领域规则常量，保证界面与宿主校验一致；表单引擎不支持字段联动和折叠，风格留空表示沿用项目风格，语言仅对音色参考有效；提交按钮区分“仅保存”与“保存并生成提示词”，后者在保存后启动后台提示词生成；从实体新建（参数带 episodeId、entityId）时按实体设定预填、项目固定为作品所在项目，保存后自动绑定为形象。
 // ------------------------------------------------------------------------
 
 import { FORM_LEVEL_ERROR_KEY, ValidationError } from '../../domain/errors';
@@ -20,8 +20,6 @@ import {
 } from '../../domain/models/asset';
 import { BindingEntityDetail } from '../../domain/models/binding';
 import { ASSET_OPTION_SETS, AUDIO_LANGUAGE_OPTIONS, CHARACTER_TYPE_OPTIONS } from '../../domain/models/option-sets';
-import { ASSET_PROMPT_MAX_IMAGES, isPromptAssetKind } from '../../domain/rules/asset-prompt-rules';
-import { buildAssetPrefill } from '../../domain/rules/entity-asset-prefill';
 import {
   ASSET_ATTRIBUTE_MAX_LENGTH,
   ASSET_AUDIO_EXTENSIONS,
@@ -37,12 +35,13 @@ import {
   ASSET_PROMPT_MAX_LENGTH,
   ASSET_STYLE_MAX_LENGTH
 } from '../../domain/rules/asset-rules';
+import { buildAssetPrefill } from '../../domain/rules/entity-asset-prefill';
 import { readEntityId, readRecord } from '../../domain/rules/field-readers';
 import { ASSET_PROJECT_FIELD_KEY, AssetService, DUPLICATE_ASSET_NAME_MESSAGE } from '../services/asset-service';
 import { AssetPromptService } from '../services/asset-prompt-service';
 import { ProjectService } from '../services/project-service';
-import { FormAction, FormCatalog, FormDefinition, FormFactory, FormValues } from './form-definition';
-import { FormActionSchema, FormFieldSchema } from './form-schema';
+import { FormCatalog, FormDefinition, FormFactory, FormValues } from './form-definition';
+import { FormFieldSchema, FormSubmitActionSchema } from './form-schema';
 
 /** 资产表单在表单目录中的名称，页面据此请求打开。 */
 export const ASSET_FORM_NAMES = {
@@ -50,12 +49,39 @@ export const ASSET_FORM_NAMES = {
   edit: 'asset.edit'
 } as const;
 
-const SUBMIT_LABEL = '保存';
+/** 提交按钮的键：仅创建、创建并生成提示词、保存、保存并重新生成提示词。 */
+export const ASSET_SUBMIT_KEYS = {
+  create: 'create',
+  createAndPrompt: 'createAndPrompt',
+  save: 'save',
+  saveAndPrompt: 'saveAndPrompt'
+} as const;
+
 const NO_PROJECT_MESSAGE = '还没有项目，请先在“所有项目”中创建项目。';
+const PROMPT_RUNNING_MESSAGE = '提示词正在生成中，完成后再重新生成。';
 const MEGABYTE = 1024 * 1024;
 const PROMPT_MAX_ROWS = 6;
 /** 参考图以外的长文本描述最多长到的行数。 */
 const ATTRIBUTE_MAX_ROWS = 4;
+/** 提示词字段的键。 */
+const PROMPT_FIELD_KEYS = ['promptZh', 'promptEn'] as const;
+
+/** 新建表单的提交按钮：仅创建，或创建后在后台生成提示词（主按钮）。 */
+const CREATE_SUBMIT_ACTIONS: readonly FormSubmitActionSchema[] = [
+  { key: ASSET_SUBMIT_KEYS.create, label: '仅创建' },
+  { key: ASSET_SUBMIT_KEYS.createAndPrompt, label: '创建并生成提示词', primary: true }
+];
+
+/** 编辑表单的提交按钮：仅保存，或保存后重新生成提示词（主按钮，提示词已有内容时先确认覆盖）。 */
+const EDIT_SUBMIT_ACTIONS: readonly FormSubmitActionSchema[] = [
+  { key: ASSET_SUBMIT_KEYS.save, label: '保存' },
+  {
+    key: ASSET_SUBMIT_KEYS.saveAndPrompt,
+    label: '保存并重新生成提示词',
+    primary: true,
+    confirmOverwrite: { fields: PROMPT_FIELD_KEYS, title: '覆盖现有提示词', message: '将用重新生成的提示词覆盖现有提示词，确定吗？', confirmText: '覆盖' }
+  }
+];
 
 /** 入口传来的资产类型，必须是五种之一。 */
 function readKind(value: unknown): AssetKind {
@@ -103,8 +129,18 @@ function createExtraField(): FormFieldSchema {
   };
 }
 
+/** 中英文提示词字段；提示词生成中只读。 */
+function createPromptFields(kind: AssetKind, promptLocked: boolean): FormFieldSchema[] {
+  const purpose = kind === 'audio' ? '音频生成提示词' : '图像生成提示词';
+  const note = promptLocked ? '提示词生成中，完成后再修改' : `${purpose}，可手动编辑，最多 ${ASSET_PROMPT_MAX_LENGTH} 字`;
+  return [
+    { key: 'promptZh', label: '中文提示词', description: note, control: 'textarea', required: false, maxLength: ASSET_PROMPT_MAX_LENGTH, maxRows: PROMPT_MAX_ROWS, disabled: promptLocked },
+    { key: 'promptEn', label: '英文提示词', description: note, control: 'textarea', required: false, maxLength: ASSET_PROMPT_MAX_LENGTH, maxRows: PROMPT_MAX_ROWS, disabled: promptLocked }
+  ];
+}
+
 /** 图像类资产（角色、场景、道具、特效）的字段。 */
-function createImageFields(kind: Exclude<AssetKind, 'audio'>): FormFieldSchema[] {
+function createImageFields(kind: Exclude<AssetKind, 'audio'>, promptLocked: boolean): FormFieldSchema[] {
   const options = ASSET_OPTION_SETS[kind];
   const fields: FormFieldSchema[] = [
     {
@@ -169,24 +205,7 @@ function createImageFields(kind: Exclude<AssetKind, 'audio'>): FormFieldSchema[]
             }
     ),
     createExtraField(),
-    {
-      key: 'promptZh',
-      label: '中文提示词',
-      description: `图像生成提示词，可手动编辑，最多 ${ASSET_PROMPT_MAX_LENGTH} 字`,
-      control: 'textarea',
-      required: false,
-      maxLength: ASSET_PROMPT_MAX_LENGTH,
-      maxRows: PROMPT_MAX_ROWS
-    },
-    {
-      key: 'promptEn',
-      label: '英文提示词',
-      description: `图像生成提示词，可手动编辑，最多 ${ASSET_PROMPT_MAX_LENGTH} 字`,
-      control: 'textarea',
-      required: false,
-      maxLength: ASSET_PROMPT_MAX_LENGTH,
-      maxRows: PROMPT_MAX_ROWS
-    },
+    ...createPromptFields(kind, promptLocked),
     {
       key: ASSET_FILE_FIELD_KEY,
       label: '参考图',
@@ -204,8 +223,8 @@ function createImageFields(kind: Exclude<AssetKind, 'audio'>): FormFieldSchema[]
   return fields;
 }
 
-/** 音频资产的字段。 */
-function createAudioFields(): FormFieldSchema[] {
+/** 音频资产的字段；音频文件可以暂时为空（之后上传或由模型生成）。 */
+function createAudioFields(promptLocked: boolean): FormFieldSchema[] {
   return [
     {
       key: 'audioKind',
@@ -232,27 +251,33 @@ function createAudioFields(): FormFieldSchema[] {
       required: false,
       options: AUDIO_LANGUAGE_OPTIONS
     },
+    createExtraField(),
+    ...createPromptFields('audio', promptLocked),
     {
       key: ASSET_FILE_FIELD_KEY,
       label: '音频文件',
-      description: `MP3、WAV、M4A；不超过 ${ASSET_AUDIO_MAX_BYTES / MEGABYTE} MB，时长不超过 ${ASSET_AUDIO_MAX_SECONDS} 秒；保存时读取时长，无法解码的文件会提示`,
+      description: `可选，也可以之后由音频模型生成；MP3、WAV、M4A，不超过 ${ASSET_AUDIO_MAX_BYTES / MEGABYTE} MB，时长不超过 ${ASSET_AUDIO_MAX_SECONDS} 秒；保存时读取时长，无法解码的文件会提示`,
       control: 'file',
-      required: true,
+      required: false,
       accept: ASSET_AUDIO_EXTENSIONS,
       multiple: false,
       maxFileBytes: ASSET_AUDIO_MAX_BYTES,
       derive: 'audio'
-    },
-    createExtraField()
+    }
   ];
 }
 
 /** 按类型组装表单字段；新建时带所属项目。 */
-function createFields(kind: AssetKind, projectNames: readonly string[] | undefined, checkUnique: boolean): FormFieldSchema[] {
+function createFields(
+  kind: AssetKind,
+  projectNames: readonly string[] | undefined,
+  checkUnique: boolean,
+  promptLocked = false
+): FormFieldSchema[] {
   return [
     ...(projectNames === undefined ? [] : [createProjectField(projectNames)]),
     createNameField(kind, checkUnique),
-    ...(kind === 'audio' ? createAudioFields() : createImageFields(kind))
+    ...(kind === 'audio' ? createAudioFields(promptLocked) : createImageFields(kind, promptLocked))
   ];
 }
 
@@ -268,6 +293,8 @@ function toFormValues(asset: AssetRecord, files: readonly AssetFileRecord[]): Fo
   const values: Record<string, string> = {
     name: asset.name,
     extra: asset.extraRequirements,
+    promptZh: asset.promptZh,
+    promptEn: asset.promptEn,
     [ASSET_FILE_FIELD_KEY]: filesToValue(files)
   };
   if (asset.kind === 'audio') {
@@ -281,12 +308,20 @@ function toFormValues(asset: AssetRecord, files: readonly AssetFileRecord[]): Fo
   values.style = asset.style ?? '';
   values.background = asset.background;
   values.referenceAspectRatio = asset.referenceAspectRatio ?? '';
-  values.promptZh = asset.promptZh;
-  values.promptEn = asset.promptEn;
   for (const field of ASSET_ATTRIBUTE_FIELDS[asset.kind]) {
     values[field.formKey] = asset.attributes[field.key] ?? '';
   }
   return values;
+}
+
+/** 提交内容里是否带有参考图（文件字段不是空数组）。 */
+function hasFiles(values: FormValues): boolean {
+  try {
+    const parsed: unknown = JSON.parse(values[ASSET_FILE_FIELD_KEY] || '[]');
+    return Array.isArray(parsed) && parsed.length > 0;
+  } catch {
+    return false;
+  }
 }
 
 /** 新建资产表单依赖的服务。 */
@@ -302,50 +337,6 @@ export interface AssetFormDependencies {
 export interface AssetEntitySource {
   getEntityDetail(episodeId: number, entityId: number): BindingEntityDetail;
   bind(rawInput: unknown): unknown;
-}
-
-/** “生成提示词”动作的键。 */
-const GENERATE_PROMPT_ACTION = 'generatePrompt';
-
-/** 图像类资产的“生成提示词”按钮；音频没有提示词。 */
-function createPromptActionSchemas(kind: AssetKind): FormActionSchema[] {
-  return isPromptAssetKind(kind)
-    ? [
-        {
-          key: GENERATE_PROMPT_ACTION,
-          label: '生成提示词',
-          before: 'promptZh',
-          fills: ['promptZh', 'promptEn'],
-          imageField: ASSET_FILE_FIELD_KEY,
-          maxImages: ASSET_PROMPT_MAX_IMAGES
-        }
-      ]
-    : [];
-}
-
-/**
- * “生成提示词”动作：用表单当前内容调用 Copilot，结果回填中英文提示词字段。
- * @param resolveProjectId 按表单当前值确定所属项目（用于沿用项目风格）；还没选项目时返回 undefined。
- */
-function createPromptActions(
-  prompts: AssetPromptService,
-  kind: AssetKind,
-  resolveProjectId: (values: FormValues) => number | undefined
-): Readonly<Record<string, FormAction>> | undefined {
-  if (!isPromptAssetKind(kind)) {
-    return undefined;
-  }
-  return {
-    [GENERATE_PROMPT_ACTION]: async (values, signal) => {
-      const { promptZh, promptEn } = await prompts.generate({ kind, values, projectId: resolveProjectId(values) }, signal);
-      return { promptZh, promptEn };
-    }
-  };
-}
-
-/** 表单到项目的解析：按项目名称找到项目标识。 */
-function findProjectIdByName(projects: ProjectService, name: string | undefined): number | undefined {
-  return name === undefined ? undefined : projects.listProjects().find((project) => project.name === name.trim())?.id;
 }
 
 /**
@@ -368,17 +359,24 @@ function createNewAssetForm(dependencies: AssetFormDependencies, params: unknown
   return {
     schema: {
       title: `新建${ASSET_KIND_LABELS[kind]}`,
-      submitLabel: SUBMIT_LABEL,
+      submitLabel: CREATE_SUBMIT_ACTIONS[1].label,
       fields: createFields(kind, summaries.map((project) => project.name), false),
-      actions: createPromptActionSchemas(kind)
+      submitActions: CREATE_SUBMIT_ACTIONS
     },
     initialValues: {
       ...(defaultProject === undefined ? {} : { [ASSET_PROJECT_FIELD_KEY]: defaultProject.name }),
       ...(kind === 'audio' ? { audioKind: AUDIO_KIND_LABELS.voice } : {})
     },
-    actions: createPromptActions(prompts, kind, (values) => findProjectIdByName(projects, values[ASSET_PROJECT_FIELD_KEY])),
-    submit: (values) => {
-      assets.createAsset(kind, values);
+    submit: (values, submitKey) => {
+      // 先检查信息是否足够生成提示词，避免保存了资产却无法生成。
+      const generate = submitKey === ASSET_SUBMIT_KEYS.createAndPrompt;
+      if (generate) {
+        prompts.assertCanGenerate(kind, values, hasFiles(values));
+      }
+      const asset = assets.createAsset(kind, values);
+      if (generate) {
+        prompts.start(asset.id);
+      }
     }
   };
 }
@@ -388,7 +386,7 @@ function createNewAssetForm(dependencies: AssetFormDependencies, params: unknown
  * @param source `{ episodeId, entityId }`。
  */
 function createEntityAssetForm(dependencies: AssetFormDependencies, source: Record<string, unknown>): FormDefinition {
-  const { projects, assets, prompts, entities } = dependencies;
+  const { projects, assets, entities } = dependencies;
   if (entities === undefined) {
     throw new ValidationError({ [FORM_LEVEL_ERROR_KEY]: '当前页面不支持从实体新建资产。' });
   }
@@ -400,13 +398,16 @@ function createEntityAssetForm(dependencies: AssetFormDependencies, source: Reco
   return {
     schema: {
       title: `新建${ASSET_KIND_LABELS[kind]}`,
-      submitLabel: SUBMIT_LABEL,
+      submitLabel: CREATE_SUBMIT_ACTIONS[1].label,
       fields: createFields(kind, [project.name], false),
-      actions: createPromptActionSchemas(kind)
+      submitActions: CREATE_SUBMIT_ACTIONS
     },
     initialValues: { ...buildAssetPrefill(entity), [ASSET_PROJECT_FIELD_KEY]: project.name },
-    actions: createPromptActions(prompts, kind, () => project.id),
-    submit: (values) => {
+    submit: (values, submitKey) => {
+      const generate = submitKey === ASSET_SUBMIT_KEYS.createAndPrompt;
+      if (generate) {
+        dependencies.prompts.assertCanGenerate(kind, values, hasFiles(values));
+      }
       const asset = assets.createAsset(kind, values, { sourceEntityId: entityId });
       try {
         entities.bind({ episodeId, entityId, assetId: asset.id, purpose: 'visual' });
@@ -415,6 +416,9 @@ function createEntityAssetForm(dependencies: AssetFormDependencies, source: Reco
         assets.deleteAsset(asset.id);
         throw error;
       }
+      if (generate) {
+        dependencies.prompts.start(asset.id);
+      }
     }
   };
 }
@@ -422,19 +426,32 @@ function createEntityAssetForm(dependencies: AssetFormDependencies, source: Reco
 /** 创建“编辑资产”表单的定义；所属项目与类型不能修改，因此不显示项目字段。 */
 function createEditAssetForm(assets: AssetService, prompts: AssetPromptService, assetId: number): FormDefinition {
   const asset = assets.getAsset(assetId);
+  const promptLocked = asset.promptStatus === 'running';
   return {
     schema: {
       title: `编辑${ASSET_KIND_LABELS[asset.kind]}`,
-      submitLabel: SUBMIT_LABEL,
-      fields: createFields(asset.kind, undefined, true),
-      actions: createPromptActionSchemas(asset.kind)
+      submitLabel: EDIT_SUBMIT_ACTIONS[1].label,
+      fields: createFields(asset.kind, undefined, true, promptLocked),
+      submitActions: EDIT_SUBMIT_ACTIONS
     },
     initialValues: toFormValues(asset, assets.getReferenceFiles(assetId)),
     checkField: (key, value) =>
       key === 'name' && !assets.isNameAvailable(asset.projectId, asset.kind, value, asset.id) ? DUPLICATE_ASSET_NAME_MESSAGE : undefined,
-    actions: createPromptActions(prompts, asset.kind, () => asset.projectId),
-    submit: (values) => {
-      assets.updateAsset(asset.id, values);
+    submit: (values, submitKey) => {
+      const regenerate = submitKey === ASSET_SUBMIT_KEYS.saveAndPrompt;
+      const current = assets.getAsset(asset.id);
+      if (regenerate) {
+        if (current.promptStatus === 'running') {
+          throw new ValidationError({ [FORM_LEVEL_ERROR_KEY]: PROMPT_RUNNING_MESSAGE });
+        }
+        prompts.assertCanGenerate(asset.kind, values, hasFiles(values));
+      }
+      // 打开表单时提示词正在生成：提示词字段是只读的，保存时保留库里最新的内容，不拿打开时的旧值覆盖生成结果。
+      const submitted = promptLocked ? { ...values, promptZh: current.promptZh, promptEn: current.promptEn } : values;
+      assets.updateAsset(asset.id, submitted);
+      if (regenerate) {
+        prompts.start(asset.id);
+      }
     }
   };
 }

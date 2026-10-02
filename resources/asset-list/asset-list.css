@@ -1,7 +1,7 @@
 /*
  * ------------------------------------------------------------------------
  * 名称：asset-list.css
- * 说明：资产列表页样式：顶部搜索框与项目筛选、操作结果提示、空状态，以及预览列的缩略图与音频信息；资产表格使用界面组件库的 aiUi.table。
+ * 说明：资产列表页样式：顶部搜索框与项目筛选、操作结果提示、空状态，预览列的缩略图与音频信息，状态列，以及生成图片（音频）对话框和版本层；资产表格使用界面组件库的 aiUi.table。
  * 作者：Lion
  * 邮箱：chengbin@3578.cn
  * 日期：2026-10-02
@@ -59,4 +59,131 @@
   flex-direction: column;
   align-items: flex-start;
   gap: 2px;
+}
+
+/* 状态列：提示词与图片状态的多行文字 */
+.asset-status {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+/* 生成图片/音频的弹出页 */
+.asset-gen {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.asset-gen__message {
+  margin: 0;
+}
+
+/* 版本层：顶部工具条（版本下拉、摘要、操作按钮）、提示和主体 */
+.asset-ver {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.asset-ver__bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.asset-ver__select {
+  flex: 0 0 auto;
+  min-width: 200px;
+}
+
+.asset-ver__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.asset-ver__message {
+  margin: 0;
+}
+
+.asset-ver__body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.asset-ver__body p {
+  margin: 0;
+}
+
+.asset-ver__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.asset-ver__item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.asset-ver__thumb {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 120px;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--table-border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--vscode-descriptionForeground);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.asset-ver__thumb--empty {
+  cursor: default;
+}
+
+.asset-ver__thumb-image {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+.asset-ver__audio {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.asset-ver__player audio {
+  max-width: 100%;
+}
+
+.asset-ver__prompt {
+  margin: 4px 0 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.asset-ver__viewer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.asset-ver__original {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
 }

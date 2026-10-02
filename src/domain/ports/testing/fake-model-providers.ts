@@ -1,15 +1,18 @@
 // ------------------------------------------------------------------------
 // 名称：fake-model-providers.ts
-// 说明：测试用的假模型适配器：一个服务商同时提供视频与图像适配器，请求与调用记录可检查，远端任务状态可脚本化。
+// 说明：测试用的假模型适配器：一个服务商同时提供视频、图像与音频适配器，请求与调用记录可检查，远端任务状态可脚本化。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
 // 备注：仅供测试使用，随 out/**/testing 一起被打包排除；后续生成队列的测试也复用它。
 // ------------------------------------------------------------------------
 
-import { VideoCapability, ImageCapability } from '../../models/model-capability';
+import { VideoCapability, ImageCapability, AudioCapability } from '../../models/model-capability';
 import { ModelDescriptor, ProviderDescriptor } from '../../models/model-provider';
 import {
+  AudioGenerationRequest,
+  AudioJobResult,
+  AudioModelProvider,
   ImageGenerationRequest,
   ImageJobResult,
   ImageModelProvider,
@@ -72,6 +75,28 @@ export const FAKE_IMAGE_CAPABILITY: ImageCapability = {
   promptMaxLength: 500
 };
 
+/** 资产生成测试用的图像模型能力：支持两种画幅、两档分辨率和最多 2 张参考图。 */
+export const FAKE_ASSET_IMAGE_CAPABILITY: ImageCapability = {
+  aspectRatios: ['1:1', '16:9'],
+  resolutions: ['1K', '2K'],
+  imagesPerRequestMax: 4,
+  referenceImagesMax: 2,
+  seed: false,
+  promptLanguages: ['zh', 'en'],
+  promptMaxLength: 500
+};
+
+/** 假音频模型的能力：支持音色参考和音效，不支持配乐。 */
+export const FAKE_AUDIO_CAPABILITY: AudioCapability = {
+  audioKinds: ['voice', 'sfx'],
+  duration: {},
+  languages: ['zh', 'en'],
+  voices: ['小红'],
+  referenceAudio: false,
+  promptLanguages: ['zh', 'en'],
+  promptMaxLength: 300
+};
+
 /** 假服务商的调用凭据与设置，供测试直接使用。 */
 export const FAKE_CALL_CONTEXT: ProviderCallContext = {
   apiKey: 'sk-fake',
@@ -121,10 +146,12 @@ export class FakeVideoProvider implements VideoModelProvider {
   }
 }
 
-/** 假图像适配器：只用于测试同一服务商登记多种类型适配器。 */
+/** 假图像适配器：记录提交的请求，按队列依次返回预设的任务状态，耗尽后返回成功。 */
 export class FakeImageProvider implements ImageModelProvider {
   readonly kind = 'image';
   readonly provider: ProviderDescriptor = FAKE_PROVIDER;
+  readonly submitted: ImageGenerationRequest[] = [];
+  readonly queryStates: RemoteJobState<ImageJobResult>[] = [];
 
   constructor(private readonly models: readonly ModelDescriptor<'image'>[] = [
     { code: 'fake-image', displayName: '假图像模型', kind: 'image', capability: FAKE_IMAGE_CAPABILITY }
@@ -143,10 +170,60 @@ export class FakeImageProvider implements ImageModelProvider {
   }
 
   async submit(request: ImageGenerationRequest): Promise<RemoteJobRef> {
-    return { modelCode: request.modelCode, remoteJobId: 'fake-image-1' };
+    this.submitted.push(request);
+    return { modelCode: request.modelCode, remoteJobId: `fake-image-${this.submitted.length}` };
   }
 
   async query(): Promise<RemoteJobState<ImageJobResult>> {
-    return { status: 'succeeded', result: { imageUrls: ['https://fake.example.com/image.png'] }, errorCategory: null, errorCode: null, errorMessage: null };
+    return (
+      this.queryStates.shift() ?? {
+        status: 'succeeded',
+        result: { imageUrls: ['https://fake.example.com/image.png'] },
+        errorCategory: null,
+        errorCode: null,
+        errorMessage: null
+      }
+    );
+  }
+}
+
+/** 假音频适配器：记录提交的请求，查询按队列返回预设状态，耗尽后返回成功。 */
+export class FakeAudioProvider implements AudioModelProvider {
+  readonly kind = 'audio';
+  readonly provider: ProviderDescriptor = FAKE_PROVIDER;
+  readonly submitted: AudioGenerationRequest[] = [];
+  readonly queryStates: RemoteJobState<AudioJobResult>[] = [];
+
+  constructor(private readonly models: readonly ModelDescriptor<'audio'>[] = [
+    { code: 'fake-audio', displayName: '假音频模型', kind: 'audio', capability: FAKE_AUDIO_CAPABILITY }
+  ]) {}
+
+  listModels(): readonly ModelDescriptor<'audio'>[] {
+    return this.models;
+  }
+
+  getCapability(modelCode: string): AudioCapability | undefined {
+    return this.models.find((model) => model.code === modelCode)?.capability;
+  }
+
+  validate(request: AudioGenerationRequest): readonly string[] {
+    return this.getCapability(request.modelCode) === undefined ? [`没有模型 ${request.modelCode}。`] : [];
+  }
+
+  async submit(request: AudioGenerationRequest): Promise<RemoteJobRef> {
+    this.submitted.push(request);
+    return { modelCode: request.modelCode, remoteJobId: `fake-audio-${this.submitted.length}` };
+  }
+
+  async query(): Promise<RemoteJobState<AudioJobResult>> {
+    return (
+      this.queryStates.shift() ?? {
+        status: 'succeeded',
+        result: { audioUrl: 'https://fake.example.com/audio.wav', durationSeconds: 3.5 },
+        errorCategory: null,
+        errorCode: null,
+        errorMessage: null
+      }
+    );
   }
 }

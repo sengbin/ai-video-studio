@@ -15,7 +15,7 @@ import { FormAction, FormCatalog, FormDefinition, FormValues } from './form-defi
 import { FORM_REQUESTS, registerFormHandlers } from './form-handlers';
 
 /** 创建路由器与一个名为 `demo` 的表单；返回提交记录与发送请求的函数。 */
-function createFixture(options: { submit?: (values: FormValues) => void | Promise<void>; action?: FormAction } = {}) {
+function createFixture(options: { submit?: (values: FormValues, submitKey?: string) => void | Promise<void>; action?: FormAction; submitActions?: boolean } = {}) {
   const submittedValues: FormValues[] = [];
   const openedParams: unknown[] = [];
   const catalog: FormCatalog = new Map([
@@ -27,7 +27,13 @@ function createFixture(options: { submit?: (values: FormValues) => void | Promis
           schema: {
             title: '新建项目',
             submitLabel: '保存',
-            fields: [{ key: 'name', label: '项目名称', description: '项目的名称', control: 'text', required: true }]
+            fields: [{ key: 'name', label: '项目名称', description: '项目的名称', control: 'text', required: true }],
+            submitActions: options.submitActions
+              ? [
+                  { key: 'save', label: '保存' },
+                  { key: 'saveAndMore', label: '保存并继续', primary: true }
+                ]
+              : undefined
           },
           initialValues: { name: '' },
           actions: options.action === undefined ? undefined : { fill: options.action },
@@ -245,6 +251,26 @@ test('取消动作与关闭表单：触发动作的取消信号；动作失败�
   assert.ok((await send(FORM_REQUESTS.close, { formId: secondId }))?.ok);
   await pending;
   assert.equal(signals[1].aborted, true, '关闭表单时中止仍在运行的动作');
+});
+
+test('多个提交按钮：提交带所选按钮的键；不在 schema 里的键被拒绝；只有一个提交按钮时键为空串', async () => {
+  const keys: Array<string | undefined> = [];
+  const singleKeys: Array<string | undefined> = [];
+  const multi = createFixture({ submitActions: true, submit: (_values, key) => void keys.push(key) });
+  const formId = await multi.open();
+  const unknown = await multi.send(FORM_REQUESTS.submit, { formId, values: { name: 'x' }, submitKey: 'other' });
+  assert.ok(unknown && !unknown.ok && unknown.error.kind === 'validation');
+  const missing = await multi.send(FORM_REQUESTS.submit, { formId, values: { name: 'x' } });
+  assert.ok(missing && !missing.ok, '有多个提交按钮时必须带键');
+  const notText = await multi.send(FORM_REQUESTS.submit, { formId, values: { name: 'x' }, submitKey: 5 });
+  assert.ok(notText && !notText.ok);
+  assert.ok((await multi.send(FORM_REQUESTS.submit, { formId, values: { name: 'x' }, submitKey: 'saveAndMore' }))?.ok);
+  assert.deepEqual(keys, ['saveAndMore']);
+
+  const single = createFixture({ submit: (_values, key) => void singleKeys.push(key) });
+  const singleId = await single.open();
+  assert.ok((await single.send(FORM_REQUESTS.submit, { formId: singleId, values: { name: 'x' } }))?.ok);
+  assert.deepEqual(singleKeys, ['']);
 });
 
 

@@ -18,7 +18,13 @@ import {
   ProviderView,
   UsableModel
 } from '../../domain/models/model-provider';
-import { ResolvedVideoCall } from '../../domain/ports/provider-adapters';
+import {
+  ProviderAdapterByKind,
+  ResolvedAudioCall,
+  ResolvedCall,
+  ResolvedImageCall,
+  ResolvedVideoCall
+} from '../../domain/ports/provider-adapters';
 import { ProviderRegistry } from '../../domain/ports/provider-registry';
 import { ProviderRepository } from '../../domain/ports/provider-repository';
 import { SecretStore } from '../../domain/ports/secret-store';
@@ -189,15 +195,30 @@ export class ProviderService {
    * @throws ProviderError 模型不存在或不是视频模型、模型或服务商已停用、没有适配器，或没有配置访问密钥（分类均为鉴权或参数）。
    */
   async resolveVideoCall(modelId: number): Promise<ResolvedVideoCall> {
+    return this.resolveCall('video', modelId);
+  }
+
+  /** 同 resolveVideoCall，用于图像模型。 */
+  async resolveImageCall(modelId: number): Promise<ResolvedImageCall> {
+    return this.resolveCall('image', modelId);
+  }
+
+  /** 同 resolveVideoCall，用于音频模型。 */
+  async resolveAudioCall(modelId: number): Promise<ResolvedAudioCall> {
+    return this.resolveCall('audio', modelId);
+  }
+
+  private async resolveCall<TKind extends ModelKind>(kind: TKind, modelId: number): Promise<ResolvedCall<ProviderAdapterByKind[TKind]>> {
+    const label = MODEL_KIND_LABELS[kind];
     const model = this.repository.findModelById(modelId);
     const provider = model === undefined ? undefined : this.repository.findProviderById(model.providerId);
-    if (model === undefined || provider === undefined || model.kind !== 'video') {
-      throw new ProviderError('invalid_request', '所选视频模型已不存在，请重新选择。');
+    if (model === undefined || provider === undefined || model.kind !== kind) {
+      throw new ProviderError('invalid_request', `所选${label}模型已不存在，请重新选择。`);
     }
-    const adapter = this.registry.find('video', provider.code);
+    const adapter = this.registry.find(kind, provider.code);
     const descriptor = this.registry.findProvider(provider.code);
     if (adapter === undefined || descriptor === undefined) {
-      throw new ProviderError('invalid_request', `服务商“${provider.displayName}”的视频适配器不可用。`);
+      throw new ProviderError('invalid_request', `服务商“${provider.displayName}”的${label}适配器不可用。`);
     }
     if (!provider.isEnabled || !model.isEnabled) {
       throw new ProviderError('invalid_request', `模型“${model.displayName}”或服务商“${provider.displayName}”已被停用，请到“设置 > 模型”启用。`);

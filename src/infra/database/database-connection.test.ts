@@ -20,7 +20,7 @@ import { MIGRATIONS } from './migrations';
 import { runInTransaction } from './transaction';
 
 const NOW = '2026-01-01T00:00:00.000Z';
-const EXPECTED_TABLE_COUNT = 23;
+const EXPECTED_TABLE_COUNT = 25;
 
 /** 查询库中所有业务表的名称。 */
 function listTableNames(database: DatabaseSync): string[] {
@@ -487,6 +487,39 @@ test('从版本 5 升级到 6：保留项目、作品和集，丢弃阶段记录
       database.prepare("INSERT INTO chapters (run_id, seq, title, content, created_at) VALUES (1, 1, '章', '正文', ?)").run(NOW);
       database.prepare('DELETE FROM stage_runs WHERE id = 1').run();
       assert.equal(countRows(database, 'chapters'), 0, '重建后章节仍随阶段记录级联删除');
+    } finally {
+      database.close();
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('从版本 8 升级到 9：已有资产保留，已有提示词视为基于当前内容，新增版本表', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'ai-video-studio-test-'));
+  const filePath = join(directory, 'upgrade-v8.sqlite');
+  try {
+    const legacy = openDatabase(filePath, MIGRATIONS.slice(0, 8));
+    seedWorkWithEpisode(legacy);
+    const insert = legacy.prepare(
+      "INSERT INTO assets (project_id, kind, name, prompt_zh, created_at, updated_at) VALUES (1, 'prop', ?, ?, ?, ?)"
+    );
+    insert.run('有提示词', '一把钥匙', NOW, NOW);
+    insert.run('没有提示词', '', NOW, NOW);
+    legacy.close();
+
+    const database = openDatabase(filePath);
+    try {
+      assert.equal(readSchemaVersion(database), MIGRATIONS.length);
+      const rows = database
+        .prepare('SELECT name, content_revision, prompt_revision, prompt_content_revision, prompt_status, adopted_version_id FROM assets ORDER BY id')
+        .all() as Array<Record<string, unknown>>;
+      assert.deepEqual(rows.map((row) => Object.values(row)), [
+        ['有提示词', 1, 1, 1, 'none', null],
+        ['没有提示词', 1, 0, 0, 'none', null]
+      ]);
+      assert.deepEqual(listTableNames(database).filter((name) => name.startsWith('asset_')), ['asset_files', 'asset_version_files', 'asset_versions']);
+      assert.deepEqual(database.prepare('PRAGMA foreign_key_check').all(), []);
     } finally {
       database.close();
     }

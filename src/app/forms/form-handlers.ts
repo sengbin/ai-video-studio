@@ -80,7 +80,13 @@ export function registerFormHandlers(router: MessageRouter, catalog: FormCatalog
 
   router.register(FORM_REQUESTS.submit, async (payload) => {
     const { formId, definition } = findSession(payload);
-    await definition.submit(readFormValues(readRecord(payload).values));
+    const source = readRecord(payload);
+    const submitKey = source.submitKey === undefined ? '' : readString(source.submitKey, 'submitKey');
+    const actions = definition.schema.submitActions;
+    if (actions !== undefined && !actions.some((action) => action.key === submitKey)) {
+      throw new ValidationError({ [FORM_LEVEL_ERROR_KEY]: '不支持的提交方式。' });
+    }
+    await definition.submit(readFormValues(source.values), submitKey);
     endSession(formId);
     return {};
   });

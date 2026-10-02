@@ -92,9 +92,23 @@ export interface AssetInput extends AssetContent {
 /** 已保存的资产。 */
 export interface AssetRecord extends AssetInput {
   readonly id: number;
+  /** 表单内容修订号，影响生成的字段每次变化加 1。 */
+  readonly contentRevision: number;
+  /** 提示词修订号，0 表示还没有提示词。 */
+  readonly promptRevision: number;
+  /** 当前提示词依据的表单内容修订号。 */
+  readonly promptContentRevision: number;
+  readonly promptStatus: PromptStatus;
+  /** 提示词生成失败或被中断的原因。 */
+  readonly promptError: string | null;
+  /** 当前采用的生成版本（版本记录标识）；手动上传文件或从未采用时为 null。 */
+  readonly adoptedVersionId: number | null;
   readonly createdAt: string;
   readonly updatedAt: string;
 }
+
+/** 提示词后台生成的状态：没有生成过、生成中、成功、失败、已取消。 */
+export type PromptStatus = 'none' | 'running' | 'succeeded' | 'failed' | 'canceled';
 
 /** 资产文件的用途：参考图（音频资产为参考音频）、缩略图。 */
 export type AssetFileRole = 'reference' | 'thumbnail';
@@ -133,6 +147,26 @@ export interface AssetListItem extends AssetRecord {
   readonly durationSeconds: number | null;
   /** 被多少集绑定使用。 */
   readonly episodeCount: number;
+  /** 生成版本的摘要，用于列表的状态列。 */
+  readonly generation: AssetGenerationSummary;
+}
+
+/** 资产的生成版本摘要。 */
+export interface AssetGenerationSummary {
+  readonly versionCount: number;
+  /** 最新版本（不含已取消）；没有时为 null。 */
+  readonly latest: {
+    readonly id: number;
+    readonly version: number;
+    readonly status: 'queued' | 'running' | 'succeeded' | 'failed' | 'canceled';
+    readonly contentRevision: number;
+    readonly promptRevision: number;
+    readonly errorMessage: string | null;
+  } | null;
+  /** 最新的成功版本号；没有时为 null。 */
+  readonly latestSucceeded: number | null;
+  /** 当前采用的版本号；没有时为 null。 */
+  readonly adoptedVersion: number | null;
 }
 
 /** 资产被使用的一处：某作品某集中绑定到某个实体。 */

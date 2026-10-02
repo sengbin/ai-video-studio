@@ -67,6 +67,8 @@ export function normalizeAssetContent(rawInput: unknown, kind: AssetKind): Norma
 
   if (kind === 'audio') {
     const attributes = readAudioAttributes(source, errors);
+    const promptZh = readText(source, { key: 'promptZh', label: '中文提示词', required: false, maxLength: ASSET_PROMPT_MAX_LENGTH }, errors);
+    const promptEn = readText(source, { key: 'promptEn', label: '英文提示词', required: false, maxLength: ASSET_PROMPT_MAX_LENGTH }, errors);
     const files = readAudioFile(source[ASSET_FILE_FIELD_KEY], errors);
     assertNoFieldErrors(errors);
     return {
@@ -78,8 +80,8 @@ export function normalizeAssetContent(rawInput: unknown, kind: AssetKind): Norma
         background: '',
         referenceAspectRatio: null,
         extraRequirements,
-        promptZh: '',
-        promptEn: ''
+        promptZh,
+        promptEn
       },
       files
     };
@@ -177,15 +179,15 @@ function readImageFiles(value: unknown, errors: FieldErrors): NewAssetFile[] {
   return files;
 }
 
-/** 读取音频资产的参考音频：恰好 1 个文件，按文件头识别格式，时长为页面读取的值且不超过上限。 */
+/** 读取音频资产的参考音频：最多 1 个文件（可以暂时没有，之后上传或由模型生成），按文件头识别格式，时长为页面读取的值且不超过上限。 */
 function readAudioFile(value: unknown, errors: FieldErrors): NewAssetFile[] {
   const key = ASSET_FILE_FIELD_KEY;
   const uploaded = readUploadedFiles(value, key, '音频文件', ASSET_AUDIO_MAX_BYTES, errors);
-  if (uploaded === undefined) {
+  if (uploaded === undefined || uploaded.length === 0) {
     return [];
   }
   if (uploaded.length !== 1) {
-    errors[key] = '请选择 1 个音频文件。';
+    errors[key] = '只能选择 1 个音频文件。';
     return [];
   }
   const [file] = uploaded;

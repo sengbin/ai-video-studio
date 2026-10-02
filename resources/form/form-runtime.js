@@ -255,6 +255,7 @@
     /** 渲染一个字段并登记条目。 */
     function renderField(fieldSchema, initialText) {
       const { kind, control } = createControl(fieldSchema, initialText);
+      if (fieldSchema.disabled) control.setDisabled(true);
       const field = aiUi.field({
         label: kind === 'boolean' ? undefined : fieldSchema.label,
         description: fieldSchema.description,
@@ -389,18 +390,45 @@
     }
 
     const cancelButton = aiUi.button({ text: CANCEL_LABEL, onClick: handlers.onCancel });
-    const submitButton = aiUi.button({ text: schema.submitLabel, variant: 'primary', type: 'submit' });
+    // 没有额外提交按钮时只有一个提交按钮；有时主按钮负责回车提交，其他按钮点击提交。
+    const submitSchemas =
+      schema.submitActions && schema.submitActions.length > 0 ? schema.submitActions : [{ key: '', label: schema.submitLabel, primary: true }];
+    const defaultSubmit = submitSchemas.find((action) => action.primary) || submitSchemas[submitSchemas.length - 1];
+    const submitButtons = submitSchemas.map((action) => ({
+      action,
+      button: aiUi.button({
+        text: action.label,
+        variant: action.primary ? 'primary' : 'secondary',
+        type: action === defaultSubmit ? 'submit' : 'button',
+        onClick: action === defaultSubmit ? undefined : () => void handleSubmit(action)
+      })
+    }));
 
-    /** 切换提交中状态：禁止重复提交并更新按钮文字。 */
-    function setSubmitting(value) {
+    /** 切换提交中状态：禁止重复提交，当前按钮显示“保存中…”。 */
+    function setSubmitting(value, activeAction) {
       isSubmitting = value;
-      submitButton.setDisabled(value);
-      submitButton.setText(value ? SUBMITTING_LABEL : schema.submitLabel);
+      for (const { action, button } of submitButtons) {
+        button.setDisabled(value);
+        button.setText(value && action === activeAction ? SUBMITTING_LABEL : action.label);
+      }
+    }
+
+    /** 所选提交按钮要求覆盖确认时，目标字段已有内容则询问；返回是否继续提交。 */
+    async function confirmSubmitOverwrite(action) {
+      const overwrite = action.confirmOverwrite;
+      if (!overwrite) return true;
+      const filled = overwrite.fields.some((key) => entries.has(key) && String(entries.get(key).control.getValue()).trim() !== '');
+      if (!filled) return true;
+      return aiUi.confirm({
+        title: overwrite.title,
+        message: overwrite.message,
+        confirmText: overwrite.confirmText || OVERWRITE_CONFIRM_TEXT,
+        cancelText: OVERWRITE_CANCEL_TEXT
+      });
     }
 
     /** 校验并提交：成功后由页面关闭弹出页面；失败时保留输入并显示错误。 */
-    async function handleSubmit(event) {
-      event.preventDefault();
+    async function handleSubmit(action) {
       if (isSubmitting) return;
       showSummary('');
       // 文件还在读取时先等它读完，避免提交不完整的内容。
@@ -411,7 +439,8 @@
         invalid[0].control.focus();
         return;
       }
-      setSubmitting(true);
+      if (!(await confirmSubmitOverwrite(action))) return;
+      setSubmitting(true, action);
       try {
         // 需要补充文件信息的字段（缩略图、宽高、时长）：读取失败时标在字段上，不提交。
         const submitted = collectValues();
@@ -426,7 +455,7 @@
             return;
           }
         }
-        await window.hostBridge.request(REQUEST_SUBMIT, { formId, values: submitted });
+        await window.hostBridge.request(REQUEST_SUBMIT, { formId, values: submitted, submitKey: action.key });
         // 保持禁用直到弹出页面关闭，避免重复提交。
         handlers.onSaved();
       } catch (error) {
@@ -437,12 +466,20 @@
 
     const form = aiUi.h(
       'form',
-      { attrs: { novalidate: 'novalidate' }, on: { submit: (event) => void handleSubmit(event) } },
+      {
+        attrs: { novalidate: 'novalidate' },
+        on: {
+          submit: (event) => {
+            event.preventDefault();
+            void handleSubmit(defaultSubmit);
+          }
+        }
+      },
       schema.fields.flatMap((fieldSchema) => [
         ...(schema.actions || []).filter((action) => action.before === fieldSchema.key).map(renderAction),
         renderField(fieldSchema, values[fieldSchema.key] || '')
       ]),
-      aiUi.h('div', { class: 'form-actions' }, cancelButton.element, submitButton.element)
+      aiUi.h('div', { class: 'form-actions' }, cancelButton.element, submitButtons.map((item) => item.button.element))
     );
     const element = aiUi.h('div', {}, summaryElement, form);
     initialSnapshot = JSON.stringify(collectValues());

@@ -50,7 +50,7 @@
 | | `result_frames` | 结果视频的尾帧图片 |
 | | `episode_audio_tracks` | 集的独立音轨（预留，本阶段不开发） |
 
-共 26 张表，其中 `episode_audio_tracks` 为预留；迁移 009 实现后实际创建 25 张（目前已创建 23 张，`asset_versions`、`asset_version_files` 待创建）。
+共 26 张表，其中 `episode_audio_tracks` 为预留，实际创建 25 张（迁移 009 已创建 `asset_versions`、`asset_version_files`）。
 
 ## 3. 关系图
 
@@ -369,7 +369,7 @@ erDiagram
 
 约束：`(project_id, kind, name)` 唯一。
 
-音频类型的资产不使用 `composition`、`style`、`background`、`reference_aspect_ratio`，这些字段保持空；它的描述字段见 4.5。提示词字段在音频资产里用作“音频生成提示词”（迁移 009 实现后启用，内容规则随音频模型确定）。
+音频类型的资产不使用 `composition`、`style`、`background`、`reference_aspect_ratio`，这些字段保持空；它的描述字段见 4.5。提示词字段在音频资产里用作“音频生成提示词”。
 
 #### `asset_files` 资产图片
 
@@ -802,7 +802,7 @@ erDiagram
 | 6 | `006-text-generation` | `stage_runs` 增加“已取消”状态、确认状态、修订号、上游记录、模型、进度、原始输出（重建该表，允许丢弃现有数据）；`screenplays` 增加 `structure_json`；`models` 增加 `kind` | 已实现 |
 | 7 | `007-job-failures` | 重建 `video_jobs`、`video_results`、`result_frames`：失败分类与服务商分类一致并增加 `error_code`，结果视频的时长、宽高允许为空（测试阶段丢弃旧数据） | 已实现（步骤 8） |
 | 8 | `008-shot-groups` | 新增 `shot_groups`，`shots` 增加 `group_id`；重建 `video_jobs`、`video_results`、`result_frames`，任务与结果改为挂在镜头组上（测试阶段丢弃旧数据） | 已实现（步骤 8） |
-| 9 | `009-asset-generation` | `assets` 增加修订号、提示词状态、采用版本字段；新增 `asset_versions`、`asset_version_files` | 待实现（步骤 11） |
+| 9 | `009-asset-generation` | `assets` 增加修订号、提示词状态、采用版本字段；新增 `asset_versions`、`asset_version_files` | 已实现（步骤 11） |
 | 10 | `010-audio-tracks` | `episode_audio_tracks`（预留，开发独立音轨时再新增） | 后续 |
 
 拆分说明：镜头引用资产文件，因此资产在分镜之前建立；前五个迁移创建了 22 张表，迁移 8 再增加镜头组表，各功能的仓库随功能实现逐步补全。

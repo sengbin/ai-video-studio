@@ -15,8 +15,16 @@ import {
   AssetListItem,
   AssetRecord,
   AssetUsageSummary,
-  NewAssetFile
+  NewAssetFile,
+  PromptStatus
 } from '../models/asset';
+import { AssetRevisionUpdate } from '../rules/asset-generation-rules';
+
+/** 后台生成成功后要写入的提示词。 */
+export interface GeneratedPrompts {
+  readonly promptZh: string;
+  readonly promptEn: string;
+}
 
 /** 资产的数据访问接口。 */
 export interface AssetRepository {
@@ -30,12 +38,24 @@ export interface AssetRepository {
   listProjectAssets(projectId: number): Array<{ readonly id: number; readonly kind: AssetKind; readonly name: string }>;
   /** 读取资产的参考文件（含内容），按顺序排列；不含缩略图。 */
   listReferenceFiles(assetId: number): AssetFileRecord[];
-  /** 新增资产及其文件，返回资产标识。 */
+  /** 读取资产的缩略图（含内容），按顺序排列。 */
+  listThumbnailFiles(assetId: number): AssetFileRecord[];
+  /** 资产的参考文件数（不读取内容）。 */
+  countReferenceFiles(assetId: number): number;
+  /** 新增资产及其文件，返回资产标识；已有提示词时视为基于当前内容。 */
   insert(input: AssetInput, files: readonly NewAssetFile[], timestamp: string): number;
-  /** 修改资产内容，并用 files 整体替换原有文件；资产不存在时返回 false。 */
-  update(id: number, content: AssetContent, files: readonly NewAssetFile[], timestamp: string): boolean;
+  /** 修改资产内容，用 files 整体替换原有文件，并写入修订信息；资产不存在时返回 false。 */
+  update(id: number, content: AssetContent, files: readonly NewAssetFile[], timestamp: string, revision: AssetRevisionUpdate): boolean;
   /** 删除资产（连同文件和绑定）；资产不存在时返回 false。 */
   remove(id: number): boolean;
   /** 统计资产被集内实体绑定和镜头声音使用的情况。 */
   getUsage(id: number): AssetUsageSummary;
+  /** 把提示词状态置为生成中；已在生成中或资产不存在时返回 false。 */
+  beginPrompt(id: number, timestamp: string): boolean;
+  /** 后台生成成功：写入提示词，提示词修订号加 1，依据的表单修订号取生成开始时的值。仅在生成中时生效。 */
+  finishPrompt(id: number, prompts: GeneratedPrompts, basedOnContentRevision: number, timestamp: string): boolean;
+  /** 后台生成失败或被取消。仅在生成中时生效。 */
+  endPrompt(id: number, status: Extract<PromptStatus, 'failed' | 'canceled'>, error: string | null, timestamp: string): boolean;
+  /** 列出提示词状态为生成中的资产标识。 */
+  listPromptRunning(): number[];
 }

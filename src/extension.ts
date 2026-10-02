@@ -17,6 +17,8 @@ import { WorkListPages } from './app/pages/work-list-pages';
 import { WorkbenchPages } from './app/pages/workbench-pages';
 import { PanelManager } from './app/panels/panel-manager';
 import { JobChange, JobQueue } from './app/queue/job-queue';
+import { AssetGenerationQueue } from './app/queue/asset-generation-queue';
+import { AssetGenerationService } from './app/services/asset-generation-service';
 import { AssetPromptService } from './app/services/asset-prompt-service';
 import { AssetService } from './app/services/asset-service';
 import { BindingService } from './app/services/binding-service';
@@ -41,6 +43,7 @@ import { CopilotTextGeneration } from './infra/copilot/copilot-text-generation';
 import { VsCodeTextGenerationSettings } from './infra/copilot/vscode-text-generation-settings';
 import { openDatabase } from './infra/database/database-connection';
 import { SqliteAssetRepository } from './infra/database/sqlite-asset-repository';
+import { SqliteAssetVersionRepository } from './infra/database/sqlite-asset-version-repository';
 import { SqliteBindingRepository } from './infra/database/sqlite-binding-repository';
 import { SqliteGenerationProfileRepository } from './infra/database/sqlite-generation-profile-repository';
 import { SqliteGenerationRepository } from './infra/database/sqlite-generation-repository';
@@ -55,6 +58,7 @@ import { FilePromptTemplates } from './infra/prompts/file-prompt-templates';
 import { createBuiltinProviderRegistry } from './infra/providers/builtin-providers';
 import { VsCodeSecretStore } from './infra/secrets/vscode-secret-store';
 import { LocalResultStore } from './infra/storage/local-result-store';
+import { HttpMediaDownloader } from './infra/storage/http-media-downloader';
 import { SidebarActionRegistry } from './sidebar/sidebar-actions';
 import { registerSidebarHandlers } from './sidebar/sidebar-handlers';
 import { SIDEBAR_SECTIONS } from './sidebar/sidebar-menu-config';
@@ -128,7 +132,6 @@ export function activate(context: vscode.ExtensionContext): void {
   const textSettingsService = new TextSettingsService(settingsStore, new CopilotModelCatalog());
   const assetRepository = new SqliteAssetRepository(database);
   const assetService = new AssetService(assetRepository, projectService);
-  const assetPromptService = new AssetPromptService({ text: textGeneration, prompts, projects: projectService });
   const bindingService = new BindingService(new SqliteBindingRepository(database), assetRepository);
   const providerRepository = new SqliteProviderRepository(database);
   const providerService = new ProviderService({
@@ -138,6 +141,35 @@ export function activate(context: vscode.ExtensionContext): void {
   });
   // 把适配器声明的服务商和模型同步到数据库，设置页和后续的参数选择都从数据库读取。
   providerService.syncCatalog();
+
+  // 资产生成：提示词由 Copilot 在后台生成，图片、音频经队列交给图像、音频模型生成；状态变化后通过资产变化事件刷新页面。
+  const assetVersionRepository = new SqliteAssetVersionRepository(database);
+  const notifyAssetsChanged = (): void => assetService.notifyChanged();
+  const assetPromptService = new AssetPromptService({
+    text: textGeneration,
+    prompts,
+    projects: projectService,
+    assets: assetRepository,
+    notify: notifyAssetsChanged
+  });
+  // 上次退出时还在生成的提示词无法继续，置为失败，用户可以在列表里重试。
+  assetPromptService.recoverInterrupted();
+  const assetQueue = new AssetGenerationQueue({
+    versions: assetVersionRepository,
+    assets: assetRepository,
+    calls: providerService,
+    downloader: new HttpMediaDownloader(),
+    notify: notifyAssetsChanged
+  });
+  assetQueue.recover();
+  context.subscriptions.push({ dispose: assetQueue.start(JOB_QUEUE_INTERVAL_MS) });
+  const assetGenerationService = new AssetGenerationService({
+    assets: assetRepository,
+    versions: assetVersionRepository,
+    providers: providerService,
+    scheduler: assetQueue,
+    notify: notifyAssetsChanged
+  });
 
   // 视频生成：结果视频保存在全局存储目录；队列启动时先处理上次退出时遗留的任务。
   const generationRepository = new SqliteGenerationRepository(database);
@@ -188,7 +220,10 @@ export function activate(context: vscode.ExtensionContext): void {
   };
   const projectPages = new ProjectPages(projectService, panels);
   const workListPages = new WorkListPages(services, panels);
-  const assetListPages = new AssetListPages({ projects: projectService, assets: assetService, prompts: assetPromptService }, panels);
+  const assetListPages = new AssetListPages(
+    { projects: projectService, assets: assetService, prompts: assetPromptService, generation: assetGenerationService },
+    panels
+  );
   const settingsPages = new SettingsPages({ text: textSettingsService, providers: providerService }, panels);
   const workbenchPages = new WorkbenchPages(
     { generation: generationService, profiles: profileService, bindings: bindingService, assets: assetService, prompts: assetPromptService, ...services },
