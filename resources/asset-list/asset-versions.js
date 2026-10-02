@@ -4,7 +4,7 @@
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
-// 备注：请求名称与 src/app/pages/asset-list-handlers.ts 一致；依赖 asset-generate.js（aiAssetGenerate）与 form/form-runtime.js（aiForm）；缩略图在这里用 canvas 生成并回传，宿主不引入图像库；对外是 window.aiAssetVersions 的 open、refresh。
+// 备注：请求名称与 src/app/pages/asset-list-handlers.ts 一致；依赖 asset-generate.js（aiAssetGenerate）与 form/form-runtime.js（aiForm）；缩略图在这里用 canvas 生成并回传，宿主不引入图像库；对外是 window.aiAssetVersions 的 open、refresh、viewImage（弹出页查看原图，列表预览也用）。
 // ------------------------------------------------------------------------
 
 'use strict';
@@ -99,12 +99,16 @@
     if (items.length > 0) await request(REQUEST_SAVE_THUMBNAILS, { versionId: version.id, items });
   }
 
-  /** 弹出页查看一张结果图片的原图。 */
-  async function viewOriginal(file, title) {
-    const data = await request(REQUEST_FILE_DATA, { fileId: file.id });
-    if (!data) return;
+  /** 弹出页查看一张图片的原图。 */
+  function viewImage(title, data) {
     const image = aiUi.h('img', { class: 'asset-ver__original', attrs: { src: `data:${data.mime};base64,${data.data}`, alt: title } });
     aiUi.openPage({ title, content: aiUi.h('div', { class: 'asset-ver__viewer' }, image), width: 640, height: 520, minWidth: 320, minHeight: 240, buttons: [{ id: 'close', text: '关闭', isCancel: true }] });
+  }
+
+  /** 查看一张结果图片的原图。 */
+  async function viewOriginal(file, title) {
+    const data = await request(REQUEST_FILE_DATA, { fileId: file.id });
+    if (data) viewImage(title, data);
   }
 
   /** 试听音频：点击后才读取音频内容并播放。 */
@@ -419,5 +423,5 @@
     if (session) await loadList(false);
   }
 
-  window.aiAssetVersions = { open, refresh };
+  window.aiAssetVersions = { open, refresh, viewImage };
 })();

@@ -16,6 +16,7 @@
   const REQUEST_DELETE = 'assets.delete';
   const REQUEST_GENERATE_PROMPT = 'assets.generatePrompt';
   const REQUEST_CANCEL_PROMPT = 'assets.cancelPrompt';
+  const REQUEST_REFERENCE_IMAGE = 'assets.referenceImage';
   const EVENT_CHANGED = 'assets.changed';
   const EVENT_ACTION = 'assets.action';
   const ACTION_CREATE = 'create';
@@ -195,13 +196,23 @@
     }
     if (!asset.thumbnail) return aiUi.h('div', { class: 'asset-thumb asset-thumb--empty', text: '无图' });
     return aiUi.h(
-      'div',
-      { class: 'asset-thumb' },
+      'button',
+      {
+        class: 'asset-thumb asset-thumb--button',
+        attrs: { type: 'button', 'aria-label': `查看原图：${asset.name}` },
+        on: { click: () => void viewReferenceImage(asset) }
+      },
       aiUi.h('img', {
         class: 'asset-thumb__image',
         attrs: { src: `data:${asset.thumbnail.mime};base64,${asset.thumbnail.data}`, alt: asset.name }
       })
     );
+  }
+
+  /** 点击预览缩略图：向宿主取第一张参考图的原图，弹出页查看。 */
+  async function viewReferenceImage(asset) {
+    const data = await runAction(REQUEST_REFERENCE_IMAGE, { id: asset.id });
+    if (data) window.aiAssetVersions.viewImage(asset.name, data);
   }
 
   /** 名称下方的简要说明：图像类取视角与风格，音频取描述。 */

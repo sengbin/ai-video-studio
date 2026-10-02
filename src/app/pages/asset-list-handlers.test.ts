@@ -80,6 +80,23 @@ test('取待处理请求：有则返回并只返回一次', async () => {
   }
 });
 
+test('参考原图：返回第一张参考图的类型与内容，没有参考图时返回错误', async () => {
+  const { database, assets, send } = createFixture();
+  try {
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
+    const file = { name: 'a.png', mimeType: 'image/png', size: png.length, data: png.toString('base64'), width: 1, height: 1 };
+    const withImage = assets.createAsset('scene', { projectName: '项目甲', name: '灯塔', files: JSON.stringify([file]) });
+    const image = await send(ASSET_LIST_REQUESTS.referenceImage, { id: withImage.id });
+    assert.deepEqual(image?.ok && image.data, { mime: 'image/png', data: png.toString('base64') });
+
+    const without = assets.createAsset('scene', { projectName: '项目甲', name: '空场景' });
+    const missing = await send(ASSET_LIST_REQUESTS.referenceImage, { id: without.id });
+    assert.ok(missing && !missing.ok && missing.error.kind === 'not-found');
+  } finally {
+    database.close();
+  }
+});
+
 test('删除：先取名称与使用情况，再删除；不存在或标识无效时返回错误', async () => {
   const { database, assets, send } = createFixture();
   try {

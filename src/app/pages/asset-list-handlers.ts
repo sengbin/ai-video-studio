@@ -7,6 +7,7 @@
 // 备注：不依赖 VS Code；一个页面绑定一种资产类型，请求不需要再带类型；新建、编辑表单由页面用表单请求在弹出页面中完成，删除确认在页面内对话框完成；版本列表、采用等请求直接交给资产生成服务。
 // ------------------------------------------------------------------------
 
+import { NotFoundError } from '../../domain/errors';
 import { AssetKind, AssetListItem } from '../../domain/models/asset';
 import { checkGenerationAvailability, GenerationAvailability, hasUngeneratedChanges, isPromptOutdated } from '../../domain/rules/asset-generation-rules';
 import { readEntityId, readRecord } from '../../domain/rules/field-readers';
@@ -29,6 +30,7 @@ export const ASSET_LIST_REQUESTS = {
   versions: 'assets.versions',
   version: 'assets.version',
   fileData: 'assets.fileData',
+  referenceImage: 'assets.referenceImage',
   saveThumbnails: 'assets.saveThumbnails',
   adopt: 'assets.adopt',
   deleteVersion: 'assets.deleteVersion',
@@ -129,6 +131,14 @@ export function registerAssetListHandlers(
   router.register(ASSET_LIST_REQUESTS.versions, (payload) => generation.listVersions(readAssetId(payload)));
   router.register(ASSET_LIST_REQUESTS.version, (payload) => generation.getVersion(readVersionId(payload)));
   router.register(ASSET_LIST_REQUESTS.fileData, (payload) => generation.getFileData(readEntityId({ id: readRecord(payload).fileId }, '文件')));
+  // 列表预览点击查看原图：取资产的第一张参考图，与缩略图显示的是同一张。
+  router.register(ASSET_LIST_REQUESTS.referenceImage, (payload) => {
+    const [file] = assets.getReferenceFiles(readEntityId(payload, '资产'));
+    if (file === undefined) {
+      throw new NotFoundError('该资产没有参考图。');
+    }
+    return { mime: file.mime, data: file.content.toString('base64') };
+  });
   router.register(ASSET_LIST_REQUESTS.saveThumbnails, (payload) => {
     generation.saveThumbnails(payload);
     return { saved: true };
