@@ -8,7 +8,7 @@
 // ------------------------------------------------------------------------
 
 import { ConflictError, FORM_LEVEL_ERROR_KEY, NotFoundError, ValidationError } from '../../domain/errors';
-import { AssetRecord } from '../../domain/models/asset';
+import { ASSET_KINDS, AssetListItem, AssetRecord, AssetThumbnail } from '../../domain/models/asset';
 import {
   BINDING_PURPOSES,
   BindingContext,
@@ -16,6 +16,7 @@ import {
   BindingRecord,
   BindingSuggestion
 } from '../../domain/models/binding';
+import { ENTITY_KIND_LABELS, EntityKind } from '../../domain/models/screenplay';
 import { AssetRepository } from '../../domain/ports/asset-repository';
 import { BindingRepository } from '../../domain/ports/binding-repository';
 import { FieldErrors, assertNoFieldErrors, readRecord, readText } from '../../domain/rules/field-readers';
@@ -27,6 +28,45 @@ export const BINDING_NOTE_MAX_LENGTH = 200;
 const NOT_FOUND_MESSAGE = '集或实体不存在，或实体不属于这一集所在的作品。';
 const OTHER_PROJECT_MESSAGE = '资产不属于这个作品所在的项目。';
 const DUPLICATE_MESSAGE = '这个实体在本集已经绑定过该资产。';
+
+/** 绑定界面里的一个可选资产。 */
+export interface BindingAssetOption {
+  readonly id: number;
+  readonly name: string;
+  readonly thumbnail: AssetThumbnail | null;
+  /** 音频资产的时长（秒）；图片资产为 null。 */
+  readonly durationSeconds: number | null;
+}
+
+/** 实体已有的一条绑定，带资产缩略图。 */
+export interface BindingItemView {
+  readonly id: number;
+  readonly assetId: number;
+  readonly assetName: string;
+  readonly isPrimary: boolean;
+  readonly thumbnail: AssetThumbnail | null;
+  readonly durationSeconds: number | null;
+}
+
+/** 一个实体的绑定情况：形象绑定与音色绑定（仅角色）。 */
+export interface BindingEntityView {
+  readonly entityId: number;
+  readonly name: string;
+  readonly kind: EntityKind;
+  readonly kindLabel: string;
+  readonly visual: readonly BindingItemView[];
+  readonly voice: readonly BindingItemView[];
+}
+
+/** 一集的绑定界面视图：实体及其绑定，以及本项目里可选的资产。 */
+export interface EpisodeBindingView {
+  readonly episodeId: number;
+  readonly entities: readonly BindingEntityView[];
+  /** 按实体类型分组的可选形象资产（同项目、同类型）。 */
+  readonly visualAssets: Readonly<Record<EntityKind, readonly BindingAssetOption[]>>;
+  /** 可选的音色参考音频（同项目）。 */
+  readonly voiceAssets: readonly BindingAssetOption[];
+}
 
 /** 实体绑定应用服务。 */
 export class BindingService {
@@ -51,6 +91,71 @@ export class BindingService {
   /** 列出一集的全部绑定。 */
   listBindings(episodeId: number): BindingRecord[] {
     return this.bindings.listByEpisode(episodeId);
+  }
+
+  /**
+   * 读取一集的绑定界面视图：启用中的实体各自的形象与音色绑定（主资产在前），以及同项目内可选的资产。
+   * @throws NotFoundError 集不存在。
+   */
+  getEpisodeView(episodeId: number): EpisodeBindingView {
+    const projectId = this.bindings.findProjectId(episodeId);
+    if (projectId === undefined) {
+      throw new NotFoundError('集不存在。');
+    }
+    const projectAssets = new Map<number, AssetListItem>();
+    for (const kind of ASSET_KINDS) {
+      for (const asset of this.assets.list(kind)) {
+        if (asset.projectId === projectId) {
+          projectAssets.set(asset.id, asset);
+        }
+      }
+    }
+    const toOption = (asset: AssetListItem): BindingAssetOption => ({
+      id: asset.id,
+      name: asset.name,
+      thumbnail: asset.thumbnail,
+      durationSeconds: asset.durationSeconds
+    });
+    const byName = (left: BindingAssetOption, right: BindingAssetOption): number => left.name.localeCompare(right.name, 'zh-CN');
+    const optionsOf = (match: (asset: AssetListItem) => boolean): BindingAssetOption[] =>
+      [...projectAssets.values()].filter(match).map(toOption).sort(byName);
+
+    const records = this.bindings.listByEpisode(episodeId);
+    const toItem = (binding: BindingRecord): BindingItemView => {
+      const asset = projectAssets.get(binding.assetId);
+      return {
+        id: binding.id,
+        assetId: binding.assetId,
+        assetName: binding.assetName,
+        isPrimary: binding.isPrimary,
+        thumbnail: asset?.thumbnail ?? null,
+        durationSeconds: asset?.durationSeconds ?? null
+      };
+    };
+    const itemsOf = (entityId: number, purpose: BindingPurpose): BindingItemView[] =>
+      records
+        .filter((binding) => binding.entityId === entityId && binding.purpose === purpose)
+        .sort((left, right) => Number(right.isPrimary) - Number(left.isPrimary) || left.id - right.id)
+        .map(toItem);
+
+    return {
+      episodeId,
+      entities: this.bindings.listEntityCandidates(episodeId).map((entity) => ({
+        entityId: entity.entityId,
+        name: entity.name,
+        kind: entity.kind,
+        kindLabel: ENTITY_KIND_LABELS[entity.kind],
+        visual: itemsOf(entity.entityId, 'visual'),
+        voice: entity.kind === 'character' ? itemsOf(entity.entityId, 'voice') : []
+      })),
+      visualAssets: {
+        character: optionsOf((asset) => asset.kind === 'character'),
+        scene: optionsOf((asset) => asset.kind === 'scene'),
+        prop: optionsOf((asset) => asset.kind === 'prop'),
+        effect: optionsOf((asset) => asset.kind === 'effect')
+      },
+      voiceAssets: optionsOf((asset) => asset.kind === 'audio' && asset.attributes.audio_kind === 'voice')
+    };
   }
 
   /**

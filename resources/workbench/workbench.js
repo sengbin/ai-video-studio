@@ -1,10 +1,10 @@
 // ------------------------------------------------------------------------
 // 名称：workbench.js
-// 说明：生成工作台页脚本：选择作品的一集和视频模型参数，按镜头组提交生成（一组一次生成一个多镜头视频）；显示每组的镜头、总时长、任务状态与历史，失败时显示平台返回的具体原因；支持重新分组、拆分与合并镜头组、取消、编辑镜头后再次生成、打开结果视频。
+// 说明：生成工作台页脚本：选择作品的一集，按“本集 → 作品 → 项目默认”的生成参数按镜头组提交生成（一组一次生成一个多镜头视频）；显示每组的镜头、总时长、任务状态与历史，失败时显示平台返回的具体原因；支持重新分组、拆分与合并镜头组、取消、编辑镜头后再次生成、打开结果视频。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
-// 备注：请求与事件名称与 src/app/pages/workbench-handlers.ts 一致；“编辑镜头”“确认分镜脚本”复用 stage/stage.js 的产出层（aiStage）；依赖 shared/page-format.js（pageFormat）。
+// 备注：请求与事件名称与 src/app/pages/workbench-handlers.ts 一致；“编辑镜头”“确认分镜脚本”复用 stage/stage.js 的产出层（aiStage）；“实体绑定”由 workbench/bindings.js（aiBindings）提供，“生成参数”的合并与编辑由 workbench/profile.js（aiProfile）提供；依赖 shared/page-format.js（pageFormat）。
 // ------------------------------------------------------------------------
 
 'use strict';
@@ -12,6 +12,8 @@
 (function () {
   const REQUEST_CATALOG = 'workbench.catalog';
   const REQUEST_EPISODE = 'workbench.episode';
+  const REQUEST_PROFILE = 'workbench.profile';
+  const REQUEST_SAVE_PROFILE = 'workbench.saveProfile';
   const REQUEST_SUBMIT = 'workbench.submit';
   const REQUEST_REGROUP = 'workbench.regroup';
   const REQUEST_SPLIT_GROUP = 'workbench.splitGroup';
@@ -23,8 +25,6 @@
 
   const GENERIC_ERROR_TEXT = '操作失败，请重试。';
   const REFRESH_DELAY_MS = 150;
-  const PREFERRED_RESOLUTION = '720P';
-  const AUDIO_MODE_LABELS = { native: '模型生成声音', none: '无声' };
   const ACTIVE_STATUSES = ['waiting', 'queued', 'running'];
   const STATUS_CLASSES = {
     waiting: 'status-warning',
@@ -45,8 +45,10 @@
   let catalog = null;
   /** 当前选择的集，值为“作品标识:集标识”；没有可选的集时为空串。 */
   let episodeKey = '';
-  /** 当前选择的生成参数。 */
-  const params = { modelId: '', aspectRatio: '', resolution: '', audioMode: '' };
+  /** 当前集的生成参数视图（作品默认、本集覆盖、生效值）；尚未加载成功时为 null。 */
+  let profile = null;
+  /** 按清单与参数视图算出的生效参数（见 profile.js）；没有参数视图时为 null。 */
+  let resolved = null;
   /** 当前集的工作台视图；尚未加载成功时为 null。 */
   let view = null;
   let loadError = '';
@@ -104,74 +106,75 @@
   }
 
   function selectedModel() {
-    return catalog ? catalog.models.find((model) => String(model.id) === params.modelId) : undefined;
+    return resolved ? resolved.model : undefined;
   }
 
-  /** 让参数保持在当前模型支持的范围内：不合法的值换成默认值。 */
-  function normalizeParams() {
+  /** 生成参数是否可用于提交：选了可用模型，且各参数都在该模型支持的范围内。 */
+  function paramsReady() {
+    return Boolean(resolved && resolved.model) && Object.keys(resolved.issues).length === 0;
+  }
+
+  /** 按清单与参数视图重新算出生效参数。 */
+  function updateResolved() {
+    resolved = catalog && profile ? aiProfile.resolve(catalog, profile) : null;
+  }
+
+  /** 已选择的集不在清单里时（如被删除），改选第一个。 */
+  function normalizeEpisodeKey() {
     if (!catalog) return;
-    if (!catalog.models.some((model) => String(model.id) === params.modelId)) {
-      params.modelId = catalog.models.length > 0 ? String(catalog.models[0].id) : '';
-    }
-    const model = selectedModel();
-    const pick = (current, values, preferred) =>
-      values.includes(current) ? current : preferred && values.includes(preferred) ? preferred : values[0] || '';
-    params.aspectRatio = pick(params.aspectRatio, model ? model.aspectRatios : []);
-    params.resolution = pick(params.resolution, model ? model.resolutions : [], PREFERRED_RESOLUTION);
-    params.audioMode = pick(params.audioMode, model ? model.audioModes : [], 'native');
     const keys = episodeOptions().map((option) => option.value);
     if (!keys.includes(episodeKey)) episodeKey = keys[0] || '';
   }
 
-  /** 工具栏：集、模型、画幅、分辨率、声音；选项没有变化时保持原样。 */
+  /** 打开生成参数页：编辑作品默认与本集覆盖。 */
+  function openProfile() {
+    aiProfile.open({ getState: () => ({ catalog, profile }), save: saveProfile });
+  }
+
+  /** 保存某一级的参数修改，成功后用返回的视图刷新工具栏、提交按钮和参数页。 */
+  async function saveProfile(scope, changes) {
+    const { workId, episodeId } = parseEpisodeKey(episodeKey);
+    try {
+      profile = await window.hostBridge.request(REQUEST_SAVE_PROFILE, { scope, workId, episodeId, changes });
+    } catch (error) {
+      return { ok: false, message: errorText(error) };
+    }
+    updateResolved();
+    renderToolbar();
+    render();
+    aiProfile.refresh();
+    return { ok: true };
+  }
+
+  /** 工具栏：集、当前生效参数的摘要与“生成参数”；内容没有变化时保持原样。 */
   function renderToolbar() {
-    const model = selectedModel();
-    const key = JSON.stringify([episodeOptions(), catalog.models, episodeKey, params]);
+    const summary = resolved ? aiProfile.summarize(resolved) : '';
+    const key = JSON.stringify([episodeOptions(), episodeKey, summary, Boolean(profile)]);
     if (key === toolbarKey) return;
     toolbarKey = key;
     toolbarElement.textContent = '';
 
-    const makeSelect = (className, ariaLabel, options, value, onChange) => {
-      const select = aiUi.select({ options, value, allowEmpty: false, ariaLabel, onChange });
-      toolbarElement.append(aiUi.h('div', { class: className }, select.element));
-    };
-
-    makeSelect('wb-filter wb-filter--episode', '选择集', episodeOptions(), episodeKey, (value) => {
-      episodeKey = value;
-      view = null;
-      isLoading = true;
-      render();
-      void loadEpisode(false);
-    });
-    if (catalog.models.length === 0) return;
-    makeSelect(
-      'wb-filter wb-filter--model',
-      '视频模型',
-      catalog.models.map((item) => ({ value: String(item.id), label: `${item.displayName}（${item.providerName}）` })),
-      params.modelId,
-      (value) => {
-        params.modelId = value;
-        normalizeParams();
-        toolbarKey = null;
-        renderToolbar();
+    const episodeSelect = aiUi.select({
+      options: episodeOptions(),
+      value: episodeKey,
+      allowEmpty: false,
+      ariaLabel: '选择集',
+      onChange: (value) => {
+        episodeKey = value;
+        view = null;
+        profile = null;
+        updateResolved();
+        isLoading = true;
         render();
+        void loadEpisode(false);
       }
+    });
+    toolbarElement.append(aiUi.h('div', { class: 'wb-filter wb-filter--episode' }, episodeSelect.element));
+    if (!profile) return;
+    toolbarElement.append(
+      aiUi.h('span', { class: 'description wb-toolbar__summary', text: summary, attrs: { title: summary } }),
+      aiUi.button({ text: '生成参数', onClick: openProfile }).element
     );
-    if (model.aspectRatios.length > 0) {
-      makeSelect('wb-filter wb-filter--param', '画幅', model.aspectRatios, params.aspectRatio, (value) => (params.aspectRatio = value));
-    }
-    if (model.resolutions.length > 0) {
-      makeSelect('wb-filter wb-filter--param', '分辨率', model.resolutions, params.resolution, (value) => (params.resolution = value));
-    }
-    if (model.audioModes.length > 0) {
-      makeSelect(
-        'wb-filter wb-filter--audio',
-        '声音',
-        model.audioModes.map((mode) => ({ value: mode, label: AUDIO_MODE_LABELS[mode] || mode })),
-        params.audioMode,
-        (value) => (params.audioMode = value)
-      );
-    }
   }
 
   /** 字节数显示为 KB 或 MB。 */
@@ -217,10 +220,10 @@
       episodeId,
       groupIds: groups.map((group) => group.id),
       params: {
-        modelId: Number(params.modelId),
-        aspectRatio: params.aspectRatio,
-        resolution: params.resolution,
-        audioMode: params.audioMode
+        modelId: Number(resolved.values.modelId),
+        aspectRatio: resolved.values.aspectRatio,
+        resolution: resolved.values.resolution,
+        audioMode: resolved.values.audioMode
       }
     });
     groups.forEach((group) => submitting.delete(group.id));
@@ -399,7 +402,7 @@
   /** 镜头组的操作：任务进行中显示“取消”，否则显示“生成”或“重新生成”；可并入上一组；始终可以编辑镜头。 */
   function renderGroupActions(group, index) {
     const active = group.jobs.find((job) => ACTIVE_STATUSES.includes(job.status));
-    const canSubmit = view.canGenerate && Boolean(selectedModel()) && !submitting.has(group.id) && !exceedsModel(group);
+    const canSubmit = view.canGenerate && paramsReady() && !submitting.has(group.id) && !exceedsModel(group);
     const buttons = [];
     if (active) {
       buttons.push(aiUi.button({ text: '取消', compact: true, variant: 'danger', ariaLabel: `取消第 ${group.seq} 组的任务`, onClick: () => void cancelJob(active) }));
@@ -434,6 +437,16 @@
     if (catalog.models.length === 0) {
       notices.push(aiUi.h('p', { class: 'status-warning wb-notice', text: '没有可用的视频模型。请在“模型设置”中启用服务商、填写访问密钥并启用视频模型。' }));
     }
+    if (resolved && Object.keys(resolved.issues).length > 0) {
+      notices.push(
+        aiUi.h(
+          'div',
+          { class: 'wb-notice' },
+          aiUi.h('span', { class: 'status-warning', text: `生成参数需要调整：${Object.values(resolved.issues).join('')}` }),
+          aiUi.button({ text: '生成参数', compact: true, onClick: openProfile }).element
+        )
+      );
+    }
     if (view && view.blockReason) {
       notices.push(
         aiUi.h(
@@ -447,16 +460,22 @@
     return notices;
   }
 
+  /** 打开本集的实体绑定页。 */
+  function openBindings() {
+    aiBindings.open(parseEpisodeKey(episodeKey).episodeId);
+  }
+
   /** 批量操作与重新分组：提交还没有结果也没有进行中任务的组；按填写的时长重新分组。 */
   function renderBatchBar() {
     const pending = view.groups.filter(
       (group) => !submitting.has(group.id) && !exceedsModel(group) && !group.jobs.some((job) => ACTIVE_STATUSES.includes(job.status) || job.status === 'succeeded')
     );
-    const enabled = view.canGenerate && Boolean(selectedModel()) && pending.length > 0;
+    const enabled = view.canGenerate && paramsReady() && pending.length > 0;
     const max = modelMaxSeconds();
     if (regroupSeconds === '') regroupSeconds = String(max !== null && max <= 120 ? max : view.groupMaxSeconds);
     const secondsInput = aiUi.textInput({ value: regroupSeconds, ariaLabel: '重新分组时每组最长（秒）', onChange: (value) => (regroupSeconds = value) });
     const regroupDisabled = view.groups.some(hasActiveJob);
+    const unboundCount = new Set(view.groups.flatMap((group) => group.entities.filter((entity) => !entity.bound).map((entity) => entity.id))).size;
     return aiUi.h(
       'div',
       { class: 'wb-batch' },
@@ -467,6 +486,7 @@
         onClick: () => void submit(pending)
       }).element,
       aiUi.button({ text: '查看分镜脚本', onClick: openStoryboard }).element,
+      aiUi.button({ text: unboundCount > 0 ? `实体绑定（${unboundCount} 个未绑定）` : '实体绑定', onClick: openBindings }).element,
       aiUi.h(
         'div',
         { class: 'wb-regroup' },
@@ -514,12 +534,16 @@
     }
     loadError = '';
     try {
-      view = await window.hostBridge.request(REQUEST_EPISODE, parseEpisodeKey(episodeKey));
+      const target = parseEpisodeKey(episodeKey);
+      [view, profile] = await Promise.all([window.hostBridge.request(REQUEST_EPISODE, target), window.hostBridge.request(REQUEST_PROFILE, target)]);
+      updateResolved();
     } catch (error) {
       loadError = errorText(error);
     }
     isLoading = false;
+    renderToolbar();
     render();
+    aiProfile.refresh();
   }
 
   /** 加载清单与当前集；showLoading 为 false 时保留现有内容（后台刷新）。 */
@@ -531,7 +555,7 @@
     loadError = '';
     try {
       catalog = await window.hostBridge.request(REQUEST_CATALOG);
-      normalizeParams();
+      normalizeEpisodeKey();
       renderToolbar();
       // 作品被删除后，它的分镜脚本产出层没有意义，自动关闭。
       aiStage.closeMissing(catalog.works.map((work) => work.id));
@@ -547,7 +571,10 @@
   /** 数据变化后稍作合并再刷新，任务状态频繁变化时避免反复重绘。 */
   function scheduleRefresh() {
     window.clearTimeout(refreshTimer);
-    refreshTimer = window.setTimeout(() => void loadAll(false), REFRESH_DELAY_MS);
+    refreshTimer = window.setTimeout(() => {
+      void loadAll(false);
+      void aiBindings.refresh();
+    }, REFRESH_DELAY_MS);
   }
 
   /** 渲染页面骨架：工具栏、操作结果、内容区。 */

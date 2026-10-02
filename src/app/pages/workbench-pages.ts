@@ -12,6 +12,7 @@ import { createStoryboardFormCatalog } from '../forms/storyboard-form';
 import { MessageRouter } from '../messaging/message-router';
 import { WORKBENCH_PAGE_RESOURCES } from '../panels/page-resources';
 import { PanelManager } from '../panels/panel-manager';
+import { AssetService } from '../services/asset-service';
 import { ProjectService } from '../services/project-service';
 import { STAGE_EVENTS } from './stage-handlers';
 import { WORKBENCH_EVENTS, WorkbenchHost, WorkbenchServices, registerWorkbenchHandlers } from './workbench-handlers';
@@ -24,6 +25,7 @@ const WORKBENCH_DESCRIPTION = '按镜头组为已确认的分镜脚本生成视�
 /** 工作台页依赖的服务。 */
 export interface WorkbenchPageServices extends WorkbenchServices {
   readonly projects: ProjectService;
+  readonly assets: AssetService;
 }
 
 /** 工作台页的入口。 */
@@ -39,7 +41,7 @@ export class WorkbenchPages {
     if (this.panels.reveal(WORKBENCH_PANEL_KEY)) {
       return;
     }
-    const { generation, works, stages, projects, storyboards } = this.services;
+    const { generation, profiles, bindings, assets, works, stages, projects, storyboards } = this.services;
     const router = new MessageRouter();
     registerWorkbenchHandlers(router, this.services, this.host);
     // 产出层里的“重新生成”会弹出分镜表单；作品和集都已确定，开始后产出层随阶段事件自行刷新。
@@ -59,6 +61,9 @@ export class WorkbenchPages {
       generation.onDidChangeJobs(() => panel.postEvent(WORKBENCH_EVENTS.changed)),
       works.onDidChangeWorks(() => panel.postEvent(WORKBENCH_EVENTS.changed)),
       projects.onDidChangeProjects(() => panel.postEvent(WORKBENCH_EVENTS.changed)),
+      bindings.onDidChangeBindings(() => panel.postEvent(WORKBENCH_EVENTS.changed)),
+      profiles.onDidChangeProfiles(() => panel.postEvent(WORKBENCH_EVENTS.changed)),
+      assets.onDidChangeAssets(() => panel.postEvent(WORKBENCH_EVENTS.changed)),
       stages.onDidChange((change) => {
         panel.postEvent(WORKBENCH_EVENTS.changed);
         panel.postEvent(STAGE_EVENTS.changed, { workId: change.workId, runId: change.runId });

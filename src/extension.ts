@@ -18,7 +18,9 @@ import { WorkbenchPages } from './app/pages/workbench-pages';
 import { PanelManager } from './app/panels/panel-manager';
 import { JobChange, JobQueue } from './app/queue/job-queue';
 import { AssetService } from './app/services/asset-service';
+import { BindingService } from './app/services/binding-service';
 import { ChangeNotifier } from './app/services/change-notifier';
+import { GenerationProfileService } from './app/services/generation-profile-service';
 import { GenerationService } from './app/services/generation-service';
 import { ProjectService } from './app/services/project-service';
 import { ProviderService } from './app/services/provider-service';
@@ -39,6 +41,7 @@ import { VsCodeTextGenerationSettings } from './infra/copilot/vscode-text-genera
 import { openDatabase } from './infra/database/database-connection';
 import { SqliteAssetRepository } from './infra/database/sqlite-asset-repository';
 import { SqliteBindingRepository } from './infra/database/sqlite-binding-repository';
+import { SqliteGenerationProfileRepository } from './infra/database/sqlite-generation-profile-repository';
 import { SqliteGenerationRepository } from './infra/database/sqlite-generation-repository';
 import { SqliteProjectRepository } from './infra/database/sqlite-project-repository';
 import { SqliteProviderRepository } from './infra/database/sqlite-provider-repository';
@@ -121,7 +124,9 @@ export function activate(context: vscode.ExtensionContext): void {
     stages: stageService
   });
   const textSettingsService = new TextSettingsService(settingsStore, new CopilotModelCatalog());
-  const assetService = new AssetService(new SqliteAssetRepository(database), projectService);
+  const assetRepository = new SqliteAssetRepository(database);
+  const assetService = new AssetService(assetRepository, projectService);
+  const bindingService = new BindingService(new SqliteBindingRepository(database), assetRepository);
   const providerRepository = new SqliteProviderRepository(database);
   const providerService = new ProviderService({
     repository: providerRepository,
@@ -152,7 +157,7 @@ export function activate(context: vscode.ExtensionContext): void {
     screenplays,
     storyboards,
     bindings: new SqliteBindingRepository(database),
-    assets: new SqliteAssetRepository(database),
+    assets: assetRepository,
     jobs: generationRepository,
     media: generationRepository,
     results: resultStore,
@@ -160,6 +165,13 @@ export function activate(context: vscode.ExtensionContext): void {
     providers: providerService,
     scheduler: jobQueue,
     changes: jobChanges
+  });
+  const profileService = new GenerationProfileService({
+    profiles: new SqliteGenerationProfileRepository(database),
+    works: workService,
+    projects: projectService,
+    screenplays,
+    models: providerRepository
   });
 
   // 页面。
@@ -176,7 +188,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const assetListPages = new AssetListPages({ projects: projectService, assets: assetService }, panels);
   const settingsPages = new SettingsPages({ text: textSettingsService, providers: providerService }, panels);
   const workbenchPages = new WorkbenchPages(
-    { generation: generationService, ...services },
+    { generation: generationService, profiles: profileService, bindings: bindingService, assets: assetService, ...services },
     // 结果视频用系统默认的视频播放器打开。
     { openFile: async (absolutePath) => void (await vscode.env.openExternal(vscode.Uri.file(absolutePath))) },
     panels

@@ -9,17 +9,22 @@
 
 import { readEntityId, readRecord } from '../../domain/rules/field-readers';
 import { MessageRouter } from '../messaging/message-router';
+import { BindingService } from '../services/binding-service';
+import { GenerationProfileService } from '../services/generation-profile-service';
 import { GenerationService } from '../services/generation-service';
 import { ScreenplayService } from '../services/screenplay-service';
 import { StageService } from '../services/stage-service';
 import { StoryboardService } from '../services/storyboard-service';
 import { WorkService } from '../services/work-service';
+import { registerBindingHandlers } from './binding-handlers';
 import { registerStageHandlers } from './stage-handlers';
 
 /** 工作台使用的请求名称，需与 resources/workbench/workbench.js 一致。 */
 export const WORKBENCH_REQUESTS = {
   catalog: 'workbench.catalog',
   episode: 'workbench.episode',
+  profile: 'workbench.profile',
+  saveProfile: 'workbench.saveProfile',
   submit: 'workbench.submit',
   regroup: 'workbench.regroup',
   splitGroup: 'workbench.splitGroup',
@@ -36,6 +41,8 @@ export const WORKBENCH_EVENTS = {
 /** 工作台依赖的服务。 */
 export interface WorkbenchServices {
   readonly generation: GenerationService;
+  readonly profiles: GenerationProfileService;
+  readonly bindings: BindingService;
   readonly works: WorkService;
   readonly stages: StageService;
   readonly screenplays: ScreenplayService;
@@ -55,8 +62,9 @@ export interface WorkbenchHost {
  * @param host 宿主能力。
  */
 export function registerWorkbenchHandlers(router: MessageRouter, services: WorkbenchServices, host: WorkbenchHost): void {
-  const { generation, works, stages, screenplays, storyboards } = services;
+  const { generation, profiles, bindings, works, stages, screenplays, storyboards } = services;
 
+  registerBindingHandlers(router, bindings);
   router.register(WORKBENCH_REQUESTS.catalog, () => generation.getCatalog());
 
   router.register(WORKBENCH_REQUESTS.episode, (payload) => {
@@ -64,8 +72,13 @@ export function registerWorkbenchHandlers(router: MessageRouter, services: Workb
     return generation.getEpisode(readEntityId({ id: record.workId }, '作品'), readEntityId({ id: record.episodeId }, '集'));
   });
 
-  router.register(WORKBENCH_REQUESTS.submit, (payload) => generation.submit(payload));
+  router.register(WORKBENCH_REQUESTS.profile, (payload) => {
+    const record = readRecord(payload);
+    return profiles.getView(readEntityId({ id: record.workId }, '作品'), readEntityId({ id: record.episodeId }, '集'));
+  });
+  router.register(WORKBENCH_REQUESTS.saveProfile, (payload) => profiles.save(payload));
 
+  router.register(WORKBENCH_REQUESTS.submit, (payload) => generation.submit(payload));
   router.register(WORKBENCH_REQUESTS.regroup, (payload) => {
     generation.regroup(payload);
     return { done: true };

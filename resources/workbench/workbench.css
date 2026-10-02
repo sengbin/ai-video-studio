@@ -1,7 +1,7 @@
 /*
  * ------------------------------------------------------------------------
  * 名称：workbench.css
- * 说明：生成工作台页样式：工具栏的选择器宽度、操作结果与提示、批量操作行、镜头内容、任务状态、失败原因和历史记录。
+ * 说明：生成工作台页样式：工具栏的选择器宽度、操作结果与提示、批量操作行、镜头内容、任务状态、失败原因和历史记录，以及实体绑定弹出页。
  * 作者：Lion
  * 邮箱：chengbin@3578.cn
  * 日期：2026-10-02
@@ -25,16 +25,12 @@
   width: 300px;
 }
 
-.wb-filter--model {
-  width: 220px;
-}
-
-.wb-filter--param {
-  width: 96px;
-}
-
-.wb-filter--audio {
-  width: 140px;
+/* 当前生效参数的摘要在空间不够时截断，完整内容在悬停提示里 */
+.wb-toolbar__summary {
+  max-width: 360px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* 操作结果可能有多行（逐个镜头的提醒与未提交原因） */
@@ -166,4 +162,73 @@
 
 .wb-history[open] > summary {
   margin: 0 0 6px;
+}
+
+/* 实体绑定弹出页：顶部汇总与操作、实体表、资产缩略图与选择资产列表 */
+.wb-bind__bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0 0 8px;
+}
+
+.wb-bind-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.wb-bind-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.wb-bind-item__name {
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wb-bind-thumb {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  overflow: hidden;
+  border: 1px solid var(--table-border);
+  border-radius: 4px;
+}
+
+.wb-bind-thumb--empty {
+  color: var(--vscode-descriptionForeground);
+  font-size: 11px;
+}
+
+.wb-bind-thumb__image {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: cover;
+}
+
+.wb-bind-picker__search {
+  margin: 0 0 8px;
+}
+
+/* 生成参数弹出页：范围切换下的各字段竖向排列 */
+.wb-profile__fields {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.wb-profile > * + * {
+  margin-top: 6px;
 }

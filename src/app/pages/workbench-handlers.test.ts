@@ -10,12 +10,15 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { MessageRouter } from '../messaging/message-router';
+import { BindingService } from '../services/binding-service';
+import { GenerationProfileService } from '../services/generation-profile-service';
 import { GenerationService } from '../services/generation-service';
 import { ScreenplayService } from '../services/screenplay-service';
 import { StageService } from '../services/stage-service';
 import { StoryboardService } from '../services/storyboard-service';
 import { WorkService } from '../services/work-service';
 import { STAGE_REQUESTS } from './stage-handlers';
+import { BINDING_REQUESTS } from './binding-handlers';
 import { WORKBENCH_REQUESTS, registerWorkbenchHandlers } from './workbench-handlers';
 
 /** 创建路由器与记录调用的替身。 */
@@ -49,6 +52,22 @@ function createFixture() {
     router,
     {
       generation,
+      profiles: {
+        getView: (workId: number, episodeId: number) => {
+          calls.push(['profile', [workId, episodeId]]);
+          return { workId, episodeId };
+        },
+        save: (payload: unknown) => {
+          calls.push(['saveProfile', payload]);
+          return { saved: true };
+        }
+      } as unknown as GenerationProfileService,
+      bindings: {
+        getEpisodeView: (episodeId: number) => {
+          calls.push(['bindingView', episodeId]);
+          return { episodeId, entities: [] };
+        }
+      } as unknown as BindingService,
       works: { getWork: (id: number) => ({ id }) } as unknown as WorkService,
       stages: {} as StageService,
       screenplays: {} as ScreenplayService,
@@ -100,6 +119,22 @@ test('打开结果视频：取得本机路径后交给宿主打开', async () =>
   assert.deepEqual(await callOk(WORKBENCH_REQUESTS.openResult, { resultId: 9 }), { opened: true });
   assert.deepEqual(opened, ['/store/videos/1.mp4']);
   assert.deepEqual(calls, [['resultPath', { resultId: 9 }]]);
+});
+
+test('绑定请求已注册：读取一集的绑定视图转发给绑定服务', async () => {
+  const { calls, callOk } = createFixture();
+  assert.deepEqual(await callOk(BINDING_REQUESTS.view, { episodeId: 3 }), { episodeId: 3, entities: [] });
+  assert.deepEqual(calls, [['bindingView', 3]]);
+});
+
+test('生成参数请求：读取与保存转发给参数服务，读取时标识不合法会报错', async () => {
+  const { calls, callOk, send } = createFixture();
+  assert.deepEqual(await callOk(WORKBENCH_REQUESTS.profile, { workId: 1, episodeId: 2 }), { workId: 1, episodeId: 2 });
+  const body = { scope: 'work', workId: 1, episodeId: 2, changes: { resolution: '720P' } };
+  assert.deepEqual(await callOk(WORKBENCH_REQUESTS.saveProfile, body), { saved: true });
+  assert.deepEqual(calls, [['profile', [1, 2]], ['saveProfile', body]]);
+  const response = await send(WORKBENCH_REQUESTS.profile, { workId: 'x', episodeId: 2 });
+  assert.ok(response !== undefined && !response.ok);
 });
 
 test('阶段产出层的请求已注册：校验作品归属失败时返回错误而不是找不到处理函数', async () => {

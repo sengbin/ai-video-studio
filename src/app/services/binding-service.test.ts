@@ -161,6 +161,39 @@ test('按名称自动匹配：实体名称或别名与同项目同类型资产�
   }
 });
 
+test('绑定界面视图：只含启用的实体与同项目资产，主资产在前，音色只给角色', () => {
+  const { database, assets, service, episode1, guard, lighthouse } = createFixture();
+  try {
+    const day = assets.createAsset('character', { projectName: '项目甲', name: '守夜人·日常' });
+    const rain = assets.createAsset('character', { projectName: '项目甲', name: '守夜人·雨天' });
+    assets.createAsset('character', { projectName: '项目乙', name: '乙角色' });
+    assets.createAsset('scene', { projectName: '项目甲', name: '灯塔' });
+    const voice = assets.createAsset('audio', { projectName: '项目甲', name: '低沉嗓音', audioKind: '音色参考', files: AUDIO_FILES });
+    assets.createAsset('audio', { projectName: '项目甲', name: '配乐', audioKind: '背景音乐', files: AUDIO_FILES });
+
+    service.bind({ episodeId: episode1, entityId: guard, assetId: day.id });
+    const second = service.bind({ episodeId: episode1, entityId: guard, assetId: rain.id });
+    service.setPrimary(second.id);
+    service.bind({ episodeId: episode1, entityId: guard, assetId: voice.id, purpose: 'voice' });
+
+    const view = service.getEpisodeView(episode1);
+    assert.deepEqual(view.entities.map((entity) => [entity.name, entity.kindLabel]), [['守夜人', '角色'], ['灯塔', '场景']], '停用的实体不出现');
+    const [guardView, lighthouseView] = view.entities;
+    assert.equal(guardView.entityId, guard);
+    assert.deepEqual(guardView.visual.map((item) => [item.assetName, item.isPrimary]), [['守夜人·雨天', true], ['守夜人·日常', false]]);
+    assert.deepEqual(guardView.voice.map((item) => [item.assetName, item.durationSeconds]), [['低沉嗓音', 3]]);
+    assert.equal(lighthouseView.entityId, lighthouse);
+    assert.deepEqual([lighthouseView.visual, lighthouseView.voice], [[], []]);
+
+    assert.deepEqual(view.visualAssets.character.map((asset) => asset.name), ['守夜人·日常', '守夜人·雨天'], '不含其他项目的资产');
+    assert.deepEqual(view.visualAssets.scene.map((asset) => asset.name), ['灯塔']);
+    assert.deepEqual(view.voiceAssets.map((asset) => asset.name), ['低沉嗓音'], '只含音色参考音频');
+    assert.throws(() => service.getEpisodeView(9999), NotFoundError);
+  } finally {
+    database.close();
+  }
+});
+
 test('数据变化通知，以及删除资产、集时绑定随之清除', () => {
   const { database, assets, service, episode1, guard } = createFixture();
   try {
