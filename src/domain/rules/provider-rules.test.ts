@@ -36,7 +36,7 @@ function fieldErrorsOf(action: () => unknown): Record<string, string> {
 }
 
 test('密钥名称包含服务商代码', () => {
-  assert.equal(providerApiKeySecretKey('qianwen'), 'aiVideoStudio.provider.qianwen.apiKey');
+  assert.equal(providerApiKeySecretKey('qianwen'), 'aigcVideoStudio.provider.qianwen.apiKey');
 });
 
 test('设置默认值合并：缺失取默认值，不再声明的旧键丢弃', () => {

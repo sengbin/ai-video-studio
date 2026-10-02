@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：extension.ts
-// 说明：AI Video Studio（智影）扩展入口，负责激活时装配数据库、服务、页面与侧栏。
+// 说明：AIGC Video Studio（AIGC 视频工作室）扩展入口，负责激活时装配数据库、服务、页面与侧栏。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-09-30
@@ -68,7 +68,7 @@ import { SIDEBAR_SECTIONS } from './sidebar/sidebar-menu-config';
 import { SIDEBAR_VIEW_ID, SidebarViewProvider } from './sidebar/sidebar-view-provider';
 
 /** 数据库文件名，位于扩展的全局存储目录。 */
-const DATABASE_FILE_NAME = 'ai-video-studio.sqlite';
+const DATABASE_FILE_NAME = 'aigc-video-studio.sqlite';
 
 /** 任务完成通知上的按钮文字。 */
 const WORKBENCH_ACTION_LABEL = '打开工作台';
@@ -333,7 +333,7 @@ function openDatabaseOrReport(context: vscode.ExtensionContext): ReturnType<type
     return openDatabase(vscode.Uri.joinPath(context.globalStorageUri, DATABASE_FILE_NAME).fsPath);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
-    void vscode.window.showErrorMessage(`AI Video Studio 无法打开数据库：${detail}`);
+    void vscode.window.showErrorMessage(`AIGC Video Studio 无法打开数据库：${detail}`);
     return undefined;
   }
 }

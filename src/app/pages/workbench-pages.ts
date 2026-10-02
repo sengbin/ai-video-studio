@@ -21,7 +21,7 @@ import { STAGE_EVENTS } from './stage-handlers';
 import { WORKBENCH_EVENTS, WorkbenchHost, WorkbenchServices, registerWorkbenchHandlers } from './workbench-handlers';
 
 const WORKBENCH_PANEL_KEY = 'workbench';
-const WORKBENCH_VIEW_TYPE = 'aiVideoStudio.workbench';
+const WORKBENCH_VIEW_TYPE = 'aigcVideoStudio.workbench';
 const WORKBENCH_TITLE = '生成工作台';
 const WORKBENCH_DESCRIPTION = '按镜头组为已确认的分镜脚本生成视频，一组一次生成一个多镜头视频；生成失败时显示平台返回的具体原因，修改后可再次生成。';
 

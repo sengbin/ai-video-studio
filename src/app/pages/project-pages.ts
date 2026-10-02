@@ -16,7 +16,7 @@ import { ProjectService } from '../services/project-service';
 import { PROJECT_LIST_EVENTS, ProjectListRequest, registerProjectListHandlers } from './project-list-handlers';
 
 const PROJECT_LIST_PANEL_KEY = 'project-list';
-const PROJECT_LIST_VIEW_TYPE = 'aiVideoStudio.projectList';
+const PROJECT_LIST_VIEW_TYPE = 'aigcVideoStudio.projectList';
 const PROJECT_LIST_TITLE = '所有项目';
 const PROJECT_LIST_DESCRIPTION = '浏览、搜索、创建、修改和删除项目。';
 

@@ -1,4 +1,4 @@
-# AI Video Studio（智影）架构设计
+# AIGC Video Studio（AIGC 视频工作室）架构设计
 
 ## 1. 设计决策
 
@@ -293,7 +293,7 @@ erDiagram
 - 同一服务商可以同时实现多个接口（同一平台），也可以只实现其中一个（跨平台）。注册表（`domain/ports/provider-registry.ts`）按（模型类型，服务商代码）取适配器，同一服务商的各类型适配器必须声明相同的服务商信息；内置适配器在 `infra/providers/builtin-providers.ts` 登记。
 - 模型记录带类型（`image`、`audio`、`video`），能力描述的键按类型区分，见 [database-design.md](database-design.md) 4.6。
 - **适配器声明、数据库保存**：适配器声明服务商（代码、名称、可配置的设置项）和模型（代码、名称、类型、能力）。扩展激活时 `ProviderService.syncCatalog()` 把声明同步到 `providers`、`models`、`model_capabilities`：新服务商取默认设置；已有的服务商与模型更新名称和能力，保留用户设置的启用状态；适配器不再提供的模型被停用（不删除，因为生成参数或任务可能引用）。用户在设置页只能改服务商的启用状态、设置项、访问密钥和模型的启用状态。
-- **访问密钥**只存 VS Code `SecretStorage`（名称 `aiVideoStudio.provider.<服务商代码>.apiKey`），不入库、不发给界面；界面只知道“已配置”或“未配置”。
+- **访问密钥**只存 VS Code `SecretStorage`（名称 `aigcVideoStudio.provider.<服务商代码>.apiKey`），不入库、不发给界面；界面只知道“已配置”或“未配置”。
 - **可用模型**：模型已启用、服务商已启用且已配置密钥，才会出现在后续的模型选择中（`ProviderService.listUsableModels`）。未配置对应类型的模型时，“生成图片”“生成音频”“提交视频”等按钮置灰并提示原因。
 - **失败分类**：适配器把各家错误统一转换为 `ProviderError`，分类为鉴权、限流、参数、内容审核、服务端、网络；其中限流、服务端、网络值得重试，生成队列据此决定是否重试。
 - 图像、音频生成的结果以“版本”保存，经用户检查后采用为资产文件（流程见 6.7，表见 database-design.md 4.9）。
@@ -446,9 +446,9 @@ stateDiagram-v2
 
 | 设置 | 键 | 取值 | 默认 |
 |---|---|---|---|
-| Copilot 模型 | `aiVideoStudio.copilot.modelFamily` | 空串表示自动；否则为 `selectChatModels({ vendor: 'copilot' })` 当前可用模型的 `family` | 自动 |
-| 小说分段方式 | `aiVideoStudio.novel.splitMode` | `chapter` 按章节、`length` 按字数 | `chapter` |
-| 每段字数上限 | `aiVideoStudio.novel.maxSegmentChars` | 正整数 | 20000（建议值，实现时可调） |
+| Copilot 模型 | `aigcVideoStudio.copilot.modelFamily` | 空串表示自动；否则为 `selectChatModels({ vendor: 'copilot' })` 当前可用模型的 `family` | 自动 |
+| 小说分段方式 | `aigcVideoStudio.novel.splitMode` | `chapter` 按章节、`length` 按字数 | `chapter` |
+| 每段字数上限 | `aigcVideoStudio.novel.maxSegmentChars` | 正整数 | 20000（建议值，实现时可调） |
 
 所选模型不可用时回退到自动并在页面提示。
 

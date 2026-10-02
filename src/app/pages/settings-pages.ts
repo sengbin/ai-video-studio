@@ -13,7 +13,7 @@ import { PanelManager } from '../panels/panel-manager';
 import { SettingsServices, registerSettingsHandlers } from './settings-handlers';
 
 const SETTINGS_PANEL_KEY = 'settings';
-const SETTINGS_VIEW_TYPE = 'aiVideoStudio.settings';
+const SETTINGS_VIEW_TYPE = 'aigcVideoStudio.settings';
 const SETTINGS_TITLE = '模型设置';
 const SETTINGS_DESCRIPTION = '配置生成文字内容的 Copilot 模型，以及图像、音频、视频模型的服务商和访问密钥，修改后立即保存。';
 

@@ -18,7 +18,7 @@ export const API_KEY_MAX_LENGTH = 500;
 export const SETTING_VALUE_MAX_LENGTH = 300;
 
 /** 访问密钥在密钥存储中的名称前缀。 */
-const API_KEY_SECRET_PREFIX = 'aiVideoStudio.provider';
+const API_KEY_SECRET_PREFIX = 'aigcVideoStudio.provider';
 
 /** 密钥字段的字段键，用于错误定位。 */
 export const API_KEY_FIELD_KEY = 'apiKey';

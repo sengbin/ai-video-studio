@@ -23,7 +23,7 @@ import { WorkService } from '../services/work-service';
 import { STAGE_EVENTS } from './stage-handlers';
 import { WORK_LIST_EVENTS, WorkListRequest, WorkListView, registerWorkListHandlers } from './work-list-handlers';
 
-const WORK_LIST_VIEW_TYPE = 'aiVideoStudio.workList';
+const WORK_LIST_VIEW_TYPE = 'aigcVideoStudio.workList';
 
 /** 各视图的页面标题，与侧栏“创作”“脚本”分区的条目名称一致。 */
 const WORK_LIST_TITLES: Readonly<Record<WorkListView, string>> = {

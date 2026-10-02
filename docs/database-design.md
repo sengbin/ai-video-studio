@@ -1,6 +1,6 @@
 # 数据库设计
 
-本文是 AI Video Studio（智影）的本地数据库设计说明，与 [ARCHITECTURE.md](ARCHITECTURE.md) 配套；页面与表单如何写入这些数据，见 [page-form-design.md](page-form-design.md)。
+本文是 AIGC Video Studio（AIGC 视频工作室）的本地数据库设计说明，与 [ARCHITECTURE.md](ARCHITECTURE.md) 配套；页面与表单如何写入这些数据，见 [page-form-design.md](page-form-design.md)。
 
 ## 1. 总体约定
 

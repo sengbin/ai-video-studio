@@ -1,6 +1,6 @@
 # 界面组件库说明书
 
-本文说明 AI Video Studio（智影）页面内界面组件库的结构、用法和扩展方法。所有 Webview 页面（编辑器区页面和侧栏）都必须使用这套组件，**不使用 VS Code 内置的确认框、输入框和消息弹窗，也不使用浏览器原生的表单控件外观**。页面与表单如何使用这些组件，见 [page-form-design.md](page-form-design.md)。
+本文说明 AIGC Video Studio（AIGC 视频工作室）页面内界面组件库的结构、用法和扩展方法。所有 Webview 页面（编辑器区页面和侧栏）都必须使用这套组件，**不使用 VS Code 内置的确认框、输入框和消息弹窗，也不使用浏览器原生的表单控件外观**。页面与表单如何使用这些组件，见 [page-form-design.md](page-form-design.md)。
 
 ## 1. 设计目标与原则
 

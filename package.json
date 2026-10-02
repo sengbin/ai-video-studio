@@ -1,7 +1,7 @@
 {
-  "name": "ai-video-studio",
-  "displayName": "AI Video Studio",
-  "description": "在 VS Code 中管理和生成 AI 视频作品。",
+  "name": "aigc-video-studio",
+  "displayName": "AIGC Video Studio",
+  "description": "在 VS Code 中完成 AIGC 视频创作：剧本、分镜、素材与视频生成。",
   "version": "0.0.1",
   "icon": "resources/logo.png",
   "publisher": "chengbin",
@@ -17,23 +17,28 @@
     "Other"
   ],
   "keywords": [
+    "AIGC",
     "AI",
     "AI video",
+    "text to video",
+    "novel to video",
+    "storyboard",
+    "AIGC 视频",
     "AI 视频",
-    "智影"
+    "分镜"
   ],
   "main": "./out/extension.js",
   "activationEvents": [],
   "contributes": {
     "configuration": {
-      "title": "AI Video Studio",
+      "title": "AIGC Video Studio",
       "properties": {
-        "aiVideoStudio.copilot.modelFamily": {
+        "aigcVideoStudio.copilot.modelFamily": {
           "type": "string",
           "default": "",
           "markdownDescription": "生成文本时使用的 Copilot 模型家族（如 `gpt-4o`）。留空表示自动选择；所选模型不可用时回退到自动。"
         },
-        "aiVideoStudio.novel.splitMode": {
+        "aigcVideoStudio.novel.splitMode": {
           "type": "string",
           "enum": [
             "chapter",
@@ -46,7 +51,7 @@
           "default": "chapter",
           "description": "长小说的分段方式。"
         },
-        "aiVideoStudio.novel.maxSegmentChars": {
+        "aigcVideoStudio.novel.maxSegmentChars": {
           "type": "integer",
           "default": 20000,
           "minimum": 2000,
@@ -58,16 +63,16 @@
     "viewsContainers": {
       "activitybar": [
         {
-          "id": "aiVideoStudio",
-          "title": "AI Video Studio",
+          "id": "aigcVideoStudio",
+          "title": "AIGC Video Studio",
           "icon": "./resources/vscode.svg"
         }
       ]
     },
     "views": {
-      "aiVideoStudio": [
+      "aigcVideoStudio": [
         {
-          "id": "aiVideoStudio.sidebar",
+          "id": "aigcVideoStudio.sidebar",
           "name": "",
           "type": "webview",
           "icon": "./resources/vscode.svg"

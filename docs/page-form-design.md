@@ -1,6 +1,6 @@
 # 页面与表单设计
 
-本文说明 AI Video Studio（智影）有哪些页面、每个页面怎么布局，以及每个需要提交的表单的字段、控件、校验和写库规则。数据结构见 [database-design.md](database-design.md)，整体架构见 [ARCHITECTURE.md](ARCHITECTURE.md)。
+本文说明 AIGC Video Studio（AIGC 视频工作室）有哪些页面、每个页面怎么布局，以及每个需要提交的表单的字段、控件、校验和写库规则。数据结构见 [database-design.md](database-design.md)，整体架构见 [ARCHITECTURE.md](ARCHITECTURE.md)。
 
 视觉数值（尺寸、颜色、间距、状态）一律采用项目的页面与表单样式基线，本文只规定“放什么、怎么交互”。控件、对话框和弹出页面的具体用法见 [ui-components.md](ui-components.md)。
 
@@ -707,9 +707,9 @@ F7 不是单独的表单，而是 P6 服务商“设置”弹出页里的设置�
 
 | 键 | 标签 | 控件 | 必填 | 默认 | 校验 | 写入 |
 |---|---|---|---|---|---|---|
-| `copilotModelFamily` | Copilot 模型 | 下拉：自动 + 当前可用模型列表 | 否 | 自动 | 列表来自 Copilot 当前可用模型；未安装或未登录 Copilot 时列表为空，提示原因；已保存的模型不可用时显示“所选模型不可用，将使用自动” | `aiVideoStudio.copilot.modelFamily` |
-| `novelSplitMode` | 小说分段方式 | 单选：按章节 / 按字数 | 是 | 按章节 | 描述文字“按章节时识别不到章节标题，会自动改为按字数” | `aiVideoStudio.novel.splitMode` |
-| `novelMaxSegmentChars` | 每段字数上限 | 数字 | 是 | 20000 | 整数，2000 至 100000（建议值）；描述文字随分段方式切换：按章节为“单章超过此值会在段落处再切分”，按字数为“每段按此字数切分”（两种方式下都显示） | `aiVideoStudio.novel.maxSegmentChars` |
+| `copilotModelFamily` | Copilot 模型 | 下拉：自动 + 当前可用模型列表 | 否 | 自动 | 列表来自 Copilot 当前可用模型；未安装或未登录 Copilot 时列表为空，提示原因；已保存的模型不可用时显示“所选模型不可用，将使用自动” | `aigcVideoStudio.copilot.modelFamily` |
+| `novelSplitMode` | 小说分段方式 | 单选：按章节 / 按字数 | 是 | 按章节 | 描述文字“按章节时识别不到章节标题，会自动改为按字数” | `aigcVideoStudio.novel.splitMode` |
+| `novelMaxSegmentChars` | 每段字数上限 | 数字 | 是 | 20000 | 整数，2000 至 100000（建议值）；描述文字随分段方式切换：按章节为“单章超过此值会在段落处再切分”，按字数为“每段按此字数切分”（两种方式下都显示） | `aigcVideoStudio.novel.maxSegmentChars` |
 
 ### F8 生成参数（工作台参数页签）
 

@@ -15,7 +15,7 @@ import { createSidebarHtml } from './sidebar-html';
 import { SIDEBAR_SECTIONS } from './sidebar-menu-config';
 
 /** 侧栏视图标识，需与 package.json 中 views 的 id 一致。 */
-export const SIDEBAR_VIEW_ID = 'aiVideoStudio.sidebar';
+export const SIDEBAR_VIEW_ID = 'aigcVideoStudio.sidebar';
 
 /** 提供侧栏 Webview 视图。 */
 export class SidebarViewProvider implements vscode.WebviewViewProvider {

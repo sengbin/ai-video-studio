@@ -17,7 +17,7 @@ import {
 } from '../../domain/rules/text-generation-settings';
 import { CopilotModelSettings } from './copilot-text-generation';
 
-const CONFIGURATION_SECTION = 'aiVideoStudio';
+const CONFIGURATION_SECTION = 'aigcVideoStudio';
 
 /** 读写文本生成设置。 */
 export class VsCodeTextGenerationSettings implements CopilotModelSettings, TextGenerationSettingsStore {

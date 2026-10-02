@@ -19,7 +19,7 @@ import { AssetService } from '../services/asset-service';
 import { ProjectService } from '../services/project-service';
 import { ASSET_LIST_EVENTS, AssetListRequest, registerAssetListHandlers } from './asset-list-handlers';
 
-const ASSET_LIST_VIEW_TYPE = 'aiVideoStudio.assetList';
+const ASSET_LIST_VIEW_TYPE = 'aigcVideoStudio.assetList';
 
 /** 各类型的页面描述，显示在页面顶部标题栏里。 */
 const ASSET_LIST_DESCRIPTIONS: Readonly<Record<AssetKind, string>> = {

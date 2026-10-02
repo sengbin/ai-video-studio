@@ -2,7 +2,7 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Run AI Video Studio Extension",
+      "name": "Run AIGC Video Studio Extension",
       "type": "extensionHost",
       "request": "launch",
       "args": [
@@ -11,7 +11,7 @@
       "outFiles": [
         "${workspaceFolder}/out/**/*.js"
       ],
-      "preLaunchTask": "watch AI Video Studio Extension"
+      "preLaunchTask": "watch AIGC Video Studio Extension"
     }
   ]
 }

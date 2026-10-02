@@ -6,7 +6,7 @@
       "script": "compile",
       "path": ".",
       "problemMatcher": "$tsc",
-      "label": "compile AI Video Studio Extension",
+      "label": "compile AIGC Video Studio Extension",
       "presentation": {
         "close": true
       }
@@ -17,7 +17,7 @@
       "path": ".",
       "problemMatcher": "$tsc-watch",
       "isBackground": true,
-      "label": "watch AI Video Studio Extension"
+      "label": "watch AIGC Video Studio Extension"
     }
   ]
 }
