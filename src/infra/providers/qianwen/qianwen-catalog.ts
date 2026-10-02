@@ -31,7 +31,7 @@ export const QIANWEN_PROVIDER: ProviderDescriptor = {
     {
       key: QIANWEN_ENDPOINT_SETTING_KEY,
       label: '接口地址',
-      description: '千问AI平台的原生 API 地址，必须以 https:// 开头、/api/v1 结尾，不是 compatible-mode 地址。',
+      description: '千问AI平台的原生 API 地址，必须以 https:// 开头、/api/v1 结尾，不是 compatible-mode 地址；留空使用默认地址。',
       control: 'text',
       defaultValue: QIANWEN_DEFAULT_ENDPOINT,
       format: 'https-url',

@@ -64,7 +64,8 @@ test('设置项校验：文本规范化、https 地址、下拉选项、未声�
   assert.ok(fieldErrorsOf(() => normalizeProviderSettings({ endpoint: 'http://api.example.com' }, FIELDS)).endpoint);
   assert.ok(fieldErrorsOf(() => normalizeProviderSettings({ endpoint: 'https://user:pass@api.example.com' }, FIELDS)).endpoint);
   assert.ok(fieldErrorsOf(() => normalizeProviderSettings({ endpoint: 'not a url' }, FIELDS)).endpoint);
-  assert.ok(fieldErrorsOf(() => normalizeProviderSettings({ endpoint: '   ' }, FIELDS)).endpoint);
+  assert.deepEqual(normalizeProviderSettings({ endpoint: '   ' }, FIELDS), { endpoint: 'https://fake.example.com/api' }, '留空恢复默认值');
+  assert.deepEqual(resolveProviderSettings(FIELDS, { endpoint: '' }), { endpoint: 'https://fake.example.com/api', region: 'cn' }, '已保存的空值按默认值处理');
   assert.ok(fieldErrorsOf(() => normalizeProviderSettings({ endpoint: 5 }, FIELDS)).endpoint);
   assert.ok(fieldErrorsOf(() => normalizeProviderSettings({ region: 'mars' }, FIELDS)).region);
   assert.ok(fieldErrorsOf(() => normalizeProviderSettings({ unknown: 'x' }, FIELDS)).unknown);

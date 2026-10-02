@@ -32,12 +32,12 @@ export function providerApiKeySecretKey(providerCode: string): string {
 }
 
 /**
- * 用声明的默认值补全已保存的设置：未保存过的项取默认值，不再声明的旧键丢弃。
+ * 用声明的默认值补全已保存的设置：未保存过或保存为空的项取默认值，不再声明的旧键丢弃。
  * @param fields 适配器声明的设置项。
  * @param stored 数据库中保存的设置。
  */
 export function resolveProviderSettings(fields: readonly ProviderSettingField[], stored: ProviderSettings): ProviderSettings {
-  return Object.fromEntries(fields.map((field) => [field.key, stored[field.key] ?? field.defaultValue]));
+  return Object.fromEntries(fields.map((field) => [field.key, stored[field.key] || field.defaultValue]));
 }
 
 /** 读取请求载荷中的整数标识；缺失或不是整数时抛出校验错误。 */
@@ -79,7 +79,7 @@ export function readProviderUpdate(rawInput: unknown): ProviderUpdateInput {
 }
 
 /**
- * 按声明校验并规范化要修改的设置项：文本去除首尾空白，https 地址去除末尾斜杠，下拉必须取自选项。
+ * 按声明校验并规范化要修改的设置项：文本去除首尾空白，留空恢复为声明的默认值，https 地址去除末尾斜杠，下拉必须取自选项。
  * @param rawSettings 界面提交的设置项，只处理出现的键。
  * @param fields 适配器声明的设置项。
  * @returns 规范化后的设置项（只含出现的键）。
@@ -110,7 +110,8 @@ function readSettingValue(field: ProviderSettingField, value: unknown, target: R
   }
   const text = value.trim();
   if (text === '') {
-    return `${field.label}不能为空。`;
+    target[field.key] = field.defaultValue;
+    return null;
   }
   if (text.length > SETTING_VALUE_MAX_LENGTH) {
     return `${field.label}不能超过 ${SETTING_VALUE_MAX_LENGTH} 字。`;
