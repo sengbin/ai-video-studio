@@ -68,6 +68,8 @@ const ENTITY_KINDS = Object.keys(ENTITY_KIND_LABELS) as EntityKind[];
 export interface StoryboardContext {
   readonly params: StoryboardParams;
   readonly entities: readonly StoryboardEntity[];
+  /** 本集全部镜头的总时长上限（秒），来自本集目标时长；不填表示不限制。 */
+  readonly maxTotalSeconds?: number | null;
 }
 
 /** 判断值是否为普通对象。 */
@@ -414,6 +416,14 @@ export function parseStoryboard(raw: unknown, context: StoryboardContext): ShotD
     issues.push(`shots 有 ${raw.shots.length} 个，超过上限 ${limit} 个，请合并或精简镜头。`);
   }
   const shots = raw.shots.slice(0, limit).map((item, index) => parseShot(item, index, context, issues));
+  const maxTotal = context.maxTotalSeconds ?? null;
+  if (maxTotal !== null && issues.length === 0) {
+    // 保留一位小数，避免浮点累加误差误判。
+    const total = Math.round(shots.reduce((sum, shot) => sum + shot.durationSeconds, 0) * 10) / 10;
+    if (total > maxTotal) {
+      issues.push(`所有镜头总时长 ${total} 秒，超过本集目标时长 ${maxTotal} 秒，请减少镜头或缩短镜头时长。`);
+    }
+  }
   if (issues.length > 0) {
     throw new GeneratedOutputError(issues);
   }

@@ -48,10 +48,15 @@ export const STORYBOARD_PROMPT_VARIABLES: Readonly<Record<string, readonly strin
 const NOT_APPLICABLE = '（无）';
 const NO_STYLE = '（没有指定，按剧情自行确定一种统一的画面风格，并在各镜头中保持一致）';
 
-/** 镜头数量与时长的要求。 */
-function describeShotRules(params: StoryboardParams): string {
+/** 镜头数量与时长的要求；episodeSeconds 是本集目标时长，作为全部镜头总时长的上限。 */
+function describeShotRules(params: StoryboardParams, episodeSeconds: number | null): string {
   const limit = params.maxShots ?? MAX_SHOTS_LIMIT;
   const parts = [`镜头总数不超过 ${limit} 个，按剧情需要决定数量，不要为凑数拆分。`];
+  if (episodeSeconds !== null) {
+    parts.push(
+      `本集目标时长为 ${episodeSeconds} 秒，所有镜头的时长之和不得超过 ${episodeSeconds} 秒，这是上限而不是必须达到的目标；剧情内容少时镜头数量和总时长都应相应减少，不得为凑时长而增加镜头、拉长镜头或添加剧本没有的情节。`
+    );
+  }
   if (params.minShotSeconds !== null || params.maxShotSeconds !== null) {
     const min = params.minShotSeconds === null ? '' : `不少于 ${params.minShotSeconds} 秒`;
     const max = params.maxShotSeconds === null ? '' : `不超过 ${params.maxShotSeconds} 秒`;
@@ -152,12 +157,12 @@ export class StoryboardWorkflow implements StageWorkflow {
         material: wrapMaterial(`【第 ${episode.seq} 集 ${episode.title}】\n梗概：${episode.synopsis}\n\n${episode.screenplayText}`),
         entities: describeEntities(entities, descriptions),
         style: params.visualStyle ?? input.projectStyle ?? NO_STYLE,
-        shotRules: describeShotRules(params),
+        shotRules: describeShotRules(params, episode.targetDurationSeconds),
         continuityRule: describeContinuity(params),
         audioRule: describeAudio(params),
         extra: params.extra ?? NOT_APPLICABLE
       },
-      (json) => parseStoryboard(json, { params, entities }),
+      (json) => parseStoryboard(json, { params, entities, maxTotalSeconds: episode.targetDurationSeconds }),
       { overflowHint: '本集剧本过长，请在剧本阶段把这一集拆短后重新生成。', tool: createStoryboardTool(params) }
     );
     const now = (this.dependencies.now?.() ?? new Date()).toISOString();

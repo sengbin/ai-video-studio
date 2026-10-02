@@ -137,6 +137,24 @@ test('解析：镜头时长不能超过单组最长时长，否则放不进任�
   assert.deepEqual(issuesOf({ shots: [shot({ durationSeconds: 10 })] }, params), []);
 });
 
+test('解析：所有镜头总时长不能超过本集目标时长，恰好等于或没有目标时长时通过', () => {
+  const raw = { shots: [shot(), shot(), shot(), shot()] };
+  const issues = (maxTotalSeconds: number | null): readonly string[] => {
+    try {
+      parseStoryboard(raw, { params: PARAMS, entities: ENTITIES, maxTotalSeconds });
+    } catch (error) {
+      if (error instanceof GeneratedOutputError) {
+        return error.issues;
+      }
+      throw error;
+    }
+    return [];
+  };
+  assert.deepEqual(issues(15), ['所有镜头总时长 16 秒，超过本集目标时长 15 秒，请减少镜头或缩短镜头时长。']);
+  assert.deepEqual(issues(16), []);
+  assert.deepEqual(issues(null), []);
+});
+
 test('解析：镜头序号由顺序决定，实体按（类型，名称或别名）映射为标识，说话人自动加入出场实体', () => {
   const shots = parseStoryboard(
     {
