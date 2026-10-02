@@ -133,7 +133,7 @@ export class GenerationProfileService {
 }
 
 /** 读取参数范围。 */
-function readScope(value: unknown): ProfileScope {
+function readScope(value: unknown): Extract<ProfileScope, 'work' | 'episode'> {
   if (value !== 'work' && value !== 'episode') {
     throw new ValidationError({ [FORM_LEVEL_ERROR_KEY]: '参数范围必须是作品或集。' });
   }

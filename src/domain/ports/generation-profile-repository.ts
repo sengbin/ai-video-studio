@@ -15,4 +15,6 @@ export interface GenerationProfileRepository {
   find(target: ProfileTarget): ProfileValues | undefined;
   /** 保存参数值（不存在时新建，存在时覆盖）。 */
   save(target: ProfileTarget, values: ProfileValues, timestamp: string): void;
+  /** 读取若干镜头组的覆盖，没有保存过的组不在结果里。 */
+  listByGroups(groupIds: readonly number[]): ReadonlyMap<number, ProfileValues>;
 }

@@ -4,13 +4,13 @@
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
-// 备注：对应 generation_profiles 表（作品、集两级；镜头级以镜头组为生成单位，暂不提供）；字段为 null 表示沿用上一级。
+// 备注：对应 generation_profiles 表（作品、集、镜头组三级覆盖，生效时本组 → 本集 → 作品 → 项目默认）；字段为 null 表示沿用上一级。
 // ------------------------------------------------------------------------
 
 import { VideoAudioMode } from './model-capability';
 
-/** 可保存参数的范围：作品默认、本集覆盖。 */
-export type ProfileScope = 'work' | 'episode';
+/** 可保存参数的范围：作品默认、本集覆盖、本组覆盖（镜头组是视频生成的单位）。 */
+export type ProfileScope = 'work' | 'episode' | 'group';
 
 /** 目前可保存的参数字段。 */
 export const PROFILE_FIELDS = ['modelId', 'aspectRatio', 'resolution', 'audioMode'] as const;
@@ -30,10 +30,13 @@ export interface ProfileValues {
 export const EMPTY_PROFILE: ProfileValues = { modelId: null, aspectRatio: null, resolution: null, audioMode: null };
 
 /** 参数的保存位置。 */
-export type ProfileTarget = { readonly scope: 'work'; readonly workId: number } | { readonly scope: 'episode'; readonly episodeId: number };
+export type ProfileTarget =
+  | { readonly scope: 'work'; readonly workId: number }
+  | { readonly scope: 'episode'; readonly episodeId: number }
+  | { readonly scope: 'group'; readonly groupId: number };
 
-/** 生效值的来源：本集覆盖、作品默认、项目默认；都没有设置为 none。 */
-export type ProfileSource = 'episode' | 'work' | 'project' | 'none';
+/** 生效值的来源：本组覆盖、本集覆盖、作品默认、项目默认；都没有设置为 none。 */
+export type ProfileSource = 'group' | 'episode' | 'work' | 'project' | 'none';
 
 /** 合并后的生效参数与每个值的来源。 */
 export interface EffectiveProfile {

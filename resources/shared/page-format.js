@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：page-format.js
-// 说明：编辑器区页面共用的格式化：相对时间、阶段状态文字与样式类。
+// 说明：编辑器区页面共用的格式化与转换：相对时间、阶段状态文字与样式类、Base64 转字节。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-09-30
@@ -15,6 +15,7 @@
   const MINUTE_MS = 60 * 1000;
   const HOUR_MS = 60 * MINUTE_MS;
   const DAY_MS = 24 * HOUR_MS;
+  const DECODE_CHUNK = 0x8000;
 
   /** 阶段状态：界面文字与状态样式类（颜色之外必须带文字）。 */
   const STAGE_STATUSES = {
@@ -53,5 +54,16 @@
     return status ? status.className : 'description';
   }
 
-  window.pageFormat = { formatRelativeTime, stageStatusLabel, stageStatusClass };
+  /** Base64 转字节；分块转换，避免大文件一次占用过多内存。 */
+  function decodeBase64(text) {
+    const binary = window.atob(text);
+    const bytes = new Uint8Array(binary.length);
+    for (let start = 0; start < binary.length; start += DECODE_CHUNK) {
+      const end = Math.min(start + DECODE_CHUNK, binary.length);
+      for (let index = start; index < end; index += 1) bytes[index] = binary.charCodeAt(index);
+    }
+    return bytes;
+  }
+
+  window.pageFormat = { formatRelativeTime, stageStatusLabel, stageStatusClass, decodeBase64 };
 })();

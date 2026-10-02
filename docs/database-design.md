@@ -44,7 +44,7 @@
 | 模型与参数 | `providers` | 模型服务商 |
 | | `models` | 模型 |
 | | `model_capabilities` | 模型能力描述 |
-| | `generation_profiles` | 三级生成参数（作品、集、镜头） |
+| | `generation_profiles` | 三级生成参数（作品、集、镜头组） |
 | 生成 | `video_jobs` | 镜头组生成任务 |
 | | `video_results` | 生成结果视频 |
 | | `result_frames` | 结果视频的尾帧图片 |
@@ -85,7 +85,7 @@ erDiagram
   models ||--|| model_capabilities : 能力
   works ||--o| generation_profiles : 作品参数
   episodes ||--o| generation_profiles : 集参数
-  shots ||--o| generation_profiles : 镜头参数
+  shot_groups ||--o| generation_profiles : 镜头组参数
   models ||--o{ generation_profiles : 指定
   shot_groups ||--o{ video_jobs : 提交
   models ||--o{ video_jobs : 执行
@@ -521,10 +521,10 @@ erDiagram
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `id` | 整数 | 是 | |
-| `scope` | 文本 | 是 | `work`、`episode`、`shot` |
+| `scope` | 文本 | 是 | `work`、`episode`、`group`（迁移 011 起；视频按镜头组生成，原来的镜头级 `shot` 从未写入，已去掉） |
 | `work_id` | 整数 | 否 | `scope = work` 时必填，外键 `works.id`，级联删除 |
 | `episode_id` | 整数 | 否 | `scope = episode` 时必填，外键 `episodes.id`，级联删除 |
-| `shot_id` | 整数 | 否 | `scope = shot` 时必填，外键 `shots.id`，级联删除 |
+| `group_id` | 整数 | 否 | `scope = group` 时必填，外键 `shot_groups.id`，级联删除（重新分组丢弃镜头组时，它的覆盖随之清除） |
 | `model_id` | 整数 | 否 | 外键 `models.id`，限制删除 |
 | `aspect_ratio` | 文本 | 否 | 画幅 |
 | `resolution` | 文本 | 否 | 分辨率 |
@@ -538,7 +538,7 @@ erDiagram
 
 约束：
 
-- `work_id`、`episode_id`、`shot_id` 三者中有且仅有一个非空，且与 `scope` 一致（CHECK）。
+- `work_id`、`episode_id`、`group_id` 三者中有且仅有一个非空，且与 `scope` 一致（CHECK）。
 - 每个目标最多一条：`work_id`、`episode_id`、`shot_id` 各建一个部分唯一索引。
 
 **参数合并规则**：对每个参数，依次取镜头、集、作品的值，取第一个非空值；画幅和分辨率最后回退到项目默认值。单镜头时长以 `shots.duration_seconds` 为准，并校验落在作品级时长范围和模型能力范围内。
@@ -619,7 +619,7 @@ erDiagram
 
 ### 4.8 独立音轨（预留）
 
-用于“声音与视频分开生成、再合成”的方式。**本阶段只设计结构，不开发功能，也不建表**；开发时新增迁移 `011-audio-tracks`。
+用于“声音与视频分开生成、再合成”的方式。**本阶段只设计结构，不开发功能，也不建表**；开发时新增迁移 `012-audio-tracks`（011 已用于镜头组参数）。
 
 #### `episode_audio_tracks` 集的独立音轨
 
@@ -732,7 +732,7 @@ erDiagram
 | `asset_version_files` | `(version_id, role, sort_order)` | 读取版本的缩略图和结果文件 |
 | `entity_bindings` | `(episode_id, entity_id, asset_id)` 唯一 | 防重复绑定 |
 | `entity_bindings` | 部分唯一 `(episode_id, entity_id, purpose) WHERE is_primary = 1` | 每个实体每种用途一个主资产 |
-| `generation_profiles` | 部分唯一 `(work_id) WHERE scope = 'work'`；`(episode_id)`、`(shot_id)` 同理 | 每个目标一条参数 |
+| `generation_profiles` | 部分唯一 `(work_id) WHERE scope = 'work'`；`(episode_id)`、`(group_id)` 同理 | 每个目标一条参数 |
 | `video_jobs` | `(group_id, created_at DESC)` | 镜头组的提交历史 |
 | `video_jobs` | `(status)` | 队列扫描、启动恢复 |
 | `video_jobs` | `(prev_job_id)` | 释放后续镜头 |
@@ -802,7 +802,8 @@ erDiagram
 | 8 | `008-shot-groups` | 新增 `shot_groups`，`shots` 增加 `group_id`；重建 `video_jobs`、`video_results`、`result_frames`，任务与结果改为挂在镜头组上（测试阶段丢弃旧数据） | 已实现（步骤 8） |
 | 9 | `009-asset-generation` | `assets` 增加修订号、提示词状态、采用版本字段；新增 `asset_versions`、`asset_version_files` | 已实现（步骤 11） |
 | 10 | `010-global-assets` | 重建 `assets`：去掉 `project_id`，唯一约束改为 `(kind, name)`；重名资产保留最早的一个，其余在名称后加（项目名）；原来沿用项目风格的图像资产把项目风格写入 `style`；资产文件、绑定、生成版本全部保留（迁移执行器支持 `rebuildsReferencedTables`：执行期间关闭外键，结束后检查完整性） | 已实现 |
-| 11 | `011-audio-tracks` | `episode_audio_tracks`（预留，开发独立音轨时再新增） | 后续 |
+| 11 | `011-group-profiles` | 重建 `generation_profiles`：范围改为作品、集、镜头组，新增 `group_id` | 已实现 |
+| 12 | `012-audio-tracks` | `episode_audio_tracks`（预留，开发独立音轨时再新增） | 后续 |
 
 拆分说明：镜头引用资产文件，因此资产在分镜之前建立；前五个迁移创建了 22 张表，迁移 8 再增加镜头组表，各功能的仓库随功能实现逐步补全。
 

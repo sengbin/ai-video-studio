@@ -14,6 +14,7 @@
   const REQUEST_EPISODE = 'workbench.episode';
   const REQUEST_PROFILE = 'workbench.profile';
   const REQUEST_SAVE_PROFILE = 'workbench.saveProfile';
+  const REQUEST_SAVE_GROUP_PROFILE = 'workbench.saveGroupProfile';
   const REQUEST_SUBMIT = 'workbench.submit';
   const REQUEST_PREVIEW = 'workbench.preview';
   const REQUEST_REGROUP = 'workbench.regroup';
@@ -170,9 +171,32 @@
     inspector.element.scrollIntoView({ block: 'nearest' });
   }
 
-  /** 保存某一级的参数修改，成功后用返回的视图刷新工具栏、提交按钮和参数页。 */
+  /** 参数面板里“仅选中的镜头组”对应的镜头组及其覆盖；没有选中时为 null。 */
+  function profileGroup() {
+    if (!view || view.groups.length === 0) return null;
+    const group = view.groups[selectedGroupIndex()];
+    return { id: group.id, seq: group.seq, overrides: group.overrides };
+  }
+
+  /** 一个镜头组的生效参数：本组覆盖优先于本集的生效值；还没有参数视图时为 null。 */
+  function groupResolved(group) {
+    return catalog && profile ? aiProfile.resolveForGroup(catalog, profile, group.overrides) : null;
+  }
+
+  /** 保存某一级的参数修改，成功后用返回的视图刷新工具栏、提交按钮和参数页；镜头组级的覆盖保存后重新读取本集视图。 */
   async function saveProfile(scope, changes) {
     const { workId, episodeId } = parseEpisodeKey(episodeKey);
+    if (scope === 'group') {
+      const target = profileGroup();
+      if (!target) return { ok: false, message: '请先选择一个镜头组。' };
+      try {
+        await window.hostBridge.request(REQUEST_SAVE_GROUP_PROFILE, { workId, episodeId, groupId: target.id, changes });
+      } catch (error) {
+        return { ok: false, message: errorText(error) };
+      }
+      await loadEpisode(false);
+      return { ok: true };
+    }
     try {
       profile = await window.hostBridge.request(REQUEST_SAVE_PROFILE, { scope, workId, episodeId, changes });
     } catch (error) {
@@ -248,10 +272,39 @@
     return model ? model.maxGroupSeconds : null;
   }
 
-  /** 这一组是否超过所选模型单次最长时长。 */
+  /** 这一组使用的模型单次最长时长（含本组覆盖的模型）；没有上限信息时为 null。 */
+  function groupModelMaxSeconds(group) {
+    const resolvedGroup = groupResolved(group);
+    return resolvedGroup && resolvedGroup.model ? resolvedGroup.model.maxGroupSeconds : modelMaxSeconds();
+  }
+
+  /** 这一组是否超过它所用模型的单次最长时长。 */
   function exceedsModel(group) {
-    const max = modelMaxSeconds();
+    const max = groupModelMaxSeconds(group);
     return max !== null && group.totalSeconds > max;
+  }
+
+  /** 这一组的生效参数是否可用于提交：有可用模型且各参数都在模型支持的范围内。 */
+  function groupParamsReady(group) {
+    const resolvedGroup = groupResolved(group);
+    return Boolean(resolvedGroup && resolvedGroup.model) && Object.keys(resolvedGroup.issues).length === 0;
+  }
+
+  /** 本组覆盖了哪些参数，一行文字；没有覆盖为空串。 */
+  function describeOverrides(group) {
+    const { overrides } = group;
+    const labels = { modelId: '模型', aspectRatio: '画幅', resolution: '分辨率', audioMode: '声音' };
+    const parts = Object.keys(labels)
+      .filter((field) => overrides[field] !== null)
+      .map((field) => {
+        const value = overrides[field];
+        if (field === 'modelId') {
+          const model = catalog && catalog.models.find((item) => item.id === value);
+          return `${labels[field]}：${model ? model.displayName : '（不可用）'}`;
+        }
+        return `${labels[field]}：${field === 'audioMode' ? AUDIO_MODE_LABELS[value] || value : value}`;
+      });
+    return parts.join(' · ');
   }
 
   /** 提交与预览共用的请求内容：作品、集、镜头组与生效的生成参数。 */
@@ -319,6 +372,11 @@
 
   async function openResult(result) {
     await runAction(REQUEST_OPEN_RESULT, { resultId: result.id });
+  }
+
+  /** 在页面内的播放器里播放结果视频。 */
+  function playResult(result, title) {
+    aiPlayer.open({ resultId: result.id, title, hasAudio: result.hasAudio });
   }
 
   /** 导出结果视频：宿主弹出“另存为”对话框，完成后在右下角通知。 */
@@ -462,7 +520,7 @@
   }
 
   /** 一次任务的状态：状态文字、生成参数、时间、失败原因或结果信息、提醒与提交的提示词；showAdopted 为 true（这一组有多个版本）时标出采用的那个。 */
-  function renderJob(job, showAdopted) {
+  function renderJob(job, group, showAdopted) {
     const elapsed = formatElapsed(job);
     const parts = [
       aiUi.h(
@@ -486,6 +544,7 @@
           { class: 'wb-result' },
           aiUi.h('span', { class: 'description', text: `结果：${describeResult(job.result)}` }),
           showAdopted && job.result.isSelected ? aiUi.chip({ text: '已采用' }) : null,
+          aiUi.button({ text: '播放', compact: true, variant: 'primary', ariaLabel: `播放第 ${group.seq} 组第 ${job.attempt} 次的视频`, onClick: () => playResult(job.result, `第 ${group.seq} 组 · 第 ${job.attempt} 次`) }).element,
           aiUi.button({ text: '打开视频', compact: true, onClick: () => void openResult(job.result) }).element,
           aiUi.button({ text: '导出…', compact: true, ariaLabel: '导出视频到指定位置', onClick: () => void exportResult(job.result) }).element,
           aiUi.button({ text: '在文件夹中显示', compact: true, onClick: () => void revealResult(job.result) }).element
@@ -508,13 +567,13 @@
       'div',
       {},
       group.staleNote ? aiUi.h('div', { class: 'status-warning wb-stale', text: group.staleNote }) : null,
-      renderJob(latest, showAdopted),
+      renderJob(latest, group, showAdopted),
       older.length > 0
         ? aiUi.h(
             'details',
             { class: 'wb-history' },
             aiUi.h('summary', { text: `历史记录（${older.length} 次）` }),
-            older.map((job) => renderJob(job, showAdopted))
+            older.map((job) => renderJob(job, group, showAdopted))
           )
         : null
     );
@@ -522,7 +581,7 @@
 
   /** 镜头组内容：标题（镜头数与总时长、超出模型上限的警告）、组内镜头列表、出场实体。 */
   function renderGroupContent(group) {
-    const max = modelMaxSeconds();
+    const max = groupModelMaxSeconds(group);
     const lines = [
       aiUi.h(
         'div',
@@ -570,7 +629,7 @@
   /** 镜头组的操作：任务进行中显示“取消”，否则显示“生成”或“重新生成”；可并入上一组；始终可以编辑镜头。 */
   function renderGroupActions(group, index) {
     const active = group.jobs.find((job) => ACTIVE_STATUSES.includes(job.status));
-    const canSubmit = view.canGenerate && paramsReady() && !submitting.has(group.id) && !exceedsModel(group);
+    const canSubmit = view.canGenerate && paramsReady() && groupParamsReady(group) && !submitting.has(group.id) && !exceedsModel(group);
     const buttons = [];
     if (active) {
       buttons.push(aiUi.button({ text: '取消', compact: true, variant: 'danger', ariaLabel: `取消第 ${group.seq} 组的任务`, onClick: () => void cancelJob(active) }));
@@ -721,12 +780,34 @@
     return aiUi.h('div', { class: 'wb-group-select' }, select.element);
   }
 
+  /** 本组覆盖的参数与修改入口；参数不可用时给出警告。 */
+  function renderGroupParams(group) {
+    const overrides = describeOverrides(group);
+    const resolvedGroup = groupResolved(group);
+    const issues = resolvedGroup ? Object.values(resolvedGroup.issues) : [];
+    return aiUi.h(
+      'div',
+      { class: 'wb-group-params' },
+      aiUi.h('span', { class: 'description', text: overrides === '' ? '本组参数：沿用本集设置' : `本组参数覆盖：${overrides}` }),
+      issues.length === 0 ? null : aiUi.h('span', { class: 'status-warning', text: `本组参数需要调整：${issues.join('')}` }),
+      aiUi.button({
+        text: '修改本组参数',
+        compact: true,
+        onClick: () => {
+          profilePanel.setScope('group');
+          openInspector('profile');
+        }
+      }).element
+    );
+  }
+
   /** 中栏：选中镜头组的内容、操作与生成状态。 */
   function renderDetail(group, index) {
     return aiUi.h(
       'section',
       { class: 'wb-detail', attrs: { 'aria-label': `第 ${group.seq} 组` } },
       renderGroupContent(group),
+      renderGroupParams(group),
       aiUi.h('div', { class: 'wb-detail__actions' }, renderGroupActions(group, index)),
       aiUi.h('h3', { class: 'wb-detail__title', text: '生成状态' }),
       renderGroupStatus(group)
@@ -799,10 +880,11 @@
             buttons.push(aiUi.button({ text: '取消', compact: true, variant: 'danger', ariaLabel: `取消第 ${group.seq} 组的任务`, onClick: () => void cancelJob(job) }));
           }
           if (isLatest && (job.status === 'failed' || job.status === 'canceled')) {
-            const canRetry = view.canGenerate && paramsReady() && !submitting.has(group.id) && !exceedsModel(group);
+            const canRetry = view.canGenerate && paramsReady() && groupParamsReady(group) && !submitting.has(group.id) && !exceedsModel(group);
             buttons.push(aiUi.button({ text: '重试', compact: true, disabled: !canRetry, ariaLabel: `重新生成第 ${group.seq} 组`, onClick: () => void submit([group]) }));
           }
           if (job.result) {
+            buttons.push(aiUi.button({ text: '播放', compact: true, variant: 'primary', ariaLabel: `播放第 ${group.seq} 组第 ${job.attempt} 次的视频`, onClick: () => playResult(job.result, `第 ${group.seq} 组 · 第 ${job.attempt} 次`) }));
             buttons.push(aiUi.button({ text: '打开视频', compact: true, ariaLabel: `打开第 ${group.seq} 组第 ${job.attempt} 次的视频`, onClick: () => void openResult(job.result) }));
           }
           return buttons.map((button) => button.element);
@@ -931,6 +1013,7 @@
     const list = treeElement && treeElement.querySelector('.wb-tree__list');
     if (list) list.scrollTop = treeScroll;
     updateInspectorLabels();
+    profilePanel.refresh();
     submitPanel.refresh();
   }
 
@@ -1037,7 +1120,7 @@
     root.append(messageElement, contentElement);
     // 检查器的两个面板创建一次，之后只在页签之间切换显示。
     bindingsPanel = aiBindings.create();
-    profilePanel = aiProfile.create({ getState: () => ({ catalog, profile }), save: saveProfile });
+    profilePanel = aiProfile.create({ getState: () => ({ catalog, profile, group: profileGroup() }), save: saveProfile });
     const collapseButton = aiUi.button({
       text: '›',
       compact: true,

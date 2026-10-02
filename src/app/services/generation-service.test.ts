@@ -18,6 +18,7 @@ import { MemorySecretStore } from '../../domain/ports/testing/memory-secret-stor
 import { normalizeWorkCreation } from '../../domain/rules/work-rules';
 import { SqliteAssetRepository } from '../../infra/database/sqlite-asset-repository';
 import { SqliteBindingRepository } from '../../infra/database/sqlite-binding-repository';
+import { SqliteGenerationProfileRepository } from '../../infra/database/sqlite-generation-profile-repository';
 import { SqliteGenerationRepository } from '../../infra/database/sqlite-generation-repository';
 import { SqliteProviderRepository } from '../../infra/database/sqlite-provider-repository';
 import { SqliteScreenplayRepository } from '../../infra/database/sqlite-screenplay-repository';
@@ -48,7 +49,7 @@ class StrictFakeProvider extends FakeVideoProvider {
 }
 
 /** 创建完整夹具：作品、已生成的分镜脚本（待确认，自动分成 1 组 2 个镜头）、服务与假依赖。 */
-async function createFixture(storyboardParams: Record<string, unknown> = {}, capability: VideoCapability = FAKE_VIDEO_CAPABILITY) {
+async function createFixture(storyboardParams: Record<string, unknown> = {}, capability: VideoCapability = FAKE_VIDEO_CAPABILITY, withSecondModel = false) {
   const fixture = createServiceFixture(standardResponder);
   const work = fixture.works.createWork(fixture.project.id, normalizeWorkCreation({ workName: '作品甲', kind: '单个短视频' }, 'text'));
   const creative = await fixture.stages.startCreative(work.id, CREATIVE_PARAMS);
@@ -65,13 +66,17 @@ async function createFixture(storyboardParams: Record<string, unknown> = {}, cap
   const assetRepository = new SqliteAssetRepository(database);
   const providerRepository = new SqliteProviderRepository(database);
   const jobs = new SqliteGenerationRepository(database);
-  const provider = new StrictFakeProvider([{ code: 'fake-video', displayName: '假视频模型', kind: 'video', capability }]);
+  const provider = new StrictFakeProvider([
+    { code: 'fake-video', displayName: '假视频模型', kind: 'video', capability },
+    ...(withSecondModel ? [{ code: 'fake-video-2', displayName: '第二个假视频模型', kind: 'video' as const, capability }] : [])
+  ]);
   const secrets = new MemorySecretStore();
   const providers = new ProviderService({ repository: providerRepository, registry: new ProviderRegistry().register(provider), secrets });
   providers.syncCatalog();
   const [providerView] = await providers.listViews();
   await providers.setApiKey({ providerId: providerView.id, apiKey: 'sk-test' });
   const modelId = providerView.models[0].id;
+  const secondModelId = withSecondModel ? providerView.models[1].id : 0;
 
   const pumps: number[] = [];
   const canceled: number[] = [];
@@ -93,6 +98,7 @@ async function createFixture(storyboardParams: Record<string, unknown> = {}, cap
     results: { save: async () => ({ filePath: 'x', sizeBytes: 1 }), resolvePath: (filePath) => `/store/${filePath}` },
     models: providerRepository,
     providers,
+    profiles: new SqliteGenerationProfileRepository(database),
     scheduler: {
       pump: async () => {
         pumps.push(1);
@@ -109,7 +115,7 @@ async function createFixture(storyboardParams: Record<string, unknown> = {}, cap
   };
   const episode = () => generation.getEpisode(work.id, episodeId);
   const groupIds = (): number[] => episode().groups.map((group) => group.id);
-  return { ...fixture, work, episodeId, run, generation, jobs, provider, providers, providerView, modelId, pumps, canceled, changed, assetRepository, storyboardRepository, approve, episode, groupIds };
+  return { ...fixture, work, episodeId, run, generation, jobs, provider, providers, providerView, modelId, secondModelId, pumps, canceled, changed, assetRepository, storyboardRepository, approve, episode, groupIds };
 }
 
 type Fixture = Awaited<ReturnType<typeof createFixture>>;
@@ -771,5 +777,73 @@ test('预览提交：超过模型上限、参数不合法的组给出阻断问�
     await assert.rejects(fixture.generation.previewSubmit({ ...base, groupIds, params: { modelId: 'x' } }), ValidationError);
   } finally {
     fixture.database.close();
+  }
+});
+
+/** 保存一个镜头组的参数覆盖。 */
+function saveGroupProfile(fixture: Fixture, groupId: number, changes: Record<string, unknown>) {
+  return fixture.generation.saveGroupProfile({ workId: fixture.work.id, episodeId: fixture.episodeId, groupId, changes });
+}
+
+test('镜头组参数覆盖：保存、恢复继承、校验归属与模型，视图带出覆盖', async () => {
+  const fixture = await createFixture({ groupMaxSeconds: '4' });
+  try {
+    fixture.approve();
+    const [first, second] = fixture.groupIds();
+    assert.deepEqual(fixture.episode().groups[0].overrides, { modelId: null, aspectRatio: null, resolution: null, audioMode: null });
+
+    assert.deepEqual(saveGroupProfile(fixture, first, { resolution: '1080P', audioMode: 'none' }), { modelId: null, aspectRatio: null, resolution: '1080P', audioMode: 'none' });
+    saveGroupProfile(fixture, first, { audioMode: null });
+    assert.deepEqual(fixture.episode().groups[0].overrides, { modelId: null, aspectRatio: null, resolution: '1080P', audioMode: null });
+    assert.equal(fixture.episode().groups[1].overrides.resolution, null, '只影响指定的组');
+    assert.ok(second > first);
+
+    assert.throws(() => saveGroupProfile(fixture, 99999, { resolution: '720P' }), ValidationError);
+    assert.throws(() => saveGroupProfile(fixture, first, { modelId: 99999 }), (error) => error instanceof ValidationError && error.fieldErrors.modelId !== undefined);
+    assert.throws(() => saveGroupProfile(fixture, first, {}), ValidationError);
+    assert.throws(() => saveGroupProfile(fixture, first, { seed: 1 }), ValidationError);
+  } finally {
+    fixture.database.close();
+  }
+});
+
+test('镜头组参数覆盖：提交与预览按每组自己的参数编译，覆盖了模型的组按那个模型提交，模型不可用时只拒绝那一组', async () => {
+  const fixture = await createFixture({ groupMaxSeconds: '4' }, FAKE_VIDEO_CAPABILITY, true);
+  try {
+    fixture.approve();
+    const [first, second] = fixture.groupIds();
+    saveGroupProfile(fixture, first, { resolution: '1080P' });
+    saveGroupProfile(fixture, second, { modelId: fixture.secondModelId, audioMode: 'none' });
+
+    const preview = await fixture.generation.previewSubmit({
+      workId: fixture.work.id,
+      episodeId: fixture.episodeId,
+      groupIds: [first, second],
+      params: { modelId: fixture.modelId, ...PARAMS, audioMode: 'native' }
+    });
+    assert.deepEqual(preview.groups.map((group) => group.audioMode), ['native', 'none']);
+
+    const result = await submitGroups(fixture, [first, second], { audioMode: 'native' });
+    assert.equal(result.rejected.length, 0);
+    const [firstJob] = fixture.jobs.listJobsByGroups([first]);
+    const [secondJob] = fixture.jobs.listJobsByGroups([second]);
+    assert.deepEqual([firstJob.modelId, firstJob.snapshot.params.resolution, firstJob.snapshot.params.audioMode], [fixture.modelId, '1080P', 'native']);
+    assert.deepEqual([secondJob.modelId, secondJob.snapshot.params.resolution, secondJob.snapshot.params.audioMode], [fixture.secondModelId, '720P', 'none']);
+
+  } finally {
+    fixture.database.close();
+  }
+
+  const disabled = await createFixture({ groupMaxSeconds: '4' }, FAKE_VIDEO_CAPABILITY, true);
+  try {
+    disabled.approve();
+    const [first, second] = disabled.groupIds();
+    saveGroupProfile(disabled, second, { modelId: disabled.secondModelId });
+    await disabled.providers.setModelEnabled({ modelId: disabled.secondModelId, isEnabled: false });
+    const result = await submitGroups(disabled, [first, second]);
+    assert.deepEqual(result.submitted.map((item) => item.groupId), [first], '只拒绝指定了不可用模型的那一组');
+    assert.match(result.rejected[0].issues.join(), /这一组指定的视频模型不可用/);
+  } finally {
+    disabled.database.close();
   }
 });

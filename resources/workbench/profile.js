@@ -4,7 +4,7 @@
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
-// 备注：不发请求，保存由 workbench.js 注入；必须先于 workbench.js 加载；对外是 window.aiProfile 的 resolve、summarize、create。
+// 备注：不发请求，保存由 workbench.js 注入；必须先于 workbench.js 加载；对外是 window.aiProfile 的 resolve、resolveForGroup、summarize、create。
 // ------------------------------------------------------------------------
 
 'use strict';
@@ -12,14 +12,16 @@
 (function () {
   const PREFERRED_RESOLUTION = '720P';
   const AUDIO_MODE_LABELS = { native: '模型生成声音', none: '无声' };
-  const SOURCE_LABELS = { episode: '本集覆盖', work: '作品默认', project: '项目默认', default: '未设置，使用默认值', none: '未设置' };
+  const SOURCE_LABELS = { group: '本组覆盖', episode: '本集覆盖', work: '作品默认', project: '项目默认', default: '未设置，使用默认值', none: '未设置' };
   const SCOPE_OPTIONS = [
     { value: 'work', label: '本作品默认（所有集）' },
-    { value: 'episode', label: '仅本集' }
+    { value: 'episode', label: '仅本集' },
+    { value: 'group', label: '仅选中的镜头组' }
   ];
   const SCOPE_HINTS = {
     work: '作品默认适用于这个作品的所有集；某一集需要不同取值时，在“仅本集”里覆盖。',
-    episode: '本集覆盖只对当前这一集生效，留空表示沿用作品默认。'
+    episode: '本集覆盖只对当前这一集生效，留空表示沿用作品默认。',
+    group: '本组覆盖只对左栏选中的镜头组生效，留空表示沿用本集、作品或项目默认。'
   };
   const EMPTY_OPTION_TEXT = '沿用上一级';
 
@@ -76,6 +78,24 @@
     return { model, values, sources, issues };
   }
 
+  /**
+   * 算出一个镜头组的生效参数：本组覆盖里不为空的字段优先于本集的生效值，其余同 resolve。
+   * @param {{ models: object[] }} catalog 工作台清单。
+   * @param {{ effective: object }} profile 一集的参数视图。
+   * @param {{ modelId: number|null, aspectRatio: string|null, resolution: string|null, audioMode: string|null }} overrides 这个镜头组的覆盖。
+   */
+  function resolveForGroup(catalog, profile, overrides) {
+    const values = { ...profile.effective.values };
+    const sources = { ...profile.effective.sources };
+    for (const field of Object.keys(values)) {
+      if (overrides[field] !== null && overrides[field] !== undefined) {
+        values[field] = overrides[field];
+        sources[field] = 'group';
+      }
+    }
+    return resolve(catalog, { effective: { values, sources } });
+  }
+
   /** 参数的一行摘要，用于工具栏。 */
   function summarize(resolved) {
     if (!resolved.model) return '未选择视频模型';
@@ -108,16 +128,20 @@
   /** 重新渲染面板里的字段；还没有加载到集的参数时只显示提示。 */
   function renderFields() {
     const { host, fieldsElement, scopeControl } = panel;
-    const { catalog, profile } = host.getState();
+    const { catalog, profile, group } = host.getState();
     fieldsElement.textContent = '';
     if (!catalog || !profile) {
       panel.hintElement.textContent = '请先选择一个有分镜脚本的集。';
       return;
     }
-    const resolved = resolve(catalog, profile);
     const scope = scopeControl.getValue();
-    const values = scope === 'work' ? profile.work : profile.episode;
-    panel.hintElement.textContent = SCOPE_HINTS[scope];
+    if (scope === 'group' && !group) {
+      panel.hintElement.textContent = '请先在左栏选择一个镜头组。';
+      return;
+    }
+    const resolved = scope === 'group' ? resolveForGroup(catalog, profile, group.overrides) : resolve(catalog, profile);
+    const values = scope === 'work' ? profile.work : scope === 'episode' ? profile.episode : group.overrides;
+    panel.hintElement.textContent = scope === 'group' ? `第 ${group.seq} 组：${SCOPE_HINTS.group}` : SCOPE_HINTS[scope];
 
     const addField = (field, label, options, note) => {
       const stored = storedValue(values, field);
@@ -165,9 +189,10 @@
   }
 
   /**
-   * 创建生成参数面板（检查器的“参数”页签）：编辑作品默认与本集覆盖，选择后即时保存。只创建一个实例。
+参数页签）：编辑作品默认与本集覆盖，选择后即时保存。只创建一个实例。
+   * @param {{ getState: () => { catalog: object|null, profile: object|null },“参数”页签）：编辑作品默认与本集覆盖，选择后即时保存。只创建一个实例。
    * @param {{ getState: () => { catalog: object|null, profile: object|null }, save: (scope: string, changes: object) => Promise<{ ok: boolean, message?: string }> }} host 宿主页面提供的状态与保存函数。
-   * @returns {{ element: HTMLElement, refresh: () => void }}
+   * @returns {{ element: HTMLElement, refresh: () => void, setScope: (scope: string) => void }}
    */
   function create(host) {
     const scopeControl = aiUi.radioGroup({ options: SCOPE_OPTIONS, value: 'work', direction: 'vertical', ariaLabel: '参数范围', onChange: () => renderFields() });
@@ -177,18 +202,25 @@
     const element = aiUi.h('div', { class: 'wb-profile' }, scopeControl.element, hintElement, messageElement, fieldsElement);
     panel = { host, scopeControl, hintElement, messageElement, fieldsElement, key: '' };
     renderFields();
-    return { element, refresh };
+    return { element, refresh, setScope };
+  }
+
+  /** 切换编辑范围（如从镜头组详情跳到“仅选中的镜头组”）。 */
+  function setScope(scope) {
+    if (!panel) return;
+    panel.scopeControl.setValue(scope);
+    renderFields();
   }
 
   /** 页面数据变化后刷新面板；内容没有变化时不重绘，避免打断正在打开的下拉。 */
   function refresh() {
     if (!panel) return;
-    const { catalog, profile } = panel.host.getState();
-    const key = JSON.stringify([catalog && catalog.models, profile]);
+    const { catalog, profile, group } = panel.host.getState();
+    const key = JSON.stringify([catalog && catalog.models, profile, group]);
     if (key === panel.key) return;
     panel.key = key;
     renderFields();
   }
 
-  window.aiProfile = { resolve, summarize, create };
+  window.aiProfile = { resolve, resolveForGroup, summarize, create };
 })();

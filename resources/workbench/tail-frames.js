@@ -4,7 +4,7 @@
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
-// 备注：请求名称与 src/app/pages/workbench-handlers.ts 一致；视频以 Base64 经消息传来，转成 blob 地址播放（CSP 需允许 media-src blob:）；对外是 window.aiTailFrames.sync；截取失败时上报宿主，避免任务一直等待。
+// 备注：请求名称与 src/app/pages/workbench-handlers.ts 一致；视频以 Base64 经消息传来（解码用 pageFormat.decodeBase64），转成 blob 地址播放（CSP 需允许 media-src blob:）；对外是 window.aiTailFrames.sync；截取失败时上报宿主，避免任务一直等待。
 // ------------------------------------------------------------------------
 
 'use strict';
@@ -20,7 +20,6 @@
   /** 截取位置：结束前这么多秒，避免停在视频末尾时没有可显示的帧。 */
   const SEEK_BACK_SECONDS = 0.05;
   const EVENT_TIMEOUT_MS = 30000;
-  const DECODE_CHUNK = 0x8000;
 
   /** 已经尝试过的结果，页面存在期间不重复截取（失败已上报宿主）。 */
   const attempted = new Set();
@@ -44,16 +43,6 @@
     });
   }
 
-  /** Base64 转字节。 */
-  function decodeBase64(text) {
-    const binary = window.atob(text);
-    const bytes = new Uint8Array(binary.length);
-    for (let start = 0; start < binary.length; start += DECODE_CHUNK) {
-      const end = Math.min(start + DECODE_CHUNK, binary.length);
-      for (let index = start; index < end; index += 1) bytes[index] = binary.charCodeAt(index);
-    }
-    return bytes;
-  }
 
   /** Blob 转 Base64（不含 data: 前缀）。 */
   function encodeBlob(blob) {
@@ -97,7 +86,7 @@
     let videoUrl = '';
     try {
       const source = await window.hostBridge.request(REQUEST_VIDEO, { resultId });
-      videoUrl = URL.createObjectURL(new Blob([decodeBase64(source.data)], { type: source.mimeType }));
+      videoUrl = URL.createObjectURL(new Blob([window.pageFormat.decodeBase64(source.data)], { type: source.mimeType }));
       const frame = await captureLastFrame(videoUrl);
       await window.hostBridge.request(REQUEST_SAVE, { resultId, ...frame });
     } catch (error) {

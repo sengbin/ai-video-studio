@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：workbench-handlers.ts
-// 说明：生成工作台（P5）的请求处理：读取作品与可用模型清单、读取一集的镜头组与任务历史、提交生成（结果以右下角通知弹出）、提交预览（不写任务）、重新分组与拆分合并镜头组、取消任务、采用某个结果版本、打开、导出、在文件夹中显示结果视频、尾帧截取相关（列出待截取的结果、把结果视频交给页面、保存尾帧、上报截取失败）；并提供分镜脚本阶段产出层需要的请求。
+// 说明：生成工作台（P5）的请求处理：读取作品与可用模型清单、读取一集的镜头组与任务历史、提交生成（结果以右下角通知弹出）、提交预览（不写任务）、保存镜头组的参数覆盖、重新分组与拆分合并镜头组、取消任务、采用某个结果版本、打开、导出、在文件夹中显示结果视频、尾帧截取相关（列出待截取的结果、把结果视频交给页面、保存尾帧、上报截取失败）；并提供分镜脚本阶段产出层需要的请求。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
@@ -28,6 +28,7 @@ export const WORKBENCH_REQUESTS = {
   saveProfile: 'workbench.saveProfile',
   submit: 'workbench.submit',
   preview: 'workbench.preview',
+  saveGroupProfile: 'workbench.saveGroupProfile',
   regroup: 'workbench.regroup',
   splitGroup: 'workbench.splitGroup',
   mergeGroup: 'workbench.mergeGroup',
@@ -42,7 +43,7 @@ export const WORKBENCH_REQUESTS = {
   frameFailed: 'workbench.frameFailed'
 } as const;
 
-/** 读给页面截取尾帧的结果视频大小上限（字节）：视频要以 Base64 形式通过消息传给页面。 */
+/** 读给页面播放或截取尾帧的结果视频大小上限（字节）：视频要以 Base64 形式通过消息传给页面。 */
 const MAX_FRAME_SOURCE_BYTES = 200 * 1024 * 1024;
 
 /** 宿主推送给工作台的事件名称：changed 要求刷新数据（任务或分镜脚本有变化）。 */
@@ -131,6 +132,7 @@ export function registerWorkbenchHandlers(router: MessageRouter, services: Workb
     return result;
   });
   router.register(WORKBENCH_REQUESTS.preview, (payload) => generation.previewSubmit(payload));
+  router.register(WORKBENCH_REQUESTS.saveGroupProfile, (payload) => generation.saveGroupProfile(payload));
   router.register(WORKBENCH_REQUESTS.regroup, (payload) => {
     generation.regroup(payload);
     return { done: true };
@@ -166,7 +168,7 @@ export function registerWorkbenchHandlers(router: MessageRouter, services: Workb
   router.register(WORKBENCH_REQUESTS.resultVideo, async (payload) => {
     const data = await host.readFile(generation.getResultPath(payload));
     if (data.byteLength > MAX_FRAME_SOURCE_BYTES) {
-      throw new ValidationError({ [FORM_LEVEL_ERROR_KEY]: '结果视频过大，无法在工作台里截取尾帧。' });
+      throw new ValidationError({ [FORM_LEVEL_ERROR_KEY]: '结果视频过大，无法在工作台里读取（播放或截取尾帧），可以用' });
     }
     return { mimeType: 'video/mp4', data: Buffer.from(data).toString('base64') };
   });

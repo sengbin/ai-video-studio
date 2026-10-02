@@ -8,13 +8,15 @@
 // ------------------------------------------------------------------------
 
 import { FORM_LEVEL_ERROR_KEY, NotFoundError, ProviderError, ValidationError } from '../../domain/errors';
-import { ACTIVE_JOB_STATUSES, JOB_STATUS_LABELS, JobFailure, JobStatus, VideoJobRecord, VideoResultRecord } from '../../domain/models/generation';
+import { ACTIVE_JOB_STATUSES, GenerationParams, JOB_STATUS_LABELS, JobFailure, JobStatus, VideoJobRecord, VideoResultRecord } from '../../domain/models/generation';
+import { EMPTY_PROFILE, ProfileValues } from '../../domain/models/generation-profile';
 import { VideoAudioMode, VideoCapability } from '../../domain/models/model-capability';
 import { EntityKind, ENTITY_KIND_LABELS } from '../../domain/models/screenplay';
 import { StageDisplayStatus, StageRun } from '../../domain/models/stage-run';
 import { ShotGroup, ShotRecord } from '../../domain/models/storyboard';
 import { AssetRepository } from '../../domain/ports/asset-repository';
 import { BindingRepository } from '../../domain/ports/binding-repository';
+import { GenerationProfileRepository } from '../../domain/ports/generation-profile-repository';
 import { GenerationRepository, JobMediaReader, ResultStore } from '../../domain/ports/generation-repository';
 import { ResolvedVideoCall } from '../../domain/ports/provider-adapters';
 import { ProviderRepository } from '../../domain/ports/provider-repository';
@@ -22,6 +24,7 @@ import { ScreenplayRepository } from '../../domain/ports/screenplay-repository';
 import { StageRunRepository } from '../../domain/ports/stage-run-repository';
 import { StoryboardRepository } from '../../domain/ports/storyboard-repository';
 import { FieldErrors, assertNoFieldErrors, readEntityId, readInteger, readRecord } from '../../domain/rules/field-readers';
+import { applyProfileChanges, readProfileChanges } from '../../domain/rules/generation-profile-rules';
 import {
   EntityReferences,
   TAIL_FRAME_MAX_BYTES,
@@ -176,6 +179,8 @@ export interface GroupView {
   /** 组内出场的实体（去重）。 */
   readonly entities: readonly ShotEntityView[];
   readonly jobs: readonly JobView[];
+  /** 这一组自己的参数覆盖；字段为 null 表示沿用本集、作品或项目的取值。 */
+  readonly overrides: ProfileValues;
   /** 采用的结果视频；还没有成功的结果时为 null。 */
   readonly selectedResultId: number | null;
   /** 采用的视频接在上一组的旧尾帧之后（上一组后来改用了其他版本）时的说明；否则为 null。 */
@@ -247,6 +252,26 @@ export interface JobScheduler {
   cancel(jobId: number): Promise<{ readonly remoteCanceled: boolean }>;
 }
 
+/** 一个视频模型的调用信息。 */
+interface ModelContext {
+  readonly usable: Awaited<ReturnType<ProviderService['listUsableModels']>>[number];
+  readonly call: ResolvedVideoCall;
+  readonly capability: VideoCapability;
+  /** 模型单次最长时长（秒）；没有上限信息时为 null。 */
+  readonly modelMax: number | null;
+}
+
+/** 用镜头组的覆盖替换本次提交的参数：覆盖里不为 null 的字段优先。 */
+function mergeGroupParams(base: GenerationParams, override: ProfileValues | undefined): GenerationParams {
+  if (override === undefined) return base;
+  return {
+    modelId: override.modelId ?? base.modelId,
+    aspectRatio: override.aspectRatio ?? base.aspectRatio,
+    resolution: override.resolution ?? base.resolution,
+    audioMode: override.audioMode ?? base.audioMode
+  };
+}
+
 /** 视频生成应用服务的依赖。 */
 export interface GenerationServiceDependencies {
   readonly works: WorkService;
@@ -262,6 +287,8 @@ export interface GenerationServiceDependencies {
   readonly results: ResultStore;
   readonly models: Pick<ProviderRepository, 'findModelById'>;
   readonly providers: ProviderService;
+  /** 镜头组级的生成参数覆盖。 */
+  readonly profiles: GenerationProfileRepository;
   readonly scheduler: JobScheduler;
   readonly changes: ChangeNotifier<JobChange>;
   readonly now?: () => Date;
@@ -339,6 +366,7 @@ export class GenerationService {
     const shots = new Map(storyboards.listShots(run.id).map((shot) => [shot.id, shot]));
     const groups = storyboards.listGroups(run.id);
     const groupIds = groups.map((group) => group.id);
+    const groupOverrides = this.dependencies.profiles.listByGroups(groupIds);
     const resultList = jobs.listResultsByGroups(groupIds);
     const results = new Map<number, VideoResultRecord>(resultList.map((result) => [result.jobId, result]));
     const selectedByGroup = new Map<number, VideoResultRecord>(resultList.filter((result) => result.isSelected).map((result) => [result.groupId, result]));
@@ -376,6 +404,7 @@ export class GenerationService {
             const entity = entities.get(id);
             return entity === undefined ? [] : [{ id, name: entity.name, kindLabel: ENTITY_KIND_LABELS[entity.kind], bound: visualBound.has(id) }];
           }),
+          overrides: groupOverrides.get(group.id) ?? EMPTY_PROFILE,
           jobs: pickVisibleJobs(groupJobs, selected?.jobId).map((job) => this.toJobView(job, results.get(job.id))),
           selectedResultId: selected?.id ?? null,
           staleNote: describeStaleTail(groupJobs, selected, groups[index - 1] === undefined ? undefined : selectedByGroup.get(groups[index - 1].id))
@@ -406,7 +435,7 @@ export class GenerationService {
 
   /** submit 与 previewSubmit 共用的处理：dryRun 为 true 时不写任务、不通知、不唤醒队列。 */
   private async processSubmission(rawInput: unknown, dryRun: boolean): Promise<{ readonly result: SubmitResult; readonly previews: GroupPreview[] }> {
-    const { works, storyboards, jobs, media, providers, scheduler, changes } = this.dependencies;
+    const { works, storyboards, jobs, media, scheduler, changes } = this.dependencies;
     const input = readSubmitInput(rawInput);
     works.getWork(input.workId);
     const { run, isCurrent } = this.resolveRun(input.workId, input.episodeId);
@@ -414,21 +443,20 @@ export class GenerationService {
       throw new ValidationError({ [FORM_LEVEL_ERROR_KEY]: '分镜脚本还没有确认采用，请先确认后再生成。' });
     }
 
-    const usable = (await providers.listUsableModels('video')).find((candidate) => candidate.model.id === input.params.modelId);
-    if (usable === undefined) {
-      throw new ValidationError({ modelId: '所选模型不可用，请检查“设置 > 模型”里的启用状态和访问密钥。' });
+    // 每个模型只解析一次：本次提交的默认模型必须可用，镜头组单独指定的模型不可用时只拒绝那一组。
+    const contexts = new Map<number, ModelContext | string>();
+    const contextOf = async (modelId: number): Promise<ModelContext | string> => {
+      const cached = contexts.get(modelId);
+      if (cached !== undefined) return cached;
+      const resolved = await this.resolveModelContext(modelId);
+      contexts.set(modelId, resolved);
+      return resolved;
+    };
+    const baseContext = await contextOf(input.params.modelId);
+    if (typeof baseContext === 'string') {
+      throw new ValidationError({ modelId: baseContext });
     }
-    let call: ResolvedVideoCall;
-    try {
-      call = await providers.resolveVideoCall(usable.model.id);
-    } catch (error) {
-      throw new ValidationError({ modelId: error instanceof ProviderError ? error.message : '所选模型不可用。' });
-    }
-    const capability = call.adapter.getCapability(call.modelCode);
-    if (capability === undefined) {
-      throw new ValidationError({ modelId: '所选模型不可用。' });
-    }
-    const modelMax = maxGroupSeconds(capability.duration);
+    const overrides = this.dependencies.profiles.listByGroups(input.groupIds);
 
     syncShotGroups(storyboards, run.id, groupMaxSecondsOf(readStoryboardParams(run)), this.timestamp());
     const shotsById = new Map(storyboards.listShots(run.id).map((shot) => [shot.id, shot]));
@@ -472,6 +500,14 @@ export class GenerationService {
       }
       const members = memberShots(group);
       const total = sumSeconds(members);
+      // 这一组自己的覆盖优先于本次提交的参数；覆盖了模型时按那个模型校验。
+      const groupParams = mergeGroupParams(input.params, overrides.get(group.id));
+      const resolvedContext = groupParams.modelId === input.params.modelId ? baseContext : await contextOf(groupParams.modelId);
+      if (typeof resolvedContext === 'string') {
+        reject(groupId, group, [`这一组指定的视频模型不可用：${resolvedContext}`]);
+        continue;
+      }
+      const { usable, call, capability, modelMax } = resolvedContext;
       if (modelMax !== null && total > modelMax) {
         reject(groupId, group, [`这一组共 ${total} 秒，超过所选模型单次最长 ${modelMax} 秒。请拆分这一组、重新分组，或换一个支持更长时长的模型。`]);
         continue;
@@ -497,7 +533,7 @@ export class GenerationService {
         providerCode: usable.providerCode,
         modelCode: call.modelCode,
         capability,
-        params: input.params,
+        params: groupParams,
         entities: this.collectEntityReferences(input.workId, input.episodeId, [...new Set(members.flatMap((shot) => shot.entityIds))]),
         useFirstFrame: link !== undefined
       });
@@ -549,6 +585,57 @@ export class GenerationService {
     }
     return { result: { submitted, rejected }, previews };
   }
+  /** 解析一个视频模型的调用信息；不可用时返回说明原因的文字。 */
+  private async resolveModelContext(modelId: number): Promise<ModelContext | string> {
+    const { providers } = this.dependencies;
+    const usable = (await providers.listUsableModels('video')).find((candidate) => candidate.model.id === modelId);
+    if (usable === undefined) {
+      return '所选模型不可用，请检查“设置 > 模型”里的启用状态和访问密钥。';
+    }
+    let call: ResolvedVideoCall;
+    try {
+      call = await providers.resolveVideoCall(usable.model.id);
+    } catch (error) {
+      return error instanceof ProviderError ? error.message : '所选模型不可用。';
+    }
+    const capability = call.adapter.getCapability(call.modelCode);
+    if (capability === undefined) {
+      return '所选模型不可用。';
+    }
+    return { usable, call, capability, modelMax: maxGroupSeconds(capability.duration) };
+  }
+
+  /**
+   * 保存一个镜头组的参数覆盖：changes 里出现的字段被覆盖，值为 null（或空串）表示恢复继承。
+   * @param rawInput `{ workId, episodeId, groupId, changes }`。
+   * @returns 保存后这一组的覆盖。
+   * @throws ValidationError 字段不合法、模型不是可用的视频模型，或镜头组不属于当前的分镜脚本。
+   * @throws NotFoundError 作品不存在。
+   */
+  saveGroupProfile(rawInput: unknown): ProfileValues {
+    const { works, storyboards, profiles, models } = this.dependencies;
+    const source = readRecord(rawInput);
+    const workId = readEntityId({ id: source.workId }, '作品');
+    const episodeId = readEntityId({ id: source.episodeId }, '集');
+    const groupId = readEntityId({ id: source.groupId }, '镜头组');
+    const changes = readProfileChanges(source.changes);
+    works.getWork(workId);
+    const { run } = this.resolveRun(workId, episodeId);
+    if (!storyboards.listGroups(run.id).some((group) => group.id === groupId)) {
+      throw new ValidationError({ [FORM_LEVEL_ERROR_KEY]: '镜头组不属于这一集当前的分镜脚本。' });
+    }
+    if (changes.modelId !== undefined && changes.modelId !== null) {
+      const model = models.findModelById(changes.modelId);
+      if (model === undefined || model.kind !== 'video') {
+        throw new ValidationError({ modelId: '所选模型不存在或不是视频模型。' });
+      }
+    }
+    const target = { scope: 'group', groupId } as const;
+    const next = applyProfileChanges(profiles.find(target) ?? EMPTY_PROFILE, changes);
+    profiles.save(target, next, this.timestamp());
+    return next;
+  }
+
   /**
    * 丢弃这一集现有的镜头组，按单组最长时长重新分组。已有的生成记录会随旧的组一起清除，已保存的视频文件不删除。
    * @param rawInput { workId, episodeId, maxSeconds? }，maxSeconds 缺省用分镜脚本生成时设定的值。

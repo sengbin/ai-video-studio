@@ -181,6 +181,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const generationRepository = new SqliteGenerationRepository(database);
   const resultStore = new LocalResultStore(context.globalStorageUri.fsPath);
   const jobChanges = new ChangeNotifier<JobChange>();
+  const generationProfileRepository = new SqliteGenerationProfileRepository(database);
   const jobQueue = new JobQueue({
     jobs: generationRepository,
     media: generationRepository,
@@ -204,11 +205,12 @@ export function activate(context: vscode.ExtensionContext): void {
     results: resultStore,
     models: providerRepository,
     providers: providerService,
+    profiles: generationProfileRepository,
     scheduler: jobQueue,
     changes: jobChanges
   });
   const profileService = new GenerationProfileService({
-    profiles: new SqliteGenerationProfileRepository(database),
+    profiles: generationProfileRepository,
     works: workService,
     projects: projectService,
     screenplays,

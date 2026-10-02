@@ -12,10 +12,10 @@ import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import type { DatabaseSync } from 'node:sqlite';
+import { DatabaseSync } from 'node:sqlite';
 import { IN_MEMORY_DATABASE_PATH, openDatabase } from './database-connection';
 import { Migration, MigrationError } from './migration';
-import { readSchemaVersion } from './migration-runner';
+import { readSchemaVersion, runMigrations } from './migration-runner';
 import { MIGRATIONS } from './migrations';
 import { runInTransaction } from './transaction';
 
@@ -591,6 +591,36 @@ test('事务：成功提交，异常回滚', () => {
       })
     );
     assert.equal(countRows(database, 'projects'), 1);
+  } finally {
+    database.close();
+  }
+});
+
+test('迁移 011：生成参数重建后保留作品级与集级记录，新增镜头组级并随镜头组一起删除', () => {
+  const database = new DatabaseSync(IN_MEMORY_DATABASE_PATH);
+  try {
+    database.exec('PRAGMA foreign_keys = ON');
+    runMigrations(database, MIGRATIONS.slice(0, 10));
+    const { workId, episodeId } = seedWorkWithEpisode(database);
+    database.prepare("INSERT INTO generation_profiles (scope, work_id, aspect_ratio, resolution, updated_at) VALUES ('work', ?, '16:9', '720P', ?)").run(workId, NOW);
+    database.prepare("INSERT INTO generation_profiles (scope, episode_id, aspect_ratio, updated_at) VALUES ('episode', ?, '9:16', ?)").run(episodeId, NOW);
+
+    runMigrations(database, MIGRATIONS);
+    assert.equal(readSchemaVersion(database), MIGRATIONS.length);
+    const rows = database.prepare('SELECT scope, aspect_ratio, resolution FROM generation_profiles ORDER BY scope').all();
+    assert.deepEqual(rows.map((row) => ({ ...row })), [
+      { scope: 'episode', aspect_ratio: '9:16', resolution: null },
+      { scope: 'work', aspect_ratio: '16:9', resolution: '720P' }
+    ]);
+
+    database.prepare("INSERT INTO stage_runs (work_id, episode_id, stage, version, input_json, created_at) VALUES (?, ?, 'storyboard_script', 1, '{}', ?)").run(workId, episodeId, NOW);
+    database.prepare('INSERT INTO storyboard_scripts (run_id, episode_id, created_at) VALUES (1, ?, ?)').run(episodeId, NOW);
+    database.prepare('INSERT INTO shot_groups (storyboard_script_id, seq, created_at) VALUES (1, 1, ?)').run(NOW);
+    database.prepare("INSERT INTO generation_profiles (scope, group_id, resolution, updated_at) VALUES ('group', 1, '1080P', ?)").run(NOW);
+    assert.throws(() => database.prepare("INSERT INTO generation_profiles (scope, group_id, work_id, updated_at) VALUES ('group', 1, ?, ?)").run(workId, NOW));
+    assert.throws(() => database.prepare("INSERT INTO generation_profiles (scope, group_id, resolution, updated_at) VALUES ('group', 1, '720P', ?)").run(NOW), '同一个镜头组只有一条覆盖');
+    database.prepare('DELETE FROM shot_groups WHERE id = 1').run();
+    assert.equal(countRows(database, 'generation_profiles'), 2, '镜头组删除后它的覆盖随之清除');
   } finally {
     database.close();
   }

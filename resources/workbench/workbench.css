@@ -500,6 +500,25 @@
   white-space: nowrap;
 }
 
+/* 选中镜头组的参数覆盖说明与入口 */
+.wb-group-params {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  margin: 8px 0 0;
+}
+/* 内置播放器：视频填满弹出页宽度，高度受限，黑色底 */
+.wb-player > * + * {
+  margin-top: 8px;
+}
+
+.wb-player__video {
+  display: block;
+  width: 100%;
+  max-height: 60vh;
+  background: rgb(0, 0, 0);
+}
 @media (max-width: 899px) {
   .wb-layout {
     flex-direction: column;

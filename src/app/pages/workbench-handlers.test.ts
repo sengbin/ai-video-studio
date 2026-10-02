@@ -44,6 +44,10 @@ function createFixture() {
       calls.push(['preview', payload]);
       return { groups: [] };
     },
+    saveGroupProfile: (payload: unknown) => {
+      calls.push(['saveGroupProfile', payload]);
+      return { modelId: null, aspectRatio: null, resolution: '1080P', audioMode: null };
+    },
     cancel: async (payload: unknown) => {
       calls.push(['cancel', payload]);
       return { remoteCanceled: false };
@@ -134,6 +138,8 @@ test('清单、集视图、提交、提交预览、重新分组、拆分、合�
   const body = { workId: 1, episodeId: 2, groupIds: [3], params: { modelId: 4 } };
   await callOk(WORKBENCH_REQUESTS.submit, body);
   assert.deepEqual(await callOk(WORKBENCH_REQUESTS.preview, body), { groups: [] });
+  const groupBody = { workId: 1, episodeId: 2, groupId: 3, changes: { resolution: '1080P' } };
+  assert.deepEqual(await callOk(WORKBENCH_REQUESTS.saveGroupProfile, groupBody), { modelId: null, aspectRatio: null, resolution: '1080P', audioMode: null });
   assert.deepEqual(await callOk(WORKBENCH_REQUESTS.regroup, { workId: 1, episodeId: 2, maxSeconds: 20 }), { done: true });
   await callOk(WORKBENCH_REQUESTS.splitGroup, { workId: 1, episodeId: 2, shotId: 6 });
   await callOk(WORKBENCH_REQUESTS.mergeGroup, { workId: 1, episodeId: 2, groupId: 7 });
@@ -142,6 +148,7 @@ test('清单、集视图、提交、提交预览、重新分组、拆分、合�
     ['episode', [1, 2]],
     ['submit', body],
     ['preview', body],
+    ['saveGroupProfile', groupBody],
     ['regroup', { workId: 1, episodeId: 2, maxSeconds: 20 }],
     ['splitGroup', { workId: 1, episodeId: 2, shotId: 6 }],
     ['mergeGroup', { workId: 1, episodeId: 2, groupId: 7 }],
