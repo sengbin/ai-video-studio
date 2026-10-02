@@ -33,6 +33,11 @@ export interface StoryboardRepository {
    * 镜头不属于该记录时返回 false。
    */
   deleteShot(runId: number, shotId: number, timestamp: string): boolean;
+  /**
+   * 交换两个镜头的位置：序号和所在的镜头组一起互换（各组的镜头数不变）；交换后新的第 1 个镜头若接上一镜头尾帧则改为不指定。
+   * 任一镜头不属于该记录时返回 false。
+   */
+  swapShots(runId: number, shotId: number, otherShotId: number, timestamp: string): boolean;
   /** 列出分镜脚本的镜头组，按组序号升序；还没有分组时为空。 */
   listGroups(runId: number): ShotGroup[];
   /**

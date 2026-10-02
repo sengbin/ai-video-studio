@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：storyboard-service.test.ts
-// 说明：分镜脚本阶段应用服务的自动化测试：生成、视图、多集、编辑保存、确认与上游变更、失败后继续。
+// 说明：分镜脚本阶段应用服务的自动化测试：生成、视图、多集、编辑保存、新增删除与调整镜头顺序、确认与上游变更、失败后继续。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
@@ -195,6 +195,39 @@ test('编辑：保存镜头与声音后回到待确认；已确认的版本编�
     assert.throws(() => fixture.storyboards.saveShot(run.id, { ...base, action: '' }), ValidationError);
     assert.throws(() => fixture.storyboards.saveShot(run.id, { ...base, ref: 99999 }), NotFoundError);
     assert.equal(fixture.runs.findById(run.id)?.revision, 2, '被拒绝的编辑不改变修订号');
+  } finally {
+    fixture.database.close();
+  }
+});
+
+test('调整镜头顺序：与相邻镜头互换序号和所在的组，各组镜头数不变；新的第 1 个镜头不再接上一镜头尾帧；版本回到待确认', async () => {
+  const fixture = await createFixture();
+  try {
+    const episodeId = firstEpisodeId(fixture);
+    const [run] = await fixture.storyboards.start(fixture.work.id, [episodeId], { groupMaxSeconds: '4' });
+    await fixture.runner.whenIdle();
+    fixture.stages.approve(run.id);
+    const before = fixture.storyboards.getView(fixture.work.id, episodeId);
+    const [first, second] = before.shots;
+    assert.deepEqual(before.groups.map((group) => group.shotIds), [[first.id], [second.id]]);
+    assert.equal(second.firstFrameMode, 'prev_tail');
+
+    const revision = fixture.runs.findById(run.id)!.revision;
+    fixture.storyboards.moveShot(run.id, { ref: second.id, direction: 'up' });
+    const after = fixture.storyboards.getView(fixture.work.id, episodeId);
+    assert.deepEqual(after.shots.map((shot) => [shot.id, shot.seq]), [[second.id, 1], [first.id, 2]]);
+    assert.deepEqual(after.groups.map((group) => group.shotIds), [[second.id], [first.id]], '序号和所在的组一起互换');
+    assert.equal(after.shots[0].firstFrameMode, 'none', '新的第 1 个镜头不接上一镜头尾帧');
+    assert.equal(after.run.display, 'pending');
+    assert.equal(fixture.runs.findById(run.id)!.revision, revision + 1);
+
+    fixture.storyboards.moveShot(run.id, { ref: second.id, direction: 'down' });
+    assert.deepEqual(fixture.storyboards.getView(fixture.work.id, episodeId).shots.map((shot) => shot.id), [first.id, second.id]);
+
+    assert.throws(() => fixture.storyboards.moveShot(run.id, { ref: first.id, direction: 'up' }), /已经是第一个镜头/);
+    assert.throws(() => fixture.storyboards.moveShot(run.id, { ref: second.id, direction: 'down' }), /已经是最后一个镜头/);
+    assert.throws(() => fixture.storyboards.moveShot(run.id, { ref: first.id, direction: 'left' }), ValidationError);
+    assert.throws(() => fixture.storyboards.moveShot(run.id, { ref: 99999, direction: 'up' }), NotFoundError);
   } finally {
     fixture.database.close();
   }

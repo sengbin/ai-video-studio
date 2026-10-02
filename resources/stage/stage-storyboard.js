@@ -4,7 +4,7 @@
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
-// 备注：向 stage.js 的外壳登记；请求名称与 src/app/pages/stage-handlers.ts、表单名称与 src/app/forms/storyboard-form.ts 一致；镜头的 ref 就是镜头标识，页面原样回传；支持在末尾新增和删除镜头，暂不支持调整镜头顺序。
+// 备注：向 stage.js 的外壳登记；请求名称与 src/app/pages/stage-handlers.ts、表单名称与 src/app/forms/storyboard-form.ts 一致；镜头的 ref 就是镜头标识，页面原样回传；支持在末尾新增、删除镜头以及与相邻镜头互换位置（上移、下移）。
 // ------------------------------------------------------------------------
 
 'use strict';
@@ -13,6 +13,7 @@
   const REQUEST_SAVE_SHOT = 'stage.saveShot';
   const REQUEST_ADD_SHOT = 'stage.addShot';
   const REQUEST_DELETE_SHOT = 'stage.deleteShot';
+  const REQUEST_MOVE_SHOT = 'stage.moveShot';
   const FORM_START = 'storyboard.start';
   const SAVE_TEXT = '保存';
   const ADD_TEXT = '添加';
@@ -371,6 +372,31 @@
       }
     }
 
+    /** 把当前镜头与前一个（up）或后一个（down）镜头互换位置；有未保存的修改时先确认放弃，已确认的版本先提示会回到待确认。 */
+    async function move(direction) {
+      const view = context.getView();
+      const index = view.shots.findIndex((candidate) => candidate.id === selectedId);
+      const other = view.shots[index + (direction === 'up' ? -1 : 1)];
+      if (index < 0 || !other) return;
+      if (!(await context.confirmDiscard())) return;
+      if (view.actions.editNeedsConfirm) {
+        const confirmed = await aiUi.confirm({
+          title: '调整镜头顺序',
+          message: '该版本已确认采用。调整顺序后将回到待确认，需要重新确认。',
+          confirmText: '调整',
+          cancelText: '取消'
+        });
+        if (!confirmed) return;
+      }
+      const groupOf = (shot) => (view.groups || []).find((group) => group.shotIds.includes(shot.id));
+      const crossesGroups = groupOf(view.shots[index]) !== groupOf(other);
+      if (await context.runAction(REQUEST_MOVE_SHOT, { id: view.run.id, ref: selectedId, direction })) {
+        editorDirty = false;
+        await context.reload();
+        context.showMessage(crossesGroups ? '已调整顺序；两个镜头所在的镜头组一并互换。' : '已调整顺序。', false);
+      }
+    }
+
     /** 新增镜头的空白内容：接在末尾，默认不指定首帧。 */
     function blankShot(view) {
       return {
@@ -418,6 +444,8 @@
       const reason = readonlyReason(view);
       // 至少保留 1 个镜头。
       const canRemove = canEdit && !isNew && view.shots.length > 1;
+      const index = view.shots.findIndex((candidate) => candidate.id === shot.id);
+      const canMove = canEdit && !isNew;
       const element = aiUi.h(
         'section',
         { class: 'stage-editor stage-editor--fields' },
@@ -428,6 +456,8 @@
               'div',
               { class: 'stage-editor__actions' },
               saveButton.element,
+              canMove ? aiUi.button({ text: '上移', disabled: index === 0, onClick: () => void move('up') }).element : null,
+              canMove ? aiUi.button({ text: '下移', disabled: index === view.shots.length - 1, onClick: () => void move('down') }).element : null,
               canRemove ? aiUi.button({ kind: 'delete', text: '删除', onClick: () => void remove() }).element : null
             )
           : null

@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：storyboard-service.ts
-// 说明：分镜脚本阶段应用服务：为一集或多集启动生成、整理阶段产出页的视图与各集状态、保存人工编辑的镜头。
+// 说明：分镜脚本阶段应用服务：为一集或多集启动生成、整理阶段产出页的视图与各集状态、保存人工编辑的镜头，新增、删除镜头并调整镜头顺序。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
@@ -341,6 +341,36 @@ export class StoryboardService {
         throw new ValidationError({ [FORM_LEVEL_ERROR_KEY]: '至少保留 1 个镜头，不能删除。' });
       }
       if (!storyboards.deleteShot(run.id, ref as number, this.timestamp())) {
+        throw new NotFoundError('镜头不存在。');
+      }
+      syncShotGroups(storyboards, run.id, groupMaxSecondsOf(readStoryboardParams(run)), this.timestamp());
+    });
+  }
+
+  /**
+   * 把一个镜头与前一个或后一个镜头互换位置（序号和所在的镜头组一起互换，各组镜头数不变），并让该版本回到待确认。
+   * @param rawInput { ref, direction }，ref 为视图中的镜头标识，direction 为 'up'（前移）或 'down'（后移）。
+   * @throws ValidationError 方向不合法、已经在最前或最后、不是最新版本或生成尚未成功。
+   * @throws NotFoundError 记录或镜头不存在。
+   */
+  moveShot(runId: number, rawInput: unknown): void {
+    const { storyboards } = this.dependencies;
+    this.dependencies.stages.editLatest(runId, (run) => {
+      const source = readRecord(rawInput);
+      const step = source.direction === 'up' ? -1 : source.direction === 'down' ? 1 : 0;
+      if (step === 0) {
+        throw new ValidationError({ [FORM_LEVEL_ERROR_KEY]: '移动方向不合法。' });
+      }
+      const shots = storyboards.listShots(run.id);
+      const index = shots.findIndex((candidate) => candidate.id === source.ref);
+      if (index < 0) {
+        throw new NotFoundError('镜头不存在。');
+      }
+      const other = shots[index + step] as ShotRecord | undefined;
+      if (other === undefined) {
+        throw new ValidationError({ [FORM_LEVEL_ERROR_KEY]: step < 0 ? '已经是第一个镜头，不能再前移。' : '已经是最后一个镜头，不能再后移。' });
+      }
+      if (!storyboards.swapShots(run.id, shots[index].id, other.id, this.timestamp())) {
         throw new NotFoundError('镜头不存在。');
       }
       syncShotGroups(storyboards, run.id, groupMaxSecondsOf(readStoryboardParams(run)), this.timestamp());

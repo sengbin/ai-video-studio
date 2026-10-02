@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：stage-handlers.ts
-// 说明：阶段产出（P7）的请求处理：读取视图、确认采用、取消、重试、读取失败时的原始输出，以及创意章节、剧本正文、集、实体、分镜脚本镜头的编辑保存、新增与删除（集、实体、镜头）、重新抽取。
+// 说明：阶段产出（P7）的请求处理：读取视图、确认采用、取消、重试、读取失败时的原始输出，以及创意章节、剧本正文、集、实体、分镜脚本镜头的编辑保存、新增与删除（集、实体、镜头）、镜头上移下移、重新抽取。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-09-30
@@ -33,6 +33,7 @@ export const STAGE_REQUESTS = {
   deleteEntity: 'stage.deleteEntity',
   addShot: 'stage.addShot',
   deleteShot: 'stage.deleteShot',
+  moveShot: 'stage.moveShot',
   reextract: 'stage.reextract'
 } as const;
 
@@ -151,6 +152,11 @@ export function registerStageHandlers(
   router.register(STAGE_REQUESTS.deleteShot, (payload) => {
     storyboards.deleteShot(readOwnRunId(payload), payload);
     return { deleted: true };
+  });
+
+  router.register(STAGE_REQUESTS.moveShot, (payload) => {
+    storyboards.moveShot(readOwnRunId(payload), payload);
+    return { moved: true };
   });
 
   router.register(STAGE_REQUESTS.reextract, async (payload) => {

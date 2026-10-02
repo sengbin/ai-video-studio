@@ -268,6 +268,33 @@ export class SqliteStoryboardRepository implements StoryboardRepository {
     });
   }
 
+  swapShots(runId: number, shotId: number, otherShotId: number, timestamp: string): boolean {
+    return runInTransaction(this.database, () => {
+      const read = this.database.prepare(
+        `SELECT s.seq, s.group_id, s.storyboard_script_id AS script_id FROM shots s JOIN storyboard_scripts ss ON ss.id = s.storyboard_script_id
+         WHERE s.id = ? AND ss.run_id = ?`
+      );
+      type Slot = { seq: number; group_id: number | null; script_id: number };
+      const first = read.get(shotId, runId) as unknown as Slot | undefined;
+      const second = read.get(otherShotId, runId) as unknown as Slot | undefined;
+      if (first === undefined || second === undefined) {
+        return false;
+      }
+      // 序号有唯一约束，先把第一个移出范围，再互换。
+      const update = this.database.prepare('UPDATE shots SET seq = ?, group_id = ?, updated_at = ? WHERE id = ?');
+      update.run(SEQ_SHIFT, first.group_id, timestamp, shotId);
+      update.run(first.seq, first.group_id, timestamp, otherShotId);
+      update.run(second.seq, second.group_id, timestamp, shotId);
+      this.database
+        .prepare(
+          `UPDATE shots SET first_frame_mode = 'none', updated_at = ?
+           WHERE storyboard_script_id = ? AND seq = 1 AND first_frame_mode = 'prev_tail'`
+        )
+        .run(timestamp, first.script_id);
+      return true;
+    });
+  }
+
   listGroups(runId: number): ShotGroup[] {
     const groupRows = this.database
       .prepare(

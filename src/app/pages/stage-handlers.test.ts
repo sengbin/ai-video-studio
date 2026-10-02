@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：stage-handlers.test.ts
-// 说明：阶段产出页请求处理的自动化测试：创意与剧本的读取视图、确认采用、编辑保存、版本归属校验。
+// 说明：阶段产出页请求处理的自动化测试：创意与剧本的读取视图、确认采用、编辑保存、镜头新增删除与调整顺序、版本归属校验。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-09-30
@@ -208,6 +208,13 @@ test('新增与删除：实体、镜头经请求完成并返回定位值；单�
     const removed = await send(STAGE_REQUESTS.deleteShot, { id: run.id, ref: shotId });
     assert.ok(removed?.ok);
     assert.equal(storyboards.getView(work.id, episode.episodeId).shots.length, 2);
+
+    const [firstShot, secondShot] = storyboards.getView(work.id, episode.episodeId).shots;
+    const moved = await send(STAGE_REQUESTS.moveShot, { id: run.id, ref: secondShot.id, direction: 'up' });
+    assert.ok(moved?.ok);
+    assert.deepEqual(storyboards.getView(work.id, episode.episodeId).shots.map((shot) => shot.id), [secondShot.id, firstShot.id]);
+    const outOfRange = await send(STAGE_REQUESTS.moveShot, { id: run.id, ref: secondShot.id, direction: 'up' });
+    assert.ok(outOfRange && !outOfRange.ok && outOfRange.error.kind === 'validation');
 
     // 别的集的标识不能操作这一集的版本。
     const wrongEpisode = await sendStage(STAGE_REQUESTS.deleteShot, { id: run.id, ref: shotId, episodeId: episode.episodeId + 100 }, 'storyboard_script');
