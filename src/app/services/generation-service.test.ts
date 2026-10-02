@@ -724,3 +724,52 @@ test('截取尾帧失败：等待这个结果的任务失败并说明原因，�
     fixture.database.close();
   }
 });
+
+test('预览提交：逐组汇总时长、首帧、参考素材与声音，阻断问题与提醒分开，不创建任务、不通知、不唤醒队列', async () => {
+  const fixture = await createFixture();
+  try {
+    fixture.approve();
+    const [groupId] = fixture.groupIds();
+    const params = { modelId: fixture.modelId, ...PARAMS };
+    const preview = await fixture.generation.previewSubmit({ workId: fixture.work.id, episodeId: fixture.episodeId, groupIds: [groupId], params });
+    assert.equal(preview.groups.length, 1);
+    const [group] = preview.groups;
+    assert.deepEqual([group.groupId, group.seq, group.shotCount, group.totalSeconds, group.durationSeconds], [groupId, 1, 2, 8, 8]);
+    assert.deepEqual([group.firstFrame, group.referenceImageCount, group.referenceAudioCount, group.audioMode], ['none', 0, 0, 'native']);
+    assert.deepEqual(group.blocking, []);
+    assert.ok(group.warnings.some((warning) => warning.includes('“守夜人”还没有绑定资产')));
+    assert.equal(fixture.jobs.listJobsByGroups([groupId]).length, 0);
+    assert.equal(fixture.pumps.length, 0);
+    assert.deepEqual(fixture.changed, []);
+
+    await submitGroups(fixture);
+    const again = await fixture.generation.previewSubmit({ workId: fixture.work.id, episodeId: fixture.episodeId, groupIds: [groupId], params });
+    assert.match(again.groups[0].blocking.join(), /正在生成/);
+    assert.equal(again.groups[0].durationSeconds, null);
+  } finally {
+    fixture.database.close();
+  }
+});
+
+test('预览提交：超过模型上限、参数不合法的组给出阻断问题；已有成功结果的组提醒会产生新版本', async () => {
+  const fixture = await createFixture();
+  try {
+    setShotSeconds(fixture, fixture.episode().groups[0].shots[0].id, 8);
+    fixture.approve();
+    const base = { workId: fixture.work.id, episodeId: fixture.episodeId, groupIds: fixture.groupIds() };
+    const tooLong = await fixture.generation.previewSubmit({ ...base, params: { modelId: fixture.modelId, ...PARAMS } });
+    assert.match(tooLong.groups[0].blocking[0], /共 12 秒，超过所选模型单次最长 10 秒/);
+    assert.equal(tooLong.groups[0].totalSeconds, 12);
+
+    fixture.generation.splitGroup({ workId: fixture.work.id, episodeId: fixture.episodeId, shotId: fixture.episode().groups[0].shots[1].id });
+    const groupIds = fixture.groupIds();
+    const badResolution = await fixture.generation.previewSubmit({ ...base, groupIds, params: { modelId: fixture.modelId, ...PARAMS, resolution: '4K' } });
+    assert.match(badResolution.groups[0].blocking.join(), /分辨率 4K/);
+    assert.ok(badResolution.groups[1].blocking.length > 0, '第 2 组接在被拒绝的第 1 组之后，同样不能提交');
+    assert.deepEqual(badResolution.groups.map((group) => group.seq), [1, 2], '按组序号排列');
+
+    await assert.rejects(fixture.generation.previewSubmit({ ...base, groupIds, params: { modelId: 'x' } }), ValidationError);
+  } finally {
+    fixture.database.close();
+  }
+});

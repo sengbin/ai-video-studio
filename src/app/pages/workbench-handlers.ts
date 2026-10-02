@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：workbench-handlers.ts
-// 说明：生成工作台（P5）的请求处理：读取作品与可用模型清单、读取一集的镜头组与任务历史、提交生成（结果以右下角通知弹出）、重新分组与拆分合并镜头组、取消任务、采用某个结果版本、打开、导出、在文件夹中显示结果视频、尾帧截取相关（列出待截取的结果、把结果视频交给页面、保存尾帧、上报截取失败）；并提供分镜脚本阶段产出层需要的请求。
+// 说明：生成工作台（P5）的请求处理：读取作品与可用模型清单、读取一集的镜头组与任务历史、提交生成（结果以右下角通知弹出）、提交预览（不写任务）、重新分组与拆分合并镜头组、取消任务、采用某个结果版本、打开、导出、在文件夹中显示结果视频、尾帧截取相关（列出待截取的结果、把结果视频交给页面、保存尾帧、上报截取失败）；并提供分镜脚本阶段产出层需要的请求。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
@@ -27,6 +27,7 @@ export const WORKBENCH_REQUESTS = {
   profile: 'workbench.profile',
   saveProfile: 'workbench.saveProfile',
   submit: 'workbench.submit',
+  preview: 'workbench.preview',
   regroup: 'workbench.regroup',
   splitGroup: 'workbench.splitGroup',
   mergeGroup: 'workbench.mergeGroup',
@@ -129,6 +130,7 @@ export function registerWorkbenchHandlers(router: MessageRouter, services: Workb
     }
     return result;
   });
+  router.register(WORKBENCH_REQUESTS.preview, (payload) => generation.previewSubmit(payload));
   router.register(WORKBENCH_REQUESTS.regroup, (payload) => {
     generation.regroup(payload);
     return { done: true };

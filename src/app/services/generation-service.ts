@@ -12,7 +12,7 @@ import { ACTIVE_JOB_STATUSES, JOB_STATUS_LABELS, JobFailure, JobStatus, VideoJob
 import { VideoAudioMode, VideoCapability } from '../../domain/models/model-capability';
 import { EntityKind, ENTITY_KIND_LABELS } from '../../domain/models/screenplay';
 import { StageDisplayStatus, StageRun } from '../../domain/models/stage-run';
-import { ShotGroup } from '../../domain/models/storyboard';
+import { ShotGroup, ShotRecord } from '../../domain/models/storyboard';
 import { AssetRepository } from '../../domain/ports/asset-repository';
 import { BindingRepository } from '../../domain/ports/binding-repository';
 import { GenerationRepository, JobMediaReader, ResultStore } from '../../domain/ports/generation-repository';
@@ -209,6 +209,32 @@ export interface SubmitResult {
   readonly rejected: readonly RejectedGroup[];
 }
 
+/** 提交前预览中一个镜头组的汇总。 */
+export interface GroupPreview {
+  readonly groupId: number;
+  readonly seq: number;
+  readonly shotCount: number;
+  /** 组内镜头时长之和（秒）。 */
+  readonly totalSeconds: number;
+  /** 按模型能力对齐后提交的整组时长（秒）；组不能提交时为 null。 */
+  readonly durationSeconds: number | null;
+  readonly firstFrame: 'none' | 'previous_tail';
+  readonly referenceImageCount: number;
+  readonly referenceAudioCount: number;
+  readonly audioMode: VideoAudioMode | null;
+  /** 阻断问题：有任何一条时这一组不能提交。 */
+  readonly blocking: readonly string[];
+  /** 提醒：不阻止提交。 */
+  readonly warnings: readonly string[];
+}
+
+/** 提交预览：按组序号排列的各镜头组汇总。 */
+export interface SubmitPreview {
+  readonly groups: readonly GroupPreview[];
+}
+
+/** 预览时代替真实任务标识，让同一次预览里后一组能接在前一组之后。 */
+const DRY_RUN_JOB_ID = -1;
 /** 这一组首帧所依赖的前序任务，以及已就绪的首帧（尾帧图片）；尾帧还没截取时为 null。 */
 interface FirstFrameLink {
   readonly prevJobId: number;
@@ -365,6 +391,21 @@ export class GenerationService {
    * @throws NotFoundError 作品不存在。
    */
   async submit(rawInput: unknown): Promise<SubmitResult> {
+    return (await this.processSubmission(rawInput, false)).result;
+  }
+
+  /**
+   * 预览提交：与 submit 做同样的编译与校验，但不写任务、不入队；逐组汇总整组时长、首帧来源、参考素材数量与声音，以及阻断问题和提醒。
+   * @param rawInput 与 submit 相同。
+   * @throws ValidationError 内容不合法、分镜脚本尚未确认采用，或所选模型不可用。
+   * @throws NotFoundError 作品不存在。
+   */
+  async previewSubmit(rawInput: unknown): Promise<SubmitPreview> {
+    return { groups: (await this.processSubmission(rawInput, true)).previews };
+  }
+
+  /** submit 与 previewSubmit 共用的处理：dryRun 为 true 时不写任务、不通知、不唤醒队列。 */
+  private async processSubmission(rawInput: unknown, dryRun: boolean): Promise<{ readonly result: SubmitResult; readonly previews: GroupPreview[] }> {
     const { works, storyboards, jobs, media, providers, scheduler, changes } = this.dependencies;
     const input = readSubmitInput(rawInput);
     works.getWork(input.workId);
@@ -399,24 +440,40 @@ export class GenerationService {
     const createdJobIds = new Map<number, number>();
     const submitted: Array<SubmitResult['submitted'][number]> = [];
     const rejected: RejectedGroup[] = [];
+    const previews: GroupPreview[] = [];
+    const memberShots = (group: ShotGroup | undefined): ShotRecord[] => (group === undefined ? [] : group.shotIds.flatMap((id) => shotsById.get(id) ?? []));
+    /** 记录被拒绝的组：同时产生一条只有阻断问题的预览。 */
+    const reject = (groupId: number, group: ShotGroup | undefined, issues: readonly string[]): void => {
+      const members = memberShots(group);
+      rejected.push({ groupId, seq: group?.seq ?? 0, issues });
+      previews.push({
+        groupId,
+        seq: group?.seq ?? 0,
+        shotCount: members.length,
+        totalSeconds: sumSeconds(members),
+        durationSeconds: null,
+        firstFrame: 'none',
+        referenceImageCount: 0,
+        referenceAudioCount: 0,
+        audioMode: input.params.audioMode,
+        blocking: issues,
+        warnings: []
+      });
+    };
     for (const groupId of orderedGroupIds) {
       const group = groupsById.get(groupId);
       if (group === undefined) {
-        rejected.push({ groupId, seq: 0, issues: ['镜头组不属于当前已确认的分镜脚本。'] });
+        reject(groupId, undefined, ['镜头组不属于当前已确认的分镜脚本。']);
         continue;
       }
       if (jobs.hasActiveJob(group.id)) {
-        rejected.push({ groupId, seq: group.seq, issues: ['这一组正在生成，完成或取消后才能再次提交。'] });
+        reject(groupId, group, ['这一组正在生成，完成或取消后才能再次提交。']);
         continue;
       }
-      const members = group.shotIds.flatMap((id) => shotsById.get(id) ?? []);
+      const members = memberShots(group);
       const total = sumSeconds(members);
       if (modelMax !== null && total > modelMax) {
-        rejected.push({
-          groupId,
-          seq: group.seq,
-          issues: [`这一组共 ${total} 秒，超过所选模型单次最长 ${modelMax} 秒。请拆分这一组、重新分组，或换一个支持更长时长的模型。`]
-        });
+        reject(groupId, group, [`这一组共 ${total} 秒，超过所选模型单次最长 ${modelMax} 秒。请拆分这一组、重新分组，或换一个支持更长时长的模型。`]);
         continue;
       }
       // 组的第一个镜头设为“上一镜头尾帧作首帧”时，这一组要接在上一组后面（第一组没有上一组，不适用）。
@@ -424,16 +481,12 @@ export class GenerationService {
       const previousGroup = groupList[(orderOf.get(group.id) ?? 0) - 1] as ShotGroup | undefined;
       if (members[0]?.firstFrameMode === 'prev_tail' && previousGroup !== undefined) {
         if (!capability.firstFrame) {
-          rejected.push({
-            groupId,
-            seq: group.seq,
-            issues: ['所选模型不支持首帧输入，无法用上一组的尾帧作首帧。请换一个支持首帧的模型，或点“编辑镜头”把首帧来源改为“无”。']
-          });
+          reject(groupId, group, ['所选模型不支持首帧输入，无法用上一组的尾帧作首帧。请换一个支持首帧的模型，或点“编辑镜头”把首帧来源改为“无”。']);
           continue;
         }
         const found = this.linkPreviousGroup(previousGroup, createdJobIds);
         if (typeof found === 'string') {
-          rejected.push({ groupId, seq: group.seq, issues: [found] });
+          reject(groupId, group, [found]);
           continue;
         }
         link = found;
@@ -456,30 +509,46 @@ export class GenerationService {
         issues = [error instanceof Error ? error.message : String(error)];
       }
       if (issues.length > 0) {
-        rejected.push({ groupId, seq: group.seq, issues });
+        reject(groupId, group, issues);
         continue;
       }
-      const job = jobs.insertJob(
-        {
-          groupId: group.id,
-          modelId: usable.model.id,
-          status: link === undefined || link.firstFrameId !== null ? 'queued' : 'waiting',
-          snapshot,
-          prevJobId: link === undefined ? null : link.prevJobId,
-          firstFrameId: link === undefined ? null : link.firstFrameId
-        },
-        this.timestamp()
-      );
-      createdJobIds.set(group.id, job.id);
-      submitted.push({ groupId, seq: group.seq, jobId: job.id, warnings: snapshot.warnings });
-      changes.notify({ jobId: job.id, groupId });
+      let jobId = DRY_RUN_JOB_ID;
+      if (!dryRun) {
+        const job = jobs.insertJob(
+          {
+            groupId: group.id,
+            modelId: usable.model.id,
+            status: link === undefined || link.firstFrameId !== null ? 'queued' : 'waiting',
+            snapshot,
+            prevJobId: link === undefined ? null : link.prevJobId,
+            firstFrameId: link === undefined ? null : link.firstFrameId
+          },
+          this.timestamp()
+        );
+        jobId = job.id;
+        changes.notify({ jobId, groupId });
+      }
+      createdJobIds.set(group.id, jobId);
+      submitted.push({ groupId, seq: group.seq, jobId, warnings: snapshot.warnings });
+      previews.push({
+        groupId,
+        seq: group.seq,
+        shotCount: members.length,
+        totalSeconds: total,
+        durationSeconds: snapshot.params.durationSeconds,
+        firstFrame: link === undefined ? 'none' : 'previous_tail',
+        referenceImageCount: snapshot.referenceImageFileIds.length,
+        referenceAudioCount: snapshot.referenceAudioFileIds.length,
+        audioMode: snapshot.params.audioMode,
+        blocking: [],
+        warnings: jobs.listResultsByGroups([group.id]).length > 0 ? [...snapshot.warnings, '这一组已有成功的结果，本次会产生新的版本，不会覆盖已有视频。'] : snapshot.warnings
+      });
     }
-    if (submitted.length > 0) {
+    if (!dryRun && submitted.length > 0) {
       void scheduler.pump().catch((error: unknown) => console.error('处理生成队列时出现未预期的错误：', error));
     }
-    return { submitted, rejected };
+    return { result: { submitted, rejected }, previews };
   }
-
   /**
    * 丢弃这一集现有的镜头组，按单组最长时长重新分组。已有的生成记录会随旧的组一起清除，已保存的视频文件不删除。
    * @param rawInput { workId, episodeId, maxSeconds? }，maxSeconds 缺省用分镜脚本生成时设定的值。

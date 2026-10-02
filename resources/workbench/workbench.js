@@ -4,7 +4,7 @@
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
-// 备注：请求与事件名称与 src/app/pages/workbench-handlers.ts 一致；“编辑镜头”“确认分镜脚本”复用 stage/stage.js 的产出层（aiStage）；右栏检查器的页签容器由 workbench/inspector.js（aiInspector）提供，其中“绑定”面板由 workbench/bindings.js（aiBindings）提供，“参数”面板与生效参数的合并由 workbench/profile.js（aiProfile）提供，“结果版本”弹出页由 workbench/versions.js（aiVersions）提供，“上一组尾帧作首帧”的尾帧截取由 workbench/tail-frames.js（aiTailFrames）提供；依赖 shared/page-format.js（pageFormat）。
+// 备注：请求与事件名称与 src/app/pages/workbench-handlers.ts 一致；“编辑镜头”“确认分镜脚本”复用 stage/stage.js 的产出层（aiStage）；右栏检查器的页签容器由 workbench/inspector.js（aiInspector）提供，其中“绑定”面板由 workbench/bindings.js（aiBindings）提供，“参数”面板与生效参数的合并由 workbench/profile.js（aiProfile）提供，“提交”面板由 workbench/submit-panel.js（aiSubmit）提供，“结果版本”弹出页由 workbench/versions.js（aiVersions）提供，“上一组尾帧作首帧”的尾帧截取由 workbench/tail-frames.js（aiTailFrames）提供；依赖 shared/page-format.js（pageFormat）。
 // ------------------------------------------------------------------------
 
 'use strict';
@@ -15,6 +15,7 @@
   const REQUEST_PROFILE = 'workbench.profile';
   const REQUEST_SAVE_PROFILE = 'workbench.saveProfile';
   const REQUEST_SUBMIT = 'workbench.submit';
+  const REQUEST_PREVIEW = 'workbench.preview';
   const REQUEST_REGROUP = 'workbench.regroup';
   const REQUEST_SPLIT_GROUP = 'workbench.splitGroup';
   const REQUEST_MERGE_GROUP = 'workbench.mergeGroup';
@@ -95,6 +96,7 @@
   let inspector = null;
   let bindingsPanel = null;
   let profilePanel = null;
+  let submitPanel = null;
 
   /** 取错误载荷中的说明文字：有字段错误时列出各项，否则用错误说明。 */
   function errorText(error) {
@@ -252,26 +254,47 @@
     return max !== null && group.totalSeconds > max;
   }
 
-  /** 提交镜头组；成功后汇总已提交的组、被拒绝的原因和提醒。 */
-  async function submit(groups) {
-    if (!view || groups.length === 0) return;
+  /** 提交与预览共用的请求内容：作品、集、镜头组与生效的生成参数。 */
+  function submitPayload(groupIds) {
     const { workId, episodeId } = parseEpisodeKey(episodeKey);
-    groups.forEach((group) => submitting.add(group.id));
-    render();
-    await runAction(REQUEST_SUBMIT, {
+    return {
       workId,
       episodeId,
-      groupIds: groups.map((group) => group.id),
+      groupIds,
       params: {
         modelId: Number(resolved.values.modelId),
         aspectRatio: resolved.values.aspectRatio,
         resolution: resolved.values.resolution,
         audioMode: resolved.values.audioMode
       }
-    });
+    };
+  }
+
+  /** 提交镜头组；返回提交结果（已提交的组与被拒绝的原因），请求失败时返回 undefined。 */
+  async function submit(groups) {
+    if (!view || groups.length === 0) return undefined;
+    groups.forEach((group) => submitting.add(group.id));
+    render();
+    const result = await runAction(REQUEST_SUBMIT, submitPayload(groups.map((group) => group.id)));
     groups.forEach((group) => submitting.delete(group.id));
     // 提交结果、被拒绝的原因和提醒由宿主在 VS Code 右下角通知，页面只刷新状态。
     await loadEpisode(false);
+    return result;
+  }
+
+  /** 从检查器的“提交”页签提交：成功后展开底部队列并定位到第一个新任务所在的组。 */
+  async function submitFromInspector(groupIds) {
+    const result = await submit(view.groups.filter((group) => groupIds.includes(group.id)));
+    if (result && result.submitted.length > 0) {
+      queueOpen = true;
+      selectedGroupId = result.submitted[0].groupId;
+      render();
+    }
+  }
+
+  /** 还没有结果、没有进行中任务，且没有超过所选模型单次最长时长的镜头组。 */
+  function isPendingGroup(group) {
+    return !submitting.has(group.id) && !exceedsModel(group) && !group.jobs.some((job) => ACTIVE_STATUSES.includes(job.status) || job.status === 'succeeded');
   }
 
   /** 取消进行中的任务；生成中的任务说明平台上可能仍会继续。 */
@@ -834,9 +857,7 @@
 
   /** 批量操作与重新分组：提交还没有结果也没有进行中任务的组；按填写的时长重新分组。 */
   function renderBatchBar() {
-    const pending = view.groups.filter(
-      (group) => !submitting.has(group.id) && !exceedsModel(group) && !group.jobs.some((job) => ACTIVE_STATUSES.includes(job.status) || job.status === 'succeeded')
-    );
+    const pending = view.groups.filter(isPendingGroup);
     const enabled = view.canGenerate && paramsReady() && pending.length > 0;
     const max = modelMaxSeconds();
     if (regroupSeconds === '') regroupSeconds = String(max !== null && max <= 120 ? max : view.groupMaxSeconds);
@@ -847,10 +868,13 @@
       'div',
       { class: 'wb-batch' },
       aiUi.button({
-        text: `生成未完成的镜头组（${pending.length}）`,
+        text: `提交未完成的镜头组（${pending.length}）…`,
         variant: 'primary',
         disabled: !enabled,
-        onClick: () => void submit(pending)
+        onClick: () => {
+          submitPanel.select(pending.map((group) => group.id));
+          openInspector('submit');
+        }
       }).element,
       aiUi.button({ text: '查看分镜脚本', onClick: openStoryboard }).element,
       aiUi.button({ text: unboundCount > 0 ? `实体绑定（${unboundCount} 个未绑定）` : '实体绑定', onClick: () => openInspector('bindings') }).element,
@@ -907,6 +931,7 @@
     const list = treeElement && treeElement.querySelector('.wb-tree__list');
     if (list) list.scrollTop = treeScroll;
     updateInspectorLabels();
+    submitPanel.refresh();
   }
 
   /** 右栏：展开时是检查器（宽度可调），折叠时是一个窄条和展开按钮。检查器元素创建后一直保留，只是每次重新挂到新的布局里。 */
@@ -968,6 +993,7 @@
     render();
     bindingsPanel.setEpisode(episodeKey === '' ? null : parseEpisodeKey(episodeKey).episodeId);
     profilePanel.refresh();
+    submitPanel.refresh();
     aiVersions.refresh();
   }
 
@@ -1021,10 +1047,22 @@
         render();
       }
     });
+    submitPanel = aiSubmit.create({
+      getState: () => ({ view, resolved, episodeKey, busyGroupIds: submitting }),
+      isVisible: () => Boolean(inspector) && inspector.getActive() === 'submit' && !inspectorCollapsed && inspector.element.isConnected,
+      groupStatus,
+      isSelectable: (group) => !hasActiveJob(group) && !submitting.has(group.id),
+      isPending: isPendingGroup,
+      summarize: () => (resolved ? aiProfile.summarize(resolved) : ''),
+      openTab: openInspector,
+      preview: (groupIds) => window.hostBridge.request(REQUEST_PREVIEW, submitPayload(groupIds)),
+      submit: submitFromInspector
+    });
     inspector = aiInspector.create({
       tabs: [
         { id: 'bindings', label: '绑定', build: () => bindingsPanel },
-        { id: 'profile', label: '参数', build: () => profilePanel }
+        { id: 'profile', label: '参数', build: () => profilePanel },
+        { id: 'submit', label: '提交', build: () => submitPanel }
       ],
       initial: 'bindings',
       actions: [collapseButton.element]
