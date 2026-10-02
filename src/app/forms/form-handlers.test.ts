@@ -273,4 +273,26 @@ test('多个提交按钮：提交带所选按钮的键；不在 schema 里的键
   assert.deepEqual(singleKeys, ['']);
 });
 
+test('打开表单：异步工厂创建的定义同样返回会话与初始值，工厂失败时返回领域错误', async () => {
+  const catalog: FormCatalog = new Map([
+    [
+      'async',
+      async (params: unknown): Promise<FormDefinition> => {
+        await Promise.resolve();
+        if (params === 'bad') {
+          throw new ValidationError({ name: '参数无效。' });
+        }
+        return { schema: { title: '异步表单', submitLabel: '保存', fields: [] }, initialValues: { name: '甲' }, submit: () => undefined };
+      }
+    ]
+  ]);
+  const router = new MessageRouter();
+  registerFormHandlers(router, catalog);
+  const send = (payload: unknown) => router.handle({ type: 'request', requestId: 1, name: FORM_REQUESTS.open, payload });
 
+  const opened = await send({ form: 'async' });
+  assert.ok(opened?.ok);
+  assert.deepEqual((opened.data as { values: FormValues }).values, { name: '甲' });
+  const failed = await send({ form: 'async', params: 'bad' });
+  assert.ok(failed && !failed.ok && failed.error.kind === 'validation');
+});

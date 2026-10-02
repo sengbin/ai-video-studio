@@ -10,16 +10,26 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { NotFoundError, ValidationError } from '../../domain/errors';
+import { EMPTY_PROFILE } from '../../domain/models/generation-profile';
+import { ProviderRegistry } from '../../domain/ports/provider-registry';
+import { FakeVideoProvider } from '../../domain/ports/testing/fake-model-providers';
+import { MemorySecretStore } from '../../domain/ports/testing/memory-secret-store';
 import { normalizeWorkCreation } from '../../domain/rules/work-rules';
+import { SqliteGenerationProfileRepository } from '../../infra/database/sqlite-generation-profile-repository';
+import { SqliteProviderRepository } from '../../infra/database/sqlite-provider-repository';
+import { SqliteScreenplayRepository } from '../../infra/database/sqlite-screenplay-repository';
+import { GenerationProfileService } from '../services/generation-profile-service';
+import { ProviderService } from '../services/provider-service';
 import { createServiceFixture } from '../services/testing/service-fixture';
 import { FormDefinition } from './form-definition';
 import { STORYBOARD_FORM_NAMES, createStoryboardFormCatalog } from './storyboard-form';
 
 const CREATIVE_PARAMS = { chapterMinWords: 100, chapterMaxWords: 200, maxChapters: 3 };
 const SCREENPLAY_PARAMS = { maxEpisodeDurationSeconds: '60', maxEpisodes: '3' };
+const FAKE_MODEL_LABEL = '假服务商 · 假视频模型（单次最长 10 秒）';
 
-/** 创建夹具与作品，创意已确认；approveScreenplay 为 true 时剧本也已确认。 */
-async function createFixture(kind: '单个短视频' | '多集短片', approveScreenplay = true) {
+/** 创建夹具与作品，创意已确认；approveScreenplay 为 true 时剧本也已确认；hasModel 为 false 时没有可用的视频模型（未配置密钥）。 */
+async function createFixture(kind: '单个短视频' | '多集短片', approveScreenplay = true, hasModel = true) {
   const fixture = createServiceFixture();
   const work = fixture.works.createWork(fixture.project.id, normalizeWorkCreation({ workName: '作品甲', kind }, 'text'));
   const creative = await fixture.stages.startCreative(work.id, CREATIVE_PARAMS);
@@ -30,30 +40,54 @@ async function createFixture(kind: '单个短视频' | '多集短片', approveSc
   if (approveScreenplay) {
     fixture.stages.approve(screenplay.id);
   }
+  const providerRepository = new SqliteProviderRepository(fixture.database);
+  const providers = new ProviderService({
+    repository: providerRepository,
+    registry: new ProviderRegistry().register(new FakeVideoProvider()),
+    secrets: new MemorySecretStore()
+  });
+  providers.syncCatalog();
+  const [providerView] = await providers.listViews();
+  if (hasModel) {
+    await providers.setApiKey({ providerId: providerView.id, apiKey: 'sk-test' });
+  }
+  const modelId = providerView.models[0].id;
+  const profiles = new GenerationProfileService({
+    profiles: new SqliteGenerationProfileRepository(fixture.database),
+    works: fixture.works,
+    projects: fixture.projects,
+    screenplays: new SqliteScreenplayRepository(fixture.database),
+    models: providerRepository
+  });
   const started: Array<[number, readonly number[]]> = [];
   const picked: number[] = [];
   const catalog = createStoryboardFormCatalog({
     projects: fixture.projects,
     works: fixture.works,
     storyboards: fixture.storyboards,
+    profiles,
+    providers,
     onStarted: (workId, episodeIds) => started.push([workId, episodeIds]),
     onPicked: (workId) => picked.push(workId)
   });
-  const open = (params: unknown, name: string = STORYBOARD_FORM_NAMES.start): FormDefinition => {
+  const open = async (params: unknown, name: string = STORYBOARD_FORM_NAMES.start): Promise<FormDefinition> => {
     const factory = catalog.get(name);
     assert.ok(factory);
     return factory(params);
   };
-  return { ...fixture, work, started, picked, open };
+  return { ...fixture, work, started, picked, open, profiles, modelId };
 }
 
 test('字段：多集作品可选集，单个短视频或指定了集时不显示选择；新建时带默认值', async () => {
   const series = await createFixture('多集短片');
   const single = await createFixture('单个短视频');
   try {
-    const seriesForm = series.open({ workId: series.work.id });
+    const seriesForm = await series.open({ workId: series.work.id });
     assert.deepEqual(seriesForm.schema.fields.map((field) => field.key), [
       'episodes',
+      'videoModel',
+      'aspectRatio',
+      'resolution',
       'visualStyle',
       'minShotSeconds',
       'maxShotSeconds',
@@ -71,11 +105,11 @@ test('字段：多集作品可选集，单个短视频或指定了集时不显�
     assert.deepEqual(JSON.parse(seriesForm.initialValues.episodes), ['第 1 集 第一集', '第 2 集 第二集']);
 
     const episodeId = series.storyboards.listEpisodeStatuses(series.work.id)[1].episodeId;
-    const oneEpisode = series.open({ workId: series.work.id, episodeId });
+    const oneEpisode = await series.open({ workId: series.work.id, episodeId });
     assert.ok(!oneEpisode.schema.fields.some((field) => field.key === 'episodes'));
     assert.equal(oneEpisode.schema.title, '生成分镜脚本：作品甲 › 第 2 集 第二集');
 
-    assert.ok(!single.open({ workId: single.work.id }).schema.fields.some((field) => field.key === 'episodes'));
+    assert.ok(!(await single.open({ workId: single.work.id })).schema.fields.some((field) => field.key === 'episodes'));
   } finally {
     series.database.close();
     single.database.close();
@@ -85,16 +119,16 @@ test('字段：多集作品可选集，单个短视频或指定了集时不显�
 test('打开：剧本未确认、作品或集不存在时报错', async () => {
   const { database, open, work } = await createFixture('单个短视频', false);
   try {
-    assert.throws(() => open({ workId: work.id }), (error) => error instanceof ValidationError && /请先确认剧本/.test(error.message));
-    assert.throws(() => open({ workId: 999 }), NotFoundError);
-    assert.throws(() => open({}), ValidationError);
+    await assert.rejects(open({ workId: work.id }), (error) => error instanceof ValidationError && /请先确认剧本/.test(error.message));
+    await assert.rejects(open({ workId: 999 }), NotFoundError);
+    await assert.rejects(open({}), ValidationError);
   } finally {
     database.close();
   }
 
   const approved = await createFixture('单个短视频');
   try {
-    assert.throws(() => approved.open({ workId: approved.work.id, episodeId: 9999 }), ValidationError);
+    await assert.rejects(approved.open({ workId: approved.work.id, episodeId: 9999 }), ValidationError);
   } finally {
     approved.database.close();
   }
@@ -103,7 +137,7 @@ test('打开：剧本未确认、作品或集不存在时报错', async () => {
 test('提交：为所选集各启动一份并通知页面；至少选一集；输入不合法时返回字段错误；重新生成时带出上次的参数', async () => {
   const { database, open, work, started, storyboards, runner } = await createFixture('多集短片');
   try {
-    const form = open({ workId: work.id });
+    const form = await open({ workId: work.id });
     await assert.rejects(
       Promise.resolve(form.submit({ ...form.initialValues, episodes: '[]' })),
       (error) => error instanceof ValidationError && error.fieldErrors.episodes !== undefined
@@ -127,7 +161,7 @@ test('提交：为所选集各启动一份并通知页面；至少选一集；�
     assert.deepEqual(started, [[work.id, [second.episodeId]]]);
     assert.deepEqual(storyboards.listEpisodeStatuses(work.id).map((status) => status.display), ['none', 'pending']);
 
-    const again = open({ workId: work.id });
+    const again = await open({ workId: work.id });
     assert.equal(again.initialValues.visualStyle, '水彩');
     assert.equal(again.initialValues.maxShots, '12');
     assert.equal(again.initialValues.continuity, '尾帧接首帧');
@@ -145,14 +179,14 @@ test('选择作品：只列剧本已确认的作品，标签为“项目 › 作
     const other = projects.createProject({ name: '项目乙' });
     works.createWork(other.id, normalizeWorkCreation({ workName: '未确认作品', kind: '单个短视频' }, 'text'));
 
-    const form = open({}, STORYBOARD_FORM_NAMES.pick);
+    const form = await open({}, STORYBOARD_FORM_NAMES.pick);
     assert.deepEqual(form.schema.fields[0].options, ['项目甲 › 作品甲']);
     assert.deepEqual(form.initialValues, { work: '项目甲 › 作品甲' });
     assert.throws(() => form.submit({ work: '' }), ValidationError);
     form.submit({ work: '项目甲 › 作品甲' });
     assert.deepEqual(picked, [work.id]);
 
-    assert.throws(() => open({ projectId: other.id }, STORYBOARD_FORM_NAMES.pick), ValidationError);
+    await assert.rejects(open({ projectId: other.id }, STORYBOARD_FORM_NAMES.pick), ValidationError);
   } finally {
     database.close();
   }
@@ -161,12 +195,84 @@ test('选择作品：只列剧本已确认的作品，标签为“项目 › 作
 test('提交：默认勾选全部集时，为每一集各启动一份并把所有集通知页面', async () => {
   const { database, open, work, started, storyboards, runner } = await createFixture('多集短片');
   try {
-    const form = open({ workId: work.id });
+    const form = await open({ workId: work.id });
     await form.submit({ ...form.initialValues });
     await runner.whenIdle();
     const ids = storyboards.listEpisodeStatuses(work.id).map((status) => status.episodeId);
     assert.deepEqual(started, [[work.id, ids]]);
     assert.deepEqual(storyboards.listEpisodeStatuses(work.id).map((status) => status.display), ['pending', 'pending']);
+  } finally {
+    database.close();
+  }
+});
+
+test('目标模型：没有可用视频模型时不显示模型、画幅、分辨率三项，也能照常提交', async () => {
+  const { database, open, work, started, runner, profiles } = await createFixture('单个短视频', true, false);
+  try {
+    const form = await open({ workId: work.id });
+    assert.ok(!form.schema.fields.some((field) => ['videoModel', 'aspectRatio', 'resolution'].includes(field.key)));
+    await form.submit({ ...form.initialValues });
+    await runner.whenIdle();
+    assert.equal(started.length, 1);
+    assert.deepEqual(profiles.getWorkDefaults(work.id).values, EMPTY_PROFILE);
+  } finally {
+    database.close();
+  }
+});
+
+test('目标模型：选项取自可用模型，保存为作品默认并在下次打开时作为初始值，单组最长时长默认值不超过模型上限', async () => {
+  const { database, open, work, started, runner, profiles, modelId } = await createFixture('单个短视频');
+  try {
+    const form = await open({ workId: work.id });
+    const field = (key: string) => form.schema.fields.find((item) => item.key === key);
+    assert.deepEqual(field('videoModel')?.options, [FAKE_MODEL_LABEL]);
+    assert.deepEqual(field('aspectRatio')?.options, ['16:9', '9:16']);
+    assert.deepEqual(field('resolution')?.options, ['720P', '1080P']);
+    assert.deepEqual([form.initialValues.videoModel, form.initialValues.aspectRatio, form.initialValues.resolution], ['', '', '']);
+    assert.equal(form.initialValues.groupMaxSeconds, '15');
+
+    await form.submit({ ...form.initialValues, videoModel: FAKE_MODEL_LABEL, aspectRatio: '9:16', resolution: '720P', groupMaxSeconds: '10' });
+    await runner.whenIdle();
+    assert.equal(started.length, 1);
+    assert.deepEqual(profiles.getWorkDefaults(work.id).values, { modelId, aspectRatio: '9:16', resolution: '720P', audioMode: null });
+
+    const again = await open({ workId: work.id });
+    assert.deepEqual([again.initialValues.videoModel, again.initialValues.aspectRatio, again.initialValues.resolution], [FAKE_MODEL_LABEL, '9:16', '720P']);
+    assert.equal(again.initialValues.groupMaxSeconds, '10');
+  } finally {
+    database.close();
+  }
+});
+
+test('目标模型：先选了模型的作品，新表单的单组最长时长默认值取模型上限', async () => {
+  const { database, open, work, profiles, modelId } = await createFixture('单个短视频');
+  try {
+    profiles.saveWorkDefaults(work.id, { modelId });
+    const form = await open({ workId: work.id });
+    assert.equal(form.initialValues.videoModel, FAKE_MODEL_LABEL);
+    assert.equal(form.initialValues.groupMaxSeconds, '10');
+  } finally {
+    database.close();
+  }
+});
+
+test('目标模型：不满足能力或不在列表中时返回字段错误，不启动生成也不改动作品默认；没有改动时不写入', async () => {
+  const { database, open, work, started, runner, profiles } = await createFixture('单个短视频');
+  try {
+    const form = await open({ workId: work.id });
+    const rejection = (values: Record<string, string>, key: string) =>
+      assert.rejects(Promise.resolve(form.submit({ ...form.initialValues, ...values })), (error) => error instanceof ValidationError && error.fieldErrors[key] !== undefined);
+    await rejection({ videoModel: FAKE_MODEL_LABEL, aspectRatio: '1:1' }, 'aspectRatio');
+    await rejection({ videoModel: FAKE_MODEL_LABEL, resolution: '4K' }, 'resolution');
+    await rejection({ videoModel: FAKE_MODEL_LABEL, groupMaxSeconds: '15' }, 'groupMaxSeconds');
+    await rejection({ videoModel: '不存在的模型' }, 'videoModel');
+    assert.deepEqual(started, []);
+    assert.deepEqual(profiles.getWorkDefaults(work.id).values, EMPTY_PROFILE);
+
+    await form.submit({ ...form.initialValues });
+    await runner.whenIdle();
+    assert.equal(started.length, 1);
+    assert.deepEqual(profiles.getWorkDefaults(work.id).values, EMPTY_PROFILE);
   } finally {
     database.close();
   }

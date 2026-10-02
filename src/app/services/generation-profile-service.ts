@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：generation-profile-service.ts
-// 说明：生成参数应用服务：读取一集的作品级与集级参数及合并后的生效值，保存某一级的修改（含恢复继承）。
+// 说明：生成参数应用服务：读取一集的作品级与集级参数及合并后的生效值，保存某一级的修改（含恢复继承）；也可直接读取、保存作品默认（供分镜脚本表单使用）。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
@@ -12,7 +12,7 @@ import { EMPTY_PROFILE, EffectiveProfile, ProfileScope, ProfileTarget, ProfileVa
 import { GenerationProfileRepository } from '../../domain/ports/generation-profile-repository';
 import { ProviderRepository } from '../../domain/ports/provider-repository';
 import { ScreenplayRepository } from '../../domain/ports/screenplay-repository';
-import { applyProfileChanges, readProfileChanges, resolveProfile } from '../../domain/rules/generation-profile-rules';
+import { ProfileChanges, applyProfileChanges, readProfileChanges, resolveProfile } from '../../domain/rules/generation-profile-rules';
 import { readEntityId, readRecord } from '../../domain/rules/field-readers';
 import { ChangeNotifier } from './change-notifier';
 import { ProjectService } from './project-service';
@@ -85,17 +85,44 @@ export class GenerationProfileService {
     const changes = readProfileChanges(source.changes);
     this.dependencies.works.getWork(workId);
     this.assertEpisodeBelongs(workId, episodeId);
+    this.saveChanges(scope === 'work' ? { scope, workId } : { scope, episodeId }, changes);
+    return this.getView(workId, episodeId);
+  }
+
+  /**
+   * 读取作品默认参数的生效值：作品默认优先，画幅与分辨率回退到项目默认；不含各集的覆盖。
+   * @throws NotFoundError 作品不存在。
+   */
+  getWorkDefaults(workId: number): EffectiveProfile {
+    const work = this.dependencies.works.getWork(workId);
+    const project = this.dependencies.projects.getProject(work.projectId);
+    const workValues = this.dependencies.profiles.find({ scope: 'work', workId }) ?? EMPTY_PROFILE;
+    return resolveProfile(workValues, EMPTY_PROFILE, { aspectRatio: project.defaultAspectRatio, resolution: project.defaultResolution });
+  }
+
+  /**
+   * 保存作品默认参数的修改，规则与 save 的作品级相同。
+   * @param workId 作品标识。
+   * @param changes 要修改的字段；值为 null 表示恢复继承，没有出现的字段不变。
+   * @throws ValidationError 没有要修改的字段，或模型不是可用的视频模型。
+   * @throws NotFoundError 作品不存在。
+   */
+  saveWorkDefaults(workId: number, changes: ProfileChanges): void {
+    this.dependencies.works.getWork(workId);
+    this.saveChanges({ scope: 'work', workId }, readProfileChanges(changes));
+  }
+
+  /** 校验模型后把修改合并到该范围已保存的值并通知变化。 */
+  private saveChanges(target: ProfileTarget, changes: ProfileChanges): void {
     if (changes.modelId !== undefined && changes.modelId !== null) {
       const model = this.dependencies.models.findModelById(changes.modelId);
       if (model === undefined || model.kind !== 'video') {
         throw new ValidationError({ modelId: '所选模型不存在或不是视频模型。' });
       }
     }
-    const target: ProfileTarget = scope === 'work' ? { scope, workId } : { scope, episodeId };
     const current = this.dependencies.profiles.find(target) ?? EMPTY_PROFILE;
     this.dependencies.profiles.save(target, applyProfileChanges(current, changes), (this.dependencies.now?.() ?? new Date()).toISOString());
     this.changeNotifier.notify();
-    return this.getView(workId, episodeId);
   }
 
   private assertEpisodeBelongs(workId: number, episodeId: number): void {

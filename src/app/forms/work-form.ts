@@ -40,7 +40,7 @@ import {
 import { ProjectService } from '../services/project-service';
 import { StageService } from '../services/stage-service';
 import { DUPLICATE_WORK_NAME_MESSAGE, WorkService } from '../services/work-service';
-import { FormCatalog, FormDefinition, FormValues } from './form-definition';
+import { SyncFormCatalog, FormDefinition, FormValues } from './form-definition';
 import { FormFieldSchema } from './form-schema';
 
 /** 作品表单在表单目录中的名称，页面据此请求打开。 */
@@ -414,7 +414,7 @@ function createEditWorkForm(dependencies: WorkFormDependencies, workId: number):
  * 创建作品表单目录：新建的参数为 `{ sourceType, projectId? }`（projectId 为默认选中的项目），重新生成和编辑的参数为 `{ workId }`。
  * @param dependencies 服务与回调。
  */
-export function createWorkFormCatalog(dependencies: WorkFormDependencies): FormCatalog {
+export function createWorkFormCatalog(dependencies: WorkFormDependencies): SyncFormCatalog {
   return new Map([
     [
       WORK_FORM_NAMES.create,

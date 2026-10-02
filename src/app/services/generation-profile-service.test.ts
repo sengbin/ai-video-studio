@@ -161,3 +161,26 @@ test('保存后通知订阅者；失败的保存不通知；删除作品时参�
     database.close();
   }
 });
+
+test('作品默认：读取时回退到项目默认且不含集覆盖；保存只改出现的字段，校验模型并通知订阅者', () => {
+  const { database, service, workA, episodeA1, videoModel, imageModel } = createFixture();
+  try {
+    const changed: number[] = [];
+    service.onDidChangeProfiles(() => changed.push(1));
+    assert.deepEqual(service.getWorkDefaults(workA).values, { ...EMPTY_PROFILE, aspectRatio: '16:9' });
+
+    service.save({ scope: 'episode', workId: workA, episodeId: episodeA1, changes: { resolution: '1080P' } });
+    service.saveWorkDefaults(workA, { modelId: videoModel.id, resolution: '720P' });
+    service.saveWorkDefaults(workA, { aspectRatio: '9:16' });
+    assert.deepEqual(service.getWorkDefaults(workA).values, { modelId: videoModel.id, aspectRatio: '9:16', resolution: '720P', audioMode: null });
+    assert.equal(service.getView(workA, episodeA1).effective.values.resolution, '1080P', '本集覆盖仍然优先');
+
+    const before = changed.length;
+    assert.throws(() => service.saveWorkDefaults(workA, { modelId: imageModel.id }), ValidationError);
+    assert.throws(() => service.saveWorkDefaults(workA, {}), ValidationError);
+    assert.throws(() => service.saveWorkDefaults(9999, { aspectRatio: '16:9' }), NotFoundError);
+    assert.equal(changed.length, before);
+  } finally {
+    database.close();
+  }
+});

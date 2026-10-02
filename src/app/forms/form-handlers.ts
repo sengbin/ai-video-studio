@@ -59,13 +59,13 @@ export function registerFormHandlers(router: MessageRouter, catalog: FormCatalog
     sessions.delete(formId);
   };
 
-  router.register(FORM_REQUESTS.open, (payload) => {
+  router.register(FORM_REQUESTS.open, async (payload) => {
     const source = readRecord(payload);
     const factory = catalog.get(readString(source.form, 'form'));
     if (factory === undefined) {
       throw new ValidationError({ [FORM_LEVEL_ERROR_KEY]: '不支持的表单。' });
     }
-    const definition = factory(source.params);
+    const definition = await factory(source.params);
     const formId = nextFormId++;
     sessions.set(formId, { definition, running: new Map() });
     return { formId, schema: definition.schema, values: definition.initialValues };

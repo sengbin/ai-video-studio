@@ -15,7 +15,9 @@ import { createWorkFormCatalog } from '../forms/work-form';
 import { MessageRouter } from '../messaging/message-router';
 import { WORK_LIST_PAGE_RESOURCES } from '../panels/page-resources';
 import { OpenedPanel, PanelManager } from '../panels/panel-manager';
+import { GenerationProfileService } from '../services/generation-profile-service';
 import { ProjectService } from '../services/project-service';
+import { ProviderService } from '../services/provider-service';
 import { ScreenplayService } from '../services/screenplay-service';
 import { StageService } from '../services/stage-service';
 import { StoryboardService } from '../services/storyboard-service';
@@ -66,6 +68,8 @@ export class WorkListPages {
       readonly stages: StageService;
       readonly screenplays: ScreenplayService;
       readonly storyboards: StoryboardService;
+      readonly profiles: GenerationProfileService;
+      readonly providers: ProviderService;
     },
     private readonly panels: PanelManager
   ) {}
@@ -85,7 +89,7 @@ export class WorkListPages {
       return;
     }
 
-    const { projects, works, stages, screenplays, storyboards } = this.services;
+    const { projects, works, stages, screenplays, storyboards, profiles, providers } = this.services;
     const entry: OpenedWorkList = { panel: undefined, pending: request };
     const router = new MessageRouter();
     registerWorkListHandlers(router, view, this.services, {
@@ -112,6 +116,8 @@ export class WorkListPages {
           projects,
           works,
           storyboards,
+          profiles,
+          providers,
           onStarted: (workId, episodeIds) =>
             episodeIds.length === 1
               ? openStage(workId, 'storyboard_script', episodeIds[0])

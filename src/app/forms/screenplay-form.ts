@@ -19,7 +19,7 @@ import {
 import { ProjectService } from '../services/project-service';
 import { ScreenplayService } from '../services/screenplay-service';
 import { WorkService } from '../services/work-service';
-import { FormCatalog, FormDefinition, FormValues } from './form-definition';
+import { SyncFormCatalog, FormDefinition, FormValues } from './form-definition';
 import { FormFieldSchema } from './form-schema';
 
 /** 剧本表单在表单目录中的名称，页面据此请求打开。 */
@@ -138,7 +138,7 @@ function createPickForm(dependencies: ScreenplayFormDependencies, projectId: num
  * 创建剧本表单目录：`screenplay.start` 的参数为 `{ workId }`，`screenplay.pick` 的参数为 `{ projectId? }`。
  * @param dependencies 服务与回调。
  */
-export function createScreenplayFormCatalog(dependencies: ScreenplayFormDependencies): FormCatalog {
+export function createScreenplayFormCatalog(dependencies: ScreenplayFormDependencies): SyncFormCatalog {
   return new Map([
     [SCREENPLAY_FORM_NAMES.start, (params) => createStartForm(dependencies, readEntityId({ id: readRecord(params).workId }, '作品'))],
     [

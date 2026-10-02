@@ -17,6 +17,7 @@ import { PanelManager } from '../panels/panel-manager';
 import { AssetPromptService } from '../services/asset-prompt-service';
 import { AssetService } from '../services/asset-service';
 import { ProjectService } from '../services/project-service';
+import { ProviderService } from '../services/provider-service';
 import { STAGE_EVENTS } from './stage-handlers';
 import { WORKBENCH_EVENTS, WorkbenchHost, WorkbenchServices, registerWorkbenchHandlers } from './workbench-handlers';
 
@@ -30,6 +31,7 @@ export interface WorkbenchPageServices extends WorkbenchServices {
   readonly projects: ProjectService;
   readonly assets: AssetService;
   readonly prompts: AssetPromptService;
+  readonly providers: ProviderService;
 }
 
 /** 工作台页的入口。 */
@@ -45,12 +47,12 @@ export class WorkbenchPages {
     if (this.panels.reveal(WORKBENCH_PANEL_KEY)) {
       return;
     }
-    const { generation, profiles, bindings, assets, prompts, works, stages, projects, storyboards } = this.services;
+    const { generation, profiles, bindings, assets, prompts, works, stages, projects, storyboards, providers } = this.services;
     const router = new MessageRouter();
     registerWorkbenchHandlers(router, this.services, this.host);
     // 产出层里的“重新生成”会弹出分镜表单（作品和集都已确定，开始后产出层随阶段事件自行刷新）；实体绑定页的“新建资产”弹出资产表单。路由器只能注册一次表单请求，因此合并两个目录。
     const catalog: FormCatalog = new Map([
-      ...createStoryboardFormCatalog({ projects, works, storyboards, onStarted: () => undefined, onPicked: () => undefined }),
+      ...createStoryboardFormCatalog({ projects, works, storyboards, profiles, providers, onStarted: () => undefined, onPicked: () => undefined }),
       ...createAssetFormCatalog({ projects, assets, prompts, entities: bindings })
     ]);
     registerFormHandlers(router, catalog);

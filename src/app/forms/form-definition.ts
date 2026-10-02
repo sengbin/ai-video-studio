@@ -47,5 +47,14 @@ export interface FormDefinition {
  */
 export type FormFactory = (params: unknown) => FormDefinition;
 
-/** 表单目录：表单名称到工厂，如 `project.create`。 */
-export type FormCatalog = ReadonlyMap<string, FormFactory>;
+/**
+ * 异步表单工厂：创建定义时需要查询异步数据（如可用模型）的表单使用。
+ * @throws ValidationError、NotFoundError 参数无效或对象不存在。
+ */
+export type AsyncFormFactory = (params: unknown) => Promise<FormDefinition>;
+
+/** 只含同步工厂的表单目录，如 `project.create`。 */
+export type SyncFormCatalog = ReadonlyMap<string, FormFactory>;
+
+/** 表单目录：表单名称到工厂；页面处理按 await 统一创建，同步与异步工厂可以混合。 */
+export type FormCatalog = ReadonlyMap<string, FormFactory | AsyncFormFactory>;

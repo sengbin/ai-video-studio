@@ -20,7 +20,7 @@ import {
   PROJECT_VISUAL_STYLE_MAX_LENGTH
 } from '../../domain/rules/project-rules';
 import { DUPLICATE_PROJECT_NAME_MESSAGE, ProjectService } from '../services/project-service';
-import { FormCatalog, FormDefinition, FormFactory, FormValues } from './form-definition';
+import { SyncFormCatalog, FormDefinition, FormFactory, FormValues } from './form-definition';
 import { FormSchema } from './form-schema';
 
 /** 项目表单在表单目录中的名称，页面据此请求打开。 */
@@ -140,7 +140,7 @@ export function createEditProjectForm(service: ProjectService, project: Project)
  * 创建项目表单目录：新建不需要参数，编辑的参数为 `{ id }`。
  * @param service 项目服务。
  */
-export function createProjectFormCatalog(service: ProjectService): FormCatalog {
+export function createProjectFormCatalog(service: ProjectService): SyncFormCatalog {
   return new Map<string, FormFactory>([
     [PROJECT_FORM_NAMES.create, () => createNewProjectForm(service)],
     [PROJECT_FORM_NAMES.edit, (params) => createEditProjectForm(service, service.getProject(readEntityId(params, '项目')))]

@@ -40,7 +40,7 @@ import { readEntityId, readRecord } from '../../domain/rules/field-readers';
 import { AssetService, DUPLICATE_ASSET_NAME_MESSAGE } from '../services/asset-service';
 import { AssetPromptService } from '../services/asset-prompt-service';
 import { ProjectService } from '../services/project-service';
-import { FormCatalog, FormDefinition, FormFactory, FormValues } from './form-definition';
+import { SyncFormCatalog, FormDefinition, FormFactory, FormValues } from './form-definition';
 import { FormFieldSchema, FormSubmitActionSchema } from './form-schema';
 import { ASSET_PROMPT_FORM_NAME, createAssetPromptForm } from './asset-prompt-form';
 
@@ -418,7 +418,7 @@ function createEditAssetForm(assets: AssetService, prompts: AssetPromptService, 
  * 创建资产表单目录：新建的参数为 `{ kind }` 或 `{ episodeId, entityId }`（从实体新建），编辑的参数为 `{ assetId }`。
  * @param dependencies 项目、资产与提示词生成服务，以及可选的实体来源。
  */
-export function createAssetFormCatalog(dependencies: AssetFormDependencies): FormCatalog {
+export function createAssetFormCatalog(dependencies: AssetFormDependencies): SyncFormCatalog {
   return new Map<string, FormFactory>([
     [ASSET_FORM_NAMES.create, (params) => createNewAssetForm(dependencies, params)],
     [

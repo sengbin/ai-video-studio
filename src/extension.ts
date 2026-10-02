@@ -225,14 +225,14 @@ export function activate(context: vscode.ExtensionContext): void {
     storyboards: storyboardService
   };
   const projectPages = new ProjectPages(projectService, panels);
-  const workListPages = new WorkListPages(services, panels);
+  const workListPages = new WorkListPages({ ...services, profiles: profileService, providers: providerService }, panels);
   const assetListPages = new AssetListPages(
     { projects: projectService, assets: assetService, prompts: assetPromptService, generation: assetGenerationService },
     panels
   );
   const settingsPages = new SettingsPages({ text: textSettingsService, providers: providerService }, panels);
   const workbenchPages = new WorkbenchPages(
-    { generation: generationService, profiles: profileService, bindings: bindingService, assets: assetService, prompts: assetPromptService, ...services },
+    { generation: generationService, profiles: profileService, bindings: bindingService, assets: assetService, prompts: assetPromptService, providers: providerService, ...services },
     // 结果视频用系统默认的视频播放器打开，也可导出到用户选择的位置或在文件夹中显示。
     createWorkbenchHost(),
     panels
