@@ -41,6 +41,8 @@ export interface FormFieldSchema {
   readonly maxFileBytes?: number;
   /** 文件的预览方式：image 为缩略图网格，点击查看原图；不填则按文件名列表显示；仅 file 使用。 */
   readonly preview?: 'image';
+  /** 提交前由页面从文件中读取的附加信息：image 为缩略图与宽高，audio 为时长；不填则不读取；仅 file 使用。 */
+  readonly derive?: 'image' | 'audio';
 }
 
 /** 表单描述。 */

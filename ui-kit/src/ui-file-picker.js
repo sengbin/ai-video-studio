@@ -24,7 +24,10 @@
     '.png': 'image/png',
     '.jpg': 'image/jpeg',
     '.jpeg': 'image/jpeg',
-    '.webp': 'image/webp'
+    '.webp': 'image/webp',
+    '.mp3': 'audio/mpeg',
+    '.wav': 'audio/wav',
+    '.m4a': 'audio/mp4'
   };
 
   /** 取文件名的小写扩展名（含点），没有扩展名返回空串。 */

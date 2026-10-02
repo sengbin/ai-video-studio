@@ -10,10 +10,12 @@
 import { mkdirSync } from 'node:fs';
 import * as vscode from 'vscode';
 import { MessageRouter } from './app/messaging/message-router';
+import { AssetListPages } from './app/pages/asset-list-pages';
 import { ProjectPages } from './app/pages/project-pages';
 import { SettingsPages } from './app/pages/settings-pages';
 import { WorkListPages } from './app/pages/work-list-pages';
 import { PanelManager } from './app/panels/panel-manager';
+import { AssetService } from './app/services/asset-service';
 import { ChangeNotifier } from './app/services/change-notifier';
 import { ProjectService } from './app/services/project-service';
 import { ScreenplayService } from './app/services/screenplay-service';
@@ -26,10 +28,12 @@ import { ScreenplayWorkflow } from './app/stages/screenplay-workflow';
 import { StageRunner } from './app/stages/stage-runner';
 import { StoryboardWorkflow } from './app/stages/storyboard-workflow';
 import { WorkSourceType } from './domain/models/work';
+import { ASSET_KINDS } from './domain/models/asset';
 import { CopilotModelCatalog } from './infra/copilot/copilot-model-catalog';
 import { CopilotTextGeneration } from './infra/copilot/copilot-text-generation';
 import { VsCodeTextGenerationSettings } from './infra/copilot/vscode-text-generation-settings';
 import { openDatabase } from './infra/database/database-connection';
+import { SqliteAssetRepository } from './infra/database/sqlite-asset-repository';
 import { SqliteProjectRepository } from './infra/database/sqlite-project-repository';
 import { SqliteScreenplayRepository } from './infra/database/sqlite-screenplay-repository';
 import { SqliteChapterRepository, SqliteStageRunRepository } from './infra/database/sqlite-stage-run-repository';
@@ -104,6 +108,7 @@ export function activate(context: vscode.ExtensionContext): void {
     stages: stageService
   });
   const textSettingsService = new TextSettingsService(settingsStore, new CopilotModelCatalog());
+  const assetService = new AssetService(new SqliteAssetRepository(database), projectService);
 
   // 页面。
   const panels = new PanelManager(context.extensionUri);
@@ -116,6 +121,7 @@ export function activate(context: vscode.ExtensionContext): void {
   };
   const projectPages = new ProjectPages(projectService, panels);
   const workListPages = new WorkListPages(services, panels);
+  const assetListPages = new AssetListPages({ projects: projectService, assets: assetService }, panels);
   const settingsPages = new SettingsPages(textSettingsService, panels);
 
   // 侧栏：尚未实现的入口不注册动作，点击时由侧栏提示“该功能尚未开放”。
@@ -137,6 +143,12 @@ export function activate(context: vscode.ExtensionContext): void {
   actionRegistry
     .register('storyboard-script', 'main', () => workListPages.show('storyboard'))
     .register('storyboard-script', 'action', () => workListPages.show('storyboard', { action: 'create' }));
+  // 资产：主入口打开该类型的资产列表；添加打开列表并弹出新建资产表单。侧栏条目标识与资产类型同名。
+  for (const kind of ASSET_KINDS) {
+    actionRegistry
+      .register(kind, 'main', () => assetListPages.show(kind))
+      .register(kind, 'action', () => assetListPages.show(kind, { action: 'create' }));
+  }
   const sidebarRouter = new MessageRouter();
   registerSidebarHandlers(sidebarRouter, actionRegistry);
 

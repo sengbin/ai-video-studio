@@ -361,6 +361,8 @@ erDiagram
 
 列表查询只读取缩略图，不读取参考图的 `content`。
 
+实现约定：图片资产的每张参考图对应一条 `role = thumbnail` 的缩略图记录（`sort_order` 与参考图一致，由页面用 canvas 生成 256px 的 JPEG，随表单提交）；列表取 `sort_order` 最小的一条。资产编辑时文件整体替换（先删后写）。音频资产没有缩略图，`duration_seconds` 由页面解码读取。
+
 #### `entity_bindings` 实体与资产绑定
 
 绑定属于集：同一实体在不同集可以绑定不同资产（例如不同造型）。

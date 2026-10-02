@@ -80,6 +80,12 @@ export const WORK_LIST_PAGE_RESOURCES: PageResources = createEditorPageResources
   ]
 );
 
+/** 资产列表页：新建与编辑表单在页内弹出，因此一并加载表单引擎。 */
+export const ASSET_LIST_PAGE_RESOURCES: PageResources = createEditorPageResources(
+  ['form/form.css', 'asset-list/asset-list.css'],
+  ['form/form-runtime.js', 'shared/page-format.js', 'asset-list/asset-list.js']
+);
+
 /** 模型设置页：设置即时保存，没有弹出表单。 */
 export const SETTINGS_PAGE_RESOURCES: PageResources = createEditorPageResources(['settings/settings.css'], ['settings/settings.js']);
 

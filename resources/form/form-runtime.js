@@ -29,6 +29,61 @@
   const CHOOSE_ONE_CONTROLS = ['select', 'radio'];
   // 多行文本的默认最大行数：内容只有一行时就是一行高，最多长到这个行数再滚动。
   const DEFAULT_TEXTAREA_MAX_ROWS = 4;
+  // 缩略图最长边的像素数与 JPEG 质量。
+  const THUMBNAIL_MAX_SIDE = 256;
+  const THUMBNAIL_QUALITY = 0.82;
+  const AUDIO_SAMPLE_RATE = 44100;
+
+  /** 把文件条目的 Base64 内容解码为字节。 */
+  function toBytes(item) {
+    const binary = window.atob(item.data);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+    return bytes;
+  }
+
+  /** 加载图片；无法解码时抛出带文件名的错误。 */
+  function loadImage(item) {
+    return new Promise((resolve, reject) => {
+      const image = new Image();
+      image.onload = () => resolve(image);
+      image.onerror = () => reject(new Error(`无法读取“${item.name}”，请换一张图片。`));
+      image.src = `data:${item.mimeType};base64,${item.data}`;
+    });
+  }
+
+  /** 为图片读取宽高并生成 JPEG 缩略图（透明底色填充为白色）。 */
+  async function deriveImage(item) {
+    const image = await loadImage(item);
+    const width = image.naturalWidth;
+    const height = image.naturalHeight;
+    const scale = Math.min(1, THUMBNAIL_MAX_SIDE / Math.max(width, height));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(width * scale));
+    canvas.height = Math.max(1, Math.round(height * scale));
+    const context = canvas.getContext('2d');
+    context.fillStyle = '#ffffff';
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+    const url = canvas.toDataURL('image/jpeg', THUMBNAIL_QUALITY);
+    return { ...item, width, height, thumbnail: { mimeType: 'image/jpeg', data: url.slice(url.indexOf(',') + 1) } };
+  }
+
+  /** 解码音频读取时长（秒）；无法解码时抛出带文件名的错误。 */
+  async function deriveAudio(item) {
+    try {
+      const bytes = toBytes(item);
+      const buffer = await new window.OfflineAudioContext(1, 1, AUDIO_SAMPLE_RATE).decodeAudioData(bytes.buffer);
+      return { ...item, durationSeconds: buffer.duration };
+    } catch {
+      throw new Error(`无法解码“${item.name}”，请换一个文件。`);
+    }
+  }
+
+  /** 提交前按字段的 derive 设置，为每个文件补充缩略图、宽高或时长。 */
+  function deriveFiles(derive, items) {
+    return Promise.all(items.map((item) => (derive === 'audio' ? deriveAudio(item) : deriveImage(item))));
+  }
 
   /** 解析多选值文本为数组；无法解析时按空数组。 */
   function parseList(text) {
@@ -253,7 +308,20 @@
       }
       setSubmitting(true);
       try {
-        await window.hostBridge.request(REQUEST_SUBMIT, { formId, values: collectValues() });
+        // 需要补充文件信息的字段（缩略图、宽高、时长）：读取失败时标在字段上，不提交。
+        const submitted = collectValues();
+        for (const [key, entry] of entries) {
+          if (entry.kind !== 'files' || !entry.schema.derive) continue;
+          try {
+            submitted[key] = JSON.stringify(await deriveFiles(entry.schema.derive, entry.control.getValue()));
+          } catch (error) {
+            setSubmitting(false);
+            entry.field.setError((error && error.message) || GENERIC_ERROR_MESSAGE);
+            showSummary('有 1 项需要修改，请检查标出的字段。');
+            return;
+          }
+        }
+        await window.hostBridge.request(REQUEST_SUBMIT, { formId, values: submitted });
         // 保持禁用直到弹出页面关闭，避免重复提交。
         handlers.onSaved();
       } catch (error) {
