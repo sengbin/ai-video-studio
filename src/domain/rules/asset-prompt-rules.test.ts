@@ -13,30 +13,30 @@ import { GeneratedOutputError } from '../errors';
 import { AssetRecord } from '../models/asset';
 import { assetToDraftValues, describeAssetDraft, parseAssetPrompts, promptFocus, promptKindLabel } from './asset-prompt-rules';
 
-test('整理草稿：名称在前，空字段不列出，项目风格只在资产没有风格时沿用', () => {
-  const draft = describeAssetDraft('character', { name: ' 林夏 ', appearance: '短发', clothing: '  ', composition: '半身像' }, '写实摄影');
+test('整理草稿：名称在前，空字段不列出，没有风格时不添加画面风格', () => {
+  const draft = describeAssetDraft('character', { name: ' 林夏 ', appearance: '短发', clothing: '  ', composition: '半身像' });
   assert.equal(draft.name, '林夏');
-  assert.deepEqual(draft.lines, ['角色名称：林夏', '视角与构图：半身像', '画面风格（沿用项目风格）：写实摄影', '角色外观：短发']);
-  assert.equal(draft.detailCount, 2, '项目风格不算用户填写的字段');
+  assert.deepEqual(draft.lines, ['角色名称：林夏', '视角与构图：半身像', '角色外观：短发']);
+  assert.equal(draft.detailCount, 2);
 
-  const own = describeAssetDraft('prop', { name: '钥匙', style: '水彩', state: '生锈' }, '写实摄影');
+  const own = describeAssetDraft('prop', { name: '钥匙', style: '水彩', state: '生锈' });
   assert.deepEqual(own.lines, ['道具名称：钥匙', '画面风格：水彩', '当前状态：生锈']);
   assert.equal(own.detailCount, 2);
 
-  const empty = describeAssetDraft('scene', { appearance: 5 }, null);
+  const empty = describeAssetDraft('scene', { appearance: 5 });
   assert.deepEqual([empty.name, empty.lines, empty.detailCount], ['', [], 0]);
 });
 
 test('整理音频草稿：带音频类型，描述、语言、补充要求计入细节', () => {
-  const draft = describeAssetDraft('audio', { name: '守夜人', audioKind: '音色参考', description: '低沉沙哑', language: '中文' }, '写实摄影');
+  const draft = describeAssetDraft('audio', { name: '守夜人', audioKind: '音色参考', description: '低沉沙哑', language: '中文' });
   assert.deepEqual(draft.lines, ['音频名称：守夜人', '音频类型：音色参考', '描述：低沉沙哑', '语言：中文']);
   assert.equal(draft.detailCount, 2);
-  assert.deepEqual(describeAssetDraft('audio', { name: '雨声' }, null).lines, ['音频名称：雨声', '音频类型：音色参考']);
+  assert.deepEqual(describeAssetDraft('audio', { name: '雨声' }).lines, ['音频名称：雨声', '音频类型：音色参考']);
 });
 
 function record(overrides: Partial<AssetRecord>): AssetRecord {
   return {
-    id: 1, projectId: 1, kind: 'character', name: '林夏', sourceEntityId: null, attributes: {}, composition: '', style: null,
+    id: 1, kind: 'character', name: '林夏', sourceEntityId: null, attributes: {}, composition: '', style: null,
     background: '', referenceAspectRatio: null, extraRequirements: '', promptZh: '', promptEn: '', contentRevision: 1, promptRevision: 0,
     promptContentRevision: 0, promptStatus: 'none', promptError: null, adoptedVersionId: null, createdAt: 't', updatedAt: 't', ...overrides
   };

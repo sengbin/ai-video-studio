@@ -28,14 +28,14 @@ export interface GeneratedPrompts {
 
 /** 资产的数据访问接口。 */
 export interface AssetRepository {
-  /** 列出某类型全部项目的资产，按更新时间倒序。 */
+  /** 列出某类型的全部资产，按更新时间倒序。 */
   list(kind: AssetKind): AssetListItem[];
   /** 按标识读取资产；不存在返回 undefined。 */
   findById(id: number): AssetRecord | undefined;
-  /** 在项目内按（类型，名称）查找；不存在返回 undefined。 */
-  findByName(projectId: number, kind: AssetKind, name: string): AssetRecord | undefined;
-  /** 列出项目内全部资产的标识、类型和名称，用于按名称自动匹配。 */
-  listProjectAssets(projectId: number): Array<{ readonly id: number; readonly kind: AssetKind; readonly name: string }>;
+  /** 按（类型，名称）查找；不存在返回 undefined。 */
+  findByName(kind: AssetKind, name: string): AssetRecord | undefined;
+  /** 列出全部资产的标识、类型和名称，用于按名称自动匹配。 */
+  listNames(): Array<{ readonly id: number; readonly kind: AssetKind; readonly name: string }>;
   /** 读取资产的参考文件（含内容），按顺序排列；不含缩略图。 */
   listReferenceFiles(assetId: number): AssetFileRecord[];
   /** 读取资产的缩略图（含内容），按顺序排列。 */

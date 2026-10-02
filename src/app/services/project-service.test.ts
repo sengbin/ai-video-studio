@@ -119,7 +119,7 @@ test('修改和删除不存在的项目抛出 NotFoundError', () => {
   }
 });
 
-test('项目列表按更新时间倒序，并带作品数和资产数', () => {
+test('项目列表按更新时间倒序，并带作品数', () => {
   const { service, database } = createService();
   try {
     const first = service.createProject({ name: '甲' });
@@ -128,15 +128,11 @@ test('项目列表按更新时间倒序，并带作品数和资产数', () => {
     database
       .prepare("INSERT INTO works (project_id, name, kind, created_at, updated_at) VALUES (?, '作品', 'single', 't', 't')")
       .run(first.id);
-    database
-      .prepare("INSERT INTO assets (project_id, kind, name, created_at, updated_at) VALUES (?, 'scene', '灯塔', 't', 't')")
-      .run(first.id);
 
     const summaries = service.listProjects();
 
     assert.deepEqual(summaries.map((item) => item.name), ['甲', '乙']);
     assert.equal(summaries[0].workCount, 1);
-    assert.equal(summaries[0].assetCount, 1);
     assert.equal(summaries[1].workCount, 0);
   } finally {
     database.close();
@@ -166,7 +162,7 @@ test('数据变化通知：成功的写操作通知，失败的不通知，取�
   }
 });
 
-test('删除影响统计包含作品、资产和视频结果，删除后级联清除', () => {
+test('删除影响统计包含作品和视频结果，删除后级联清除，不影响资产', () => {
   const { service, database } = createService();
   try {
     const project = service.createProject({ name: '甲' });
@@ -198,16 +194,17 @@ test('删除影响统计包含作品、资产和视频结果，删除后级联�
     insertResult.run(timestamp);
     insertResult.run(timestamp);
     database
-      .prepare("INSERT INTO assets (project_id, kind, name, created_at, updated_at) VALUES (?, 'prop', '钥匙', ?, ?)")
-      .run(project.id, timestamp, timestamp);
+      .prepare("INSERT INTO assets (kind, name, created_at, updated_at) VALUES ('prop', '钥匙', ?, ?)")
+      .run(timestamp, timestamp);
 
-    assert.deepEqual(service.getDeletionImpact(project.id), { workCount: 1, assetCount: 1, videoResultCount: 2 });
+    assert.deepEqual(service.getDeletionImpact(project.id), { workCount: 1, videoResultCount: 2 });
 
     service.deleteProject(project.id);
 
     const remaining = database.prepare('SELECT COUNT(*) AS total FROM video_results').get() as { total: number };
     assert.equal(remaining.total, 0);
     assert.equal(service.listProjects().length, 0);
+    assert.equal((database.prepare('SELECT COUNT(*) AS total FROM assets').get() as { total: number }).total, 1);
   } finally {
     database.close();
   }

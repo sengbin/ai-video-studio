@@ -4,26 +4,20 @@
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
-// 备注：不依赖 VS Code 和具体存储；所属项目在表单里以项目名称选择（项目名称全局唯一）；创建后不能修改所属项目与类型。
+// 备注：不依赖 VS Code 和具体存储；资产不属于项目，全部项目共用，名称在同类型内全局唯一；创建后不能修改类型。
 // ------------------------------------------------------------------------
 
 import { ConflictError, NotFoundError, ValidationError } from '../../domain/errors';
 import { AssetFileRecord, AssetKind, AssetListItem, AssetRecord, AssetUsageSummary } from '../../domain/models/asset';
-import { ProjectSummary } from '../../domain/models/project';
 import { AssetRepository } from '../../domain/ports/asset-repository';
 import { normalizeAssetContent, normalizeAssetPrompts } from '../../domain/rules/asset-rules';
 import { computePromptRevision, computeRevisionUpdate, sameReferenceFiles } from '../../domain/rules/asset-generation-rules';
-import { FieldErrors, readRecord } from '../../domain/rules/field-readers';
+import { FieldErrors } from '../../domain/rules/field-readers';
 import { ChangeNotifier } from './change-notifier';
-import { ProjectService } from './project-service';
 
-/** 同项目、同类型下资产重名时的提示。 */
-export const DUPLICATE_ASSET_NAME_MESSAGE = '该项目下已有同名资产，请换一个名称。';
+/** 同类型下资产重名时的提示。 */
+export const DUPLICATE_ASSET_NAME_MESSAGE = '已有同名资产，请换一个名称。';
 
-/** 所属项目字段的键：值为项目名称。 */
-export const ASSET_PROJECT_FIELD_KEY = 'projectName';
-
-const PROJECT_REQUIRED_MESSAGE = '请选择所属项目。';
 const AUDIO_KIND_LOCKED_MESSAGE = '该音频已被绑定或引用，不能修改音频类型。';
 const PROMPT_RUNNING_MESSAGE = '提示词生成中，完成后再修改提示词。';
 
@@ -44,12 +38,10 @@ export class AssetService {
 
   /**
    * @param repository 资产仓库。
-   * @param projects 项目服务，用于按名称确定所属项目。
    * @param now 返回当前时间的函数，测试时可注入固定时间。
    */
   constructor(
     private readonly repository: AssetRepository,
-    private readonly projects: ProjectService,
     private readonly now: () => Date = () => new Date()
   ) {}
 
@@ -63,7 +55,7 @@ export class AssetService {
     this.changeNotifier.notify();
   }
 
-  /** 列出某类型全部项目的资产，按更新时间倒序。 */
+  /** 列出某类型的全部资产，按更新时间倒序。 */
   listAssets(kind: AssetKind): AssetListItem[] {
     return this.repository.list(kind);
   }
@@ -86,32 +78,30 @@ export class AssetService {
   }
 
   /**
-   * 判断名称在项目内（同类型）是否可用，用于表单在字段失去焦点时检查重名。
+   * 判断名称在同类型内是否可用，用于表单在字段失去焦点时检查重名。
    * @param excludeAssetId 修改资产时排除自身。
    */
-  isNameAvailable(projectId: number, kind: AssetKind, name: string, excludeAssetId?: number): boolean {
-    const existing = this.repository.findByName(projectId, kind, name.trim());
+  isNameAvailable(kind: AssetKind, name: string, excludeAssetId?: number): boolean {
+    const existing = this.repository.findByName(kind, name.trim());
     return existing === undefined || existing.id === excludeAssetId;
   }
 
   /**
    * 创建资产。
    * @param kind 资产类型。
-   * @param rawInput 表单提交的原始内容，含所属项目名称。
-   * @throws ValidationError 内容不合法或没有选择项目。
-   * @throws ConflictError 同项目、同类型下名称重复。
+   * @param rawInput 表单提交的原始内容。
+   * @throws ValidationError 内容不合法。
+   * @throws ConflictError 同类型下名称重复。
    */
   createAsset(kind: AssetKind, rawInput: unknown, options: CreateAssetOptions = {}): AssetRecord {
-    const source = readRecord(rawInput);
     const errors: FieldErrors = {};
     const normalized = this.tryNormalize(rawInput, kind, errors);
-    const project = findProject(this.projects.listProjects(), source[ASSET_PROJECT_FIELD_KEY], errors);
-    if (Object.keys(errors).length > 0 || normalized === undefined || project === undefined) {
+    if (Object.keys(errors).length > 0 || normalized === undefined) {
       throw new ValidationError(errors);
     }
-    this.assertNameAvailable(project.id, kind, normalized.content.name);
+    this.assertNameAvailable(kind, normalized.content.name);
     const id = this.repository.insert(
-      { ...normalized.content, projectId: project.id, kind, sourceEntityId: options.sourceEntityId ?? null },
+      { ...normalized.content, kind, sourceEntityId: options.sourceEntityId ?? null },
       normalized.files,
       this.timestamp()
     );
@@ -120,9 +110,9 @@ export class AssetService {
   }
 
   /**
-   * 修改资产的内容并整体替换参考文件；所属项目与类型不能修改。
+   * 修改资产的内容并整体替换参考文件；类型不能修改。
    * @throws ValidationError 内容不合法，或已被使用的音频修改了音频类型。
-   * @throws ConflictError 名称与同项目同类型的其他资产重复。
+   * @throws ConflictError 名称与同类型的其他资产重复。
    * @throws NotFoundError 资产不存在。
    */
   updateAsset(id: number, rawInput: unknown): AssetRecord {
@@ -132,7 +122,7 @@ export class AssetService {
     if (Object.keys(errors).length > 0 || normalized === undefined) {
       throw new ValidationError(errors);
     }
-    this.assertNameAvailable(asset.projectId, asset.kind, normalized.content.name, id);
+    this.assertNameAvailable(asset.kind, normalized.content.name, id);
     if (asset.kind === 'audio' && normalized.content.attributes.audio_kind !== asset.attributes.audio_kind && this.isInUse(id)) {
       throw new ValidationError({ audioKind: AUDIO_KIND_LOCKED_MESSAGE });
     }
@@ -191,7 +181,7 @@ export class AssetService {
     return usage.bindings.length > 0 || usage.soundReferences > 0;
   }
 
-  /** 校验资产内容；内容错误累积到 errors，不抛出，便于和项目错误一并返回。 */
+  /** 校验资产内容；内容错误累积到 errors，不抛出。 */
   private tryNormalize(rawInput: unknown, kind: AssetKind, errors: FieldErrors): ReturnType<typeof normalizeAssetContent> | undefined {
     try {
       return normalizeAssetContent(rawInput, kind);
@@ -204,8 +194,8 @@ export class AssetService {
     }
   }
 
-  private assertNameAvailable(projectId: number, kind: AssetKind, name: string, excludeAssetId?: number): void {
-    if (!this.isNameAvailable(projectId, kind, name, excludeAssetId)) {
+  private assertNameAvailable(kind: AssetKind, name: string, excludeAssetId?: number): void {
+    if (!this.isNameAvailable(kind, name, excludeAssetId)) {
       throw new ConflictError('name', DUPLICATE_ASSET_NAME_MESSAGE);
     }
   }
@@ -213,13 +203,4 @@ export class AssetService {
   private timestamp(): string {
     return this.now().toISOString();
   }
-}
-
-/** 按项目名称找到所选项目；没有选择或项目已不存在时记录字段错误。 */
-function findProject(projects: readonly ProjectSummary[], name: unknown, errors: FieldErrors): ProjectSummary | undefined {
-  const project = typeof name === 'string' ? projects.find((item) => item.name === name.trim()) : undefined;
-  if (project === undefined) {
-    errors[ASSET_PROJECT_FIELD_KEY] = PROJECT_REQUIRED_MESSAGE;
-  }
-  return project;
 }

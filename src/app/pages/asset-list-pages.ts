@@ -1,10 +1,10 @@
 // ------------------------------------------------------------------------
 // 名称：asset-list-pages.ts
-// 说明：资产列表页的入口：每种资产类型一个面板，列出所有项目中该类型的资产；新建、编辑表单都在页内弹出。
+// 说明：资产列表页的入口：每种资产类型一个面板，列出该类型的全部资产（资产不属于项目）；新建、编辑表单都在页内弹出。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
-// 备注：请求处理在 asset-list-handlers.ts 与 form-handlers.ts；把资产与项目的变化推送给页面。
+// 备注：请求处理在 asset-list-handlers.ts 与 form-handlers.ts；把资产的变化推送给页面。
 // ------------------------------------------------------------------------
 
 import { ASSET_KIND_LABELS, AssetKind } from '../../domain/models/asset';
@@ -23,11 +23,11 @@ const ASSET_LIST_VIEW_TYPE = 'aigcVideoStudio.assetList';
 
 /** 各类型的页面描述，显示在页面顶部标题栏里。 */
 const ASSET_LIST_DESCRIPTIONS: Readonly<Record<AssetKind, string>> = {
-  character: '所有项目中的角色资产，可新建、修改和删除，作为实体绑定的形象来源。',
-  scene: '所有项目中的场景资产，可新建、修改和删除，作为实体绑定的形象来源。',
-  prop: '所有项目中的道具资产，可新建、修改和删除，作为实体绑定的形象来源。',
-  effect: '所有项目中的特效资产，可新建、修改和删除，作为实体绑定的形象来源。',
-  audio: '所有项目中的音频资产（音色参考、背景音乐、音效），可新建、修改和删除。'
+  character: '角色资产，所有项目共用，可新建、修改和删除，作为实体绑定的形象来源。',
+  scene: '场景资产，所有项目共用，可新建、修改和删除，作为实体绑定的形象来源。',
+  prop: '道具资产，所有项目共用，可新建、修改和删除，作为实体绑定的形象来源。',
+  effect: '特效资产，所有项目共用，可新建、修改和删除，作为实体绑定的形象来源。',
+  audio: '音频资产（音色参考、背景音乐、音效），所有项目共用，可新建、修改和删除。'
 };
 
 /** 已打开的资产列表页。 */
@@ -43,7 +43,7 @@ export class AssetListPages {
   private readonly opened = new Map<AssetKind, OpenedAssetList>();
 
   /**
-   * @param services 项目、资产与提示词生成服务。
+   * @param services 项目（从实体新建资产时读取视觉风格）、资产与提示词生成服务。
    * @param panels 面板管理器。
    */
   constructor(
@@ -96,8 +96,7 @@ export class AssetListPages {
     this.opened.set(kind, entry);
 
     const notifyChanged = () => panel.postEvent(ASSET_LIST_EVENTS.changed);
-    // 项目改名或删除（连同资产）也会影响列表。
-    const unsubscribes = [projects.onDidChangeProjects(notifyChanged), assets.onDidChangeAssets(notifyChanged)];
+    const unsubscribes = [assets.onDidChangeAssets(notifyChanged)];
     panel.onDidClose(() => {
       unsubscribes.forEach((unsubscribe) => unsubscribe());
       this.opened.delete(kind);

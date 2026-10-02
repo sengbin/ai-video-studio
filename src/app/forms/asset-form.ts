@@ -4,7 +4,7 @@
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
-// 备注：类型由入口决定、创建后不能修改；新建时在表单里选择所属项目（入口可传默认项目），编辑时不显示项目；字段约束取自领域规则常量，保证界面与宿主校验一致；表单引擎不支持字段联动和折叠，风格留空表示沿用项目风格，语言仅对音色参考有效；提交按钮区分“仅保存”与“保存并生成提示词”，后者在保存后启动后台提示词生成；从实体新建（参数带 episodeId、entityId）时按实体设定预填、项目固定为作品所在项目，保存后自动绑定为形象。
+// 备注：类型由入口决定、创建后不能修改，资产不属于项目；字段约束取自领域规则常量，保证界面与宿主校验一致；表单引擎不支持字段联动和折叠，风格留空表示不指定风格，语言仅对音色参考有效；提交按钮区分“仅保存”与“保存并生成提示词”，后者在保存后启动后台提示词生成；从实体新建（参数带 episodeId、entityId）时按实体设定预填，画面风格预填为作品所在项目的视觉风格，保存后自动绑定为形象。
 // ------------------------------------------------------------------------
 
 import { FORM_LEVEL_ERROR_KEY, ValidationError } from '../../domain/errors';
@@ -37,7 +37,7 @@ import {
 import { buildAssetPrefill } from '../../domain/rules/entity-asset-prefill';
 import { hasPrompt } from '../../domain/rules/asset-generation-rules';
 import { readEntityId, readRecord } from '../../domain/rules/field-readers';
-import { ASSET_PROJECT_FIELD_KEY, AssetService, DUPLICATE_ASSET_NAME_MESSAGE } from '../services/asset-service';
+import { AssetService, DUPLICATE_ASSET_NAME_MESSAGE } from '../services/asset-service';
 import { AssetPromptService } from '../services/asset-prompt-service';
 import { ProjectService } from '../services/project-service';
 import { FormCatalog, FormDefinition, FormFactory, FormValues } from './form-definition';
@@ -59,7 +59,6 @@ export const ASSET_SUBMIT_KEYS = {
   saveAndPrompt: 'saveAndPrompt'
 } as const;
 
-const NO_PROJECT_MESSAGE = '还没有项目，请先在“所有项目”中创建项目。';
 const PROMPT_RUNNING_MESSAGE = '提示词正在生成中，完成后再重新生成。';
 const MEGABYTE = 1024 * 1024;
 /** 参考图以外的长文本描述最多长到的行数。 */
@@ -94,29 +93,17 @@ function readKind(value: unknown): AssetKind {
   return value as AssetKind;
 }
 
-/** 所属项目字段：值为项目名称。 */
-function createProjectField(projectNames: readonly string[]): FormFieldSchema {
-  return {
-    key: ASSET_PROJECT_FIELD_KEY,
-    label: '所属项目',
-    description: '资产所属的项目，创建后不能更改',
-    control: 'select',
-    required: true,
-    options: projectNames
-  };
-}
-
-/** 资产名称字段；新建时所属项目还没确定，不能在失去焦点时检查重名，由提交时校验。 */
-function createNameField(kind: AssetKind, checkUnique: boolean): FormFieldSchema {
+/** 资产名称字段。 */
+function createNameField(kind: AssetKind): FormFieldSchema {
   const label = ASSET_KIND_LABELS[kind];
   return {
     key: 'name',
     label: `${label}名称`,
-    description: `${label}在项目内的唯一名称，最多 ${ASSET_NAME_MAX_LENGTH} 字`,
+    description: `${label}的唯一名称，所有项目共用，最多 ${ASSET_NAME_MAX_LENGTH} 字`,
     control: 'text',
     required: true,
     maxLength: ASSET_NAME_MAX_LENGTH,
-    checkUnique
+    checkUnique: true
   };
 }
 
@@ -149,7 +136,7 @@ function createImageFields(kind: Exclude<AssetKind, 'audio'>): FormFieldSchema[]
     {
       key: 'style',
       label: '画面风格',
-      description: `留空表示沿用项目的视觉风格；也可选“其他”手动输入（最多 ${ASSET_STYLE_MAX_LENGTH} 字）`,
+      description: `留空表示不指定风格；也可选“其他”手动输入（最多 ${ASSET_STYLE_MAX_LENGTH} 字）`,
       control: 'select',
       required: false,
       maxLength: ASSET_STYLE_MAX_LENGTH,
@@ -258,13 +245,9 @@ function createAudioFields(): FormFieldSchema[] {
   ];
 }
 
-/** 按类型组装表单字段；新建时带所属项目。 */
-function createFields(kind: AssetKind, projectNames: readonly string[] | undefined, checkUnique: boolean): FormFieldSchema[] {
-  return [
-    ...(projectNames === undefined ? [] : [createProjectField(projectNames)]),
-    createNameField(kind, checkUnique),
-    ...(kind === 'audio' ? createAudioFields() : createImageFields(kind))
-  ];
+/** 按类型组装表单字段。 */
+function createFields(kind: AssetKind): FormFieldSchema[] {
+  return [createNameField(kind), ...(kind === 'audio' ? createAudioFields() : createImageFields(kind))];
 }
 
 /** 已保存的参考文件转文件字段的初始值（与界面提交的格式一致：JSON 文本，Base64 内容）。 */
@@ -310,6 +293,7 @@ function hasFiles(values: FormValues): boolean {
 
 /** 新建资产表单依赖的服务。 */
 export interface AssetFormDependencies {
+  /** 从实体新建时读取项目的视觉风格。 */
   readonly projects: ProjectService;
   readonly assets: AssetService;
   readonly prompts: AssetPromptService;
@@ -325,32 +309,24 @@ export interface AssetEntitySource {
 
 /**
  * 创建“新建资产”表单的定义。
- * @param params `{ kind, projectId? }`，projectId 为入口筛选的项目，作为所属项目的默认值；或 `{ episodeId, entityId }`，从实体预填并在保存后绑定。
+ * @param params `{ kind }`；或 `{ episodeId, entityId }`，从实体预填并在保存后绑定。
  */
 function createNewAssetForm(dependencies: AssetFormDependencies, params: unknown): FormDefinition {
   const source = readRecord(params ?? {});
   if (source.entityId !== undefined) {
     return createEntityAssetForm(dependencies, source);
   }
-  const { projects, assets, prompts } = dependencies;
+  const { assets, prompts } = dependencies;
   const kind = readKind(source.kind);
-  const summaries = projects.listProjects();
-  if (summaries.length === 0) {
-    throw new ValidationError({ [FORM_LEVEL_ERROR_KEY]: NO_PROJECT_MESSAGE });
-  }
-  const preset = typeof source.projectId === 'number' ? summaries.find((project) => project.id === source.projectId) : undefined;
-  const defaultProject = preset ?? (summaries.length === 1 ? summaries[0] : undefined);
   return {
     schema: {
       title: `新建${ASSET_KIND_LABELS[kind]}`,
       submitLabel: CREATE_SUBMIT_ACTIONS[1].label,
-      fields: createFields(kind, summaries.map((project) => project.name), false),
+      fields: createFields(kind),
       submitActions: CREATE_SUBMIT_ACTIONS
     },
-    initialValues: {
-      ...(defaultProject === undefined ? {} : { [ASSET_PROJECT_FIELD_KEY]: defaultProject.name }),
-      ...(kind === 'audio' ? { audioKind: AUDIO_KIND_LABELS.voice } : {})
-    },
+    initialValues: kind === 'audio' ? { audioKind: AUDIO_KIND_LABELS.voice } : {},
+    checkField: (key, value) => (key === 'name' && !assets.isNameAvailable(kind, value) ? DUPLICATE_ASSET_NAME_MESSAGE : undefined),
     submit: (values, submitKey) => {
       // 先检查信息是否足够生成提示词，避免保存了资产却无法生成。
       const generate = submitKey === ASSET_SUBMIT_KEYS.createAndPrompt;
@@ -366,7 +342,7 @@ function createNewAssetForm(dependencies: AssetFormDependencies, params: unknown
 }
 
 /**
- * 创建“从实体新建资产”表单的定义：类型与实体相同，所属项目固定为作品所在项目（否则无法绑定），保存后绑定为该实体的形象。
+ * 创建“从实体新建资产”表单的定义：类型与实体相同，画面风格预填为作品所在项目的视觉风格，保存后绑定为该实体的形象。
  * @param source `{ episodeId, entityId }`。
  */
 function createEntityAssetForm(dependencies: AssetFormDependencies, source: Record<string, unknown>): FormDefinition {
@@ -377,16 +353,17 @@ function createEntityAssetForm(dependencies: AssetFormDependencies, source: Reco
   const episodeId = readEntityId({ id: source.episodeId }, '集');
   const entityId = readEntityId({ id: source.entityId }, '实体');
   const entity = entities.getEntityDetail(episodeId, entityId);
-  const project = projects.getProject(entity.projectId);
   const kind: AssetKind = entity.kind;
+  const projectStyle = projects.getProject(entity.projectId).visualStyle;
   return {
     schema: {
       title: `新建${ASSET_KIND_LABELS[kind]}`,
       submitLabel: CREATE_SUBMIT_ACTIONS[1].label,
-      fields: createFields(kind, [project.name], false),
+      fields: createFields(kind),
       submitActions: CREATE_SUBMIT_ACTIONS
     },
-    initialValues: { ...buildAssetPrefill(entity), [ASSET_PROJECT_FIELD_KEY]: project.name },
+    initialValues: { ...(projectStyle === null ? {} : { style: projectStyle }), ...buildAssetPrefill(entity) },
+    checkField: (key, value) => (key === 'name' && !assets.isNameAvailable(kind, value) ? DUPLICATE_ASSET_NAME_MESSAGE : undefined),
     submit: (values, submitKey) => {
       const generate = submitKey === ASSET_SUBMIT_KEYS.createAndPrompt;
       if (generate) {
@@ -407,7 +384,7 @@ function createEntityAssetForm(dependencies: AssetFormDependencies, source: Reco
   };
 }
 
-/** 创建“编辑资产”表单的定义；所属项目与类型不能修改，因此不显示项目字段。 */
+/** 创建“编辑资产”表单的定义；类型不能修改。 */
 function createEditAssetForm(assets: AssetService, prompts: AssetPromptService, assetId: number): FormDefinition {
   const asset = assets.getAsset(assetId);
   const editActions = createEditSubmitActions(hasPrompt(asset));
@@ -415,12 +392,12 @@ function createEditAssetForm(assets: AssetService, prompts: AssetPromptService, 
     schema: {
       title: `编辑${ASSET_KIND_LABELS[asset.kind]}`,
       submitLabel: editActions[1].label,
-      fields: createFields(asset.kind, undefined, true),
+      fields: createFields(asset.kind),
       submitActions: editActions
     },
     initialValues: toFormValues(asset, assets.getReferenceFiles(assetId)),
     checkField: (key, value) =>
-      key === 'name' && !assets.isNameAvailable(asset.projectId, asset.kind, value, asset.id) ? DUPLICATE_ASSET_NAME_MESSAGE : undefined,
+      key === 'name' && !assets.isNameAvailable(asset.kind, value, asset.id) ? DUPLICATE_ASSET_NAME_MESSAGE : undefined,
     submit: (values, submitKey) => {
       const regenerate = submitKey === ASSET_SUBMIT_KEYS.saveAndPrompt;
       if (regenerate) {
@@ -438,7 +415,7 @@ function createEditAssetForm(assets: AssetService, prompts: AssetPromptService, 
 }
 
 /**
- * 创建资产表单目录：新建的参数为 `{ kind, projectId? }` 或 `{ episodeId, entityId }`（从实体新建），编辑的参数为 `{ assetId }`。
+ * 创建资产表单目录：新建的参数为 `{ kind }` 或 `{ episodeId, entityId }`（从实体新建），编辑的参数为 `{ assetId }`。
  * @param dependencies 项目、资产与提示词生成服务，以及可选的实体来源。
  */
 export function createAssetFormCatalog(dependencies: AssetFormDependencies): FormCatalog {

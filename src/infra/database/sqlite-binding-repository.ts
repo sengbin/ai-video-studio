@@ -77,14 +77,13 @@ export class SqliteBindingRepository implements BindingRepository {
   findContext(episodeId: number, entityId: number): BindingContext | undefined {
     const row = this.database
       .prepare(
-        `SELECT w.project_id, se.kind, se.name
+        `SELECT se.kind, se.name
            FROM episodes e
-           JOIN works w ON w.id = e.work_id
            JOIN script_entities se ON se.work_id = e.work_id
           WHERE e.id = ? AND se.id = ?`
       )
-      .get(episodeId, entityId) as unknown as { project_id: number; kind: EntityKind; name: string } | undefined;
-    return row === undefined ? undefined : { projectId: row.project_id, entityKind: row.kind, entityName: row.name };
+      .get(episodeId, entityId) as unknown as { kind: EntityKind; name: string } | undefined;
+    return row === undefined ? undefined : { entityKind: row.kind, entityName: row.name };
   }
 
   findEntityDetail(episodeId: number, entityId: number): BindingEntityDetail | undefined {
@@ -182,10 +181,7 @@ export class SqliteBindingRepository implements BindingRepository {
     return rows.map((row) => ({ entityId: row.id, kind: row.kind, name: row.name, aliases: JSON.parse(row.aliases_json) as string[] }));
   }
 
-  findProjectId(episodeId: number): number | undefined {
-    const row = this.database
-      .prepare('SELECT w.project_id FROM episodes e JOIN works w ON w.id = e.work_id WHERE e.id = ?')
-      .get(episodeId) as unknown as { project_id: number } | undefined;
-    return row?.project_id;
+  episodeExists(episodeId: number): boolean {
+    return this.database.prepare('SELECT 1 FROM episodes WHERE id = ?').get(episodeId) !== undefined;
   }
 }

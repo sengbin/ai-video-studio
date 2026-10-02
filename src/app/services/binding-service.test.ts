@@ -27,7 +27,7 @@ function createFixture() {
   const database = openDatabase(IN_MEMORY_DATABASE_PATH);
   const projects = new ProjectService(new SqliteProjectRepository(database));
   const assetRepository = new SqliteAssetRepository(database);
-  const assets = new AssetService(assetRepository, projects);
+  const assets = new AssetService(assetRepository);
   const service = new BindingService(new SqliteBindingRepository(database), assetRepository);
   projects.createProject({ name: '项目甲' });
   projects.createProject({ name: '项目乙' });
@@ -45,18 +45,19 @@ function createFixture() {
   const lighthouse = entity('scene', '灯塔');
   const retired = entity('prop', '旧钥匙', '[]', 0);
   const otherWork = insert("INSERT INTO works (project_id, name, kind, created_at, updated_at) VALUES (2, '作品乙', 'single', 't', 't')");
+  const otherEpisode = insert("INSERT INTO episodes (work_id, seq, title, created_at, updated_at) VALUES (?, 1, '乙第一集', 't', 't')", otherWork);
   const otherEntity = insert(
     "INSERT INTO script_entities (work_id, kind, name, created_at, updated_at) VALUES (?, 'character', '外人', 't', 't')",
     otherWork
   );
-  return { database, assets, service, work, episode1, episode2, guard, lighthouse, retired, otherEntity };
+  return { database, assets, service, work, episode1, episode2, guard, lighthouse, retired, otherEntity, otherEpisode };
 }
 
-test('形象绑定：同类型同项目的资产可绑定，第一个自动成为主资产，之后的不是', () => {
+test('形象绑定：同类型的资产可绑定，第一个自动成为主资产，之后的不是', () => {
   const { database, assets, service, episode1, guard } = createFixture();
   try {
-    const first = assets.createAsset('character', { projectName: '项目甲', name: '守夜人·日常' });
-    const second = assets.createAsset('character', { projectName: '项目甲', name: '守夜人·雨天' });
+    const first = assets.createAsset('character', { name: '守夜人·日常' });
+    const second = assets.createAsset('character', { name: '守夜人·雨天' });
 
     const a = service.bind({ episodeId: episode1, entityId: guard, assetId: first.id, note: '日常造型' });
     const b = service.bind({ episodeId: episode1, entityId: guard, assetId: second.id, purpose: 'visual' });
@@ -75,13 +76,25 @@ test('形象绑定：同类型同项目的资产可绑定，第一个自动成�
   }
 });
 
-test('绑定校验：类型、项目、用途、重复、不存在与标识无效', () => {
+test('跨项目复用：同一个资产可以绑定到不同项目作品的实体', () => {
+  const { database, assets, service, episode1, guard, otherEpisode, otherEntity } = createFixture();
+  try {
+    const shared = assets.createAsset('character', { name: '通用角色' });
+    assert.equal(service.bind({ episodeId: episode1, entityId: guard, assetId: shared.id }).isPrimary, true);
+    assert.equal(service.bind({ episodeId: otherEpisode, entityId: otherEntity, assetId: shared.id }).isPrimary, true);
+    assert.equal(assets.listAssets('character')[0].episodeCount, 2);
+    assert.deepEqual(service.getEpisodeView(otherEpisode).visualAssets.character.map((asset) => asset.name), ['通用角色']);
+  } finally {
+    database.close();
+  }
+});
+
+test('绑定校验：类型、用途、重复、不存在与标识无效', () => {
   const { database, assets, service, episode1, guard, lighthouse, otherEntity } = createFixture();
   try {
-    const character = assets.createAsset('character', { projectName: '项目甲', name: '甲角色' });
-    const otherProject = assets.createAsset('character', { projectName: '项目乙', name: '乙角色' });
-    const voice = assets.createAsset('audio', { projectName: '项目甲', name: '音色', audioKind: '音色参考', files: AUDIO_FILES });
-    const music = assets.createAsset('audio', { projectName: '项目甲', name: '配乐', audioKind: '背景音乐', files: AUDIO_FILES });
+    const character = assets.createAsset('character', { name: '甲角色' });
+    const voice = assets.createAsset('audio', { name: '音色', audioKind: '音色参考', files: AUDIO_FILES });
+    const music = assets.createAsset('audio', { name: '配乐', audioKind: '背景音乐', files: AUDIO_FILES });
     const base = { episodeId: episode1, entityId: guard };
     const fieldError = (input: object) => {
       try {
@@ -93,7 +106,6 @@ test('绑定校验：类型、项目、用途、重复、不存在与标识无�
     };
 
     assert.ok(fieldError({ assetId: character.id, entityId: lighthouse })?.assetId, '角色资产不能绑定到场景实体');
-    assert.ok(fieldError({ assetId: otherProject.id })?.assetId, '其他项目的资产不能绑定');
     assert.ok(fieldError({ assetId: voice.id })?.assetId, '音频资产不能做形象绑定');
     assert.ok(fieldError({ assetId: character.id, purpose: 'voice' })?.assetId, '角色资产不能做音色绑定');
     assert.ok(fieldError({ assetId: music.id, purpose: 'voice' })?.assetId, '只有音色参考音频能做音色绑定');
@@ -117,7 +129,7 @@ test('绑定校验：类型、项目、用途、重复、不存在与标识无�
 test('切换主资产与解除绑定：始终保持有绑定就有且只有一个主资产', () => {
   const { database, assets, service, episode1, guard } = createFixture();
   try {
-    const ids = ['甲', '乙', '丙'].map((name) => assets.createAsset('character', { projectName: '项目甲', name }).id);
+    const ids = ['甲', '乙', '丙'].map((name) => assets.createAsset('character', { name }).id);
     const bindings = ids.map((assetId) => service.bind({ episodeId: episode1, entityId: guard, assetId }));
     const primaries = () => service.listBindings(episode1).filter((binding) => binding.isPrimary).map((binding) => binding.assetName);
 
@@ -139,14 +151,13 @@ test('切换主资产与解除绑定：始终保持有绑定就有且只有一�
   }
 });
 
-test('按名称自动匹配：实体名称或别名与同项目同类型资产同名，已绑定的和停用实体不列入', () => {
+test('按名称自动匹配：实体名称或别名与同类型资产同名，已绑定的和停用实体不列入', () => {
   const { database, assets, service, episode1, guard, lighthouse } = createFixture();
   try {
-    const old = assets.createAsset('character', { projectName: '项目甲', name: '老陈' });
-    const exact = assets.createAsset('scene', { projectName: '项目甲', name: '灯塔' });
-    assets.createAsset('prop', { projectName: '项目甲', name: '旧钥匙' });
-    assets.createAsset('prop', { projectName: '项目甲', name: '灯塔' });
-    assets.createAsset('scene', { projectName: '项目乙', name: '灯塔' });
+    const old = assets.createAsset('character', { name: '老陈' });
+    const exact = assets.createAsset('scene', { name: '灯塔' });
+    assets.createAsset('prop', { name: '旧钥匙' });
+    assets.createAsset('prop', { name: '灯塔' });
 
     assert.deepEqual(service.suggestMatches(episode1), [
       { entityId: guard, entityName: '守夜人', assetId: old.id, assetName: '老陈' },
@@ -161,15 +172,14 @@ test('按名称自动匹配：实体名称或别名与同项目同类型资产�
   }
 });
 
-test('绑定界面视图：只含启用的实体与同项目资产，主资产在前，音色只给角色', () => {
+test('绑定界面视图：只含启用的实体，可选资产不区分项目，主资产在前，音色只给角色', () => {
   const { database, assets, service, episode1, guard, lighthouse } = createFixture();
   try {
-    const day = assets.createAsset('character', { projectName: '项目甲', name: '守夜人·日常' });
-    const rain = assets.createAsset('character', { projectName: '项目甲', name: '守夜人·雨天' });
-    assets.createAsset('character', { projectName: '项目乙', name: '乙角色' });
-    assets.createAsset('scene', { projectName: '项目甲', name: '灯塔' });
-    const voice = assets.createAsset('audio', { projectName: '项目甲', name: '低沉嗓音', audioKind: '音色参考', files: AUDIO_FILES });
-    assets.createAsset('audio', { projectName: '项目甲', name: '配乐', audioKind: '背景音乐', files: AUDIO_FILES });
+    const day = assets.createAsset('character', { name: '守夜人·日常' });
+    const rain = assets.createAsset('character', { name: '守夜人·雨天' });
+    assets.createAsset('scene', { name: '灯塔' });
+    const voice = assets.createAsset('audio', { name: '低沉嗓音', audioKind: '音色参考', files: AUDIO_FILES });
+    assets.createAsset('audio', { name: '配乐', audioKind: '背景音乐', files: AUDIO_FILES });
 
     service.bind({ episodeId: episode1, entityId: guard, assetId: day.id });
     const second = service.bind({ episodeId: episode1, entityId: guard, assetId: rain.id });
@@ -185,7 +195,7 @@ test('绑定界面视图：只含启用的实体与同项目资产，主资产�
     assert.equal(lighthouseView.entityId, lighthouse);
     assert.deepEqual([lighthouseView.visual, lighthouseView.voice], [[], []]);
 
-    assert.deepEqual(view.visualAssets.character.map((asset) => asset.name), ['守夜人·日常', '守夜人·雨天'], '不含其他项目的资产');
+    assert.deepEqual(view.visualAssets.character.map((asset) => asset.name), ['守夜人·日常', '守夜人·雨天']);
     assert.deepEqual(view.visualAssets.scene.map((asset) => asset.name), ['灯塔']);
     assert.deepEqual(view.voiceAssets.map((asset) => asset.name), ['低沉嗓音'], '只含音色参考音频');
     assert.throws(() => service.getEpisodeView(9999), NotFoundError);
@@ -197,13 +207,13 @@ test('绑定界面视图：只含启用的实体与同项目资产，主资产�
 test('音色绑定要求音频已有文件：还没有文件的音频不在可选列表里，也不能绑定', () => {
   const { database, assets, service, episode1, guard } = createFixture();
   try {
-    const empty = assets.createAsset('audio', { projectName: '项目甲', name: '还没有文件', audioKind: '音色参考' });
+    const empty = assets.createAsset('audio', { name: '还没有文件', audioKind: '音色参考' });
     assert.deepEqual(service.getEpisodeView(episode1).voiceAssets, []);
     assert.throws(
       () => service.bind({ episodeId: episode1, entityId: guard, assetId: empty.id, purpose: 'voice' }),
       (error) => error instanceof ValidationError && /还没有音频文件/.test(error.fieldErrors.assetId)
     );
-    const ready = assets.createAsset('audio', { projectName: '项目甲', name: '有文件', audioKind: '音色参考', files: AUDIO_FILES });
+    const ready = assets.createAsset('audio', { name: '有文件', audioKind: '音色参考', files: AUDIO_FILES });
     assert.deepEqual(service.getEpisodeView(episode1).voiceAssets.map((asset) => asset.name), ['有文件']);
     assert.equal(service.bind({ episodeId: episode1, entityId: guard, assetId: ready.id, purpose: 'voice' }).isPrimary, true);
   } finally {
@@ -218,7 +228,7 @@ test('数据变化通知，以及删除资产、集时绑定随之清除', () =>
     service.onDidChangeBindings(() => {
       count += 1;
     });
-    const asset = assets.createAsset('character', { projectName: '项目甲', name: '甲' });
+    const asset = assets.createAsset('character', { name: '甲' });
     const binding = service.bind({ episodeId: episode1, entityId: guard, assetId: asset.id });
     assert.throws(() => service.bind({ episodeId: episode1, entityId: guard, assetId: 9999 }));
     service.setPrimary(binding.id);
@@ -238,8 +248,8 @@ test('请求处理：列表、绑定、切换主资产、解除、自动匹配�
     const router = new MessageRouter();
     registerBindingHandlers(router, service);
     const send = (name: string, payload?: unknown) => router.handle({ type: 'request', requestId: 1, name, payload });
-    const first = assets.createAsset('character', { projectName: '项目甲', name: '守夜人' });
-    const second = assets.createAsset('character', { projectName: '项目甲', name: '老陈' });
+    const first = assets.createAsset('character', { name: '守夜人' });
+    const second = assets.createAsset('character', { name: '老陈' });
 
     const suggest = await send(BINDING_REQUESTS.suggest, { episodeId: episode1 });
     assert.equal((suggest?.ok && (suggest.data as { suggestions: unknown[] }).suggestions.length) || 0, 2);

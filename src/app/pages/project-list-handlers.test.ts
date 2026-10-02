@@ -70,7 +70,7 @@ test('取删除影响范围返回项目名称和各类内容数量，项目不�
       .run(project.id);
 
     const response = await send(PROJECT_LIST_REQUESTS.prepareDelete, { id: project.id });
-    assert.deepEqual(response?.ok && response.data, { name: '甲', workCount: 1, assetCount: 0, videoResultCount: 0 });
+    assert.deepEqual(response?.ok && response.data, { name: '甲', workCount: 1, videoResultCount: 0 });
 
     const missing = await send(PROJECT_LIST_REQUESTS.prepareDelete, { id: 99 });
     assert.ok(missing && !missing.ok && missing.error.kind === 'not-found');

@@ -58,19 +58,19 @@ test('新库升级到最新版本并创建全部业务表', () => {
   }
 });
 
-test('外键已启用：删除项目级联删除作品、集和资产', () => {
+test('外键已启用：删除项目级联删除作品和集，资产不属于项目、不受影响', () => {
   const database = openDatabase(IN_MEMORY_DATABASE_PATH);
   try {
     seedWorkWithEpisode(database);
     database
-      .prepare("INSERT INTO assets (project_id, kind, name, created_at, updated_at) VALUES (1, 'character', ?, ?, ?)")
+      .prepare("INSERT INTO assets (kind, name, created_at, updated_at) VALUES ('character', ?, ?, ?)")
       .run('林夏', NOW, NOW);
 
     database.prepare('DELETE FROM projects WHERE id = 1').run();
 
     assert.equal(countRows(database, 'works'), 0);
     assert.equal(countRows(database, 'episodes'), 0);
-    assert.equal(countRows(database, 'assets'), 0);
+    assert.equal(countRows(database, 'assets'), 1);
   } finally {
     database.close();
   }
@@ -197,7 +197,7 @@ test('每个实体在本集同一用途下只能有一个主资产', () => {
       )
       .run('林夏', NOW, NOW);
     const insertAsset = database.prepare(
-      "INSERT INTO assets (project_id, kind, name, created_at, updated_at) VALUES (1, 'character', ?, ?, ?)"
+      "INSERT INTO assets (kind, name, created_at, updated_at) VALUES ('character', ?, ?, ?)"
     );
     insertAsset.run('林夏日常', NOW, NOW);
     insertAsset.run('林夏雨天', NOW, NOW);
@@ -216,7 +216,7 @@ test('删除资产文件时镜头的首帧图片引用被置空而不是拒绝�
   try {
     seedWorkWithEpisode(database);
     database
-      .prepare("INSERT INTO assets (project_id, kind, name, created_at, updated_at) VALUES (1, 'scene', ?, ?, ?)")
+      .prepare("INSERT INTO assets (kind, name, created_at, updated_at) VALUES ('scene', ?, ?, ?)")
       .run('灯塔', NOW, NOW);
     database
       .prepare(
@@ -520,6 +520,56 @@ test('从版本 8 升级到 9：已有资产保留，已有提示词视为基于
       ]);
       assert.deepEqual(listTableNames(database).filter((name) => name.startsWith('asset_')), ['asset_files', 'asset_version_files', 'asset_versions']);
       assert.deepEqual(database.prepare('PRAGMA foreign_key_check').all(), []);
+    } finally {
+      database.close();
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('从版本 9 升级到 10：资产脱离项目，重名资产加项目名区分，沿用项目风格的资产写入风格，文件与绑定保留', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'aigc-video-studio-test-'));
+  const filePath = join(directory, 'upgrade-v9.sqlite');
+  try {
+    const legacy = openDatabase(filePath, MIGRATIONS.slice(0, 9));
+    seedWorkWithEpisode(legacy);
+    legacy.prepare("UPDATE projects SET visual_style = '写实摄影' WHERE id = 1").run();
+    legacy.prepare('INSERT INTO projects (name, created_at, updated_at) VALUES (?, ?, ?)').run('项目乙', NOW, NOW);
+    legacy
+      .prepare("INSERT INTO script_entities (work_id, kind, name, created_at, updated_at) VALUES (1, 'character', '林夏', ?, ?)")
+      .run(NOW, NOW);
+    const insert = legacy.prepare('INSERT INTO assets (project_id, kind, name, style, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)');
+    insert.run(1, 'character', '林夏', null, NOW, NOW);
+    insert.run(2, 'character', '林夏', null, NOW, NOW);
+    insert.run(1, 'audio', '配乐', null, NOW, NOW);
+    insert.run(1, 'scene', '灯塔', '水彩', NOW, NOW);
+    legacy
+      .prepare("INSERT INTO asset_files (asset_id, mime, file_name, size_bytes, content, created_at) VALUES (2, 'image/png', 'a.png', 1, x'00', ?)")
+      .run(NOW);
+    legacy.prepare('INSERT INTO entity_bindings (episode_id, entity_id, asset_id, created_at) VALUES (1, 1, 2, ?)').run(NOW);
+    legacy.close();
+
+    const database = openDatabase(filePath);
+    try {
+      assert.equal(readSchemaVersion(database), MIGRATIONS.length);
+      const rows = database.prepare('SELECT id, kind, name, style FROM assets ORDER BY id').all() as Array<Record<string, unknown>>;
+      assert.deepEqual(rows.map((row) => Object.values(row)), [
+        [1, 'character', '林夏', '写实摄影'],
+        [2, 'character', '林夏（项目乙）', null],
+        [3, 'audio', '配乐', null],
+        [4, 'scene', '灯塔', '水彩']
+      ]);
+      const columns = (database.prepare('PRAGMA table_info(assets)').all() as Array<{ name: string }>).map((column) => column.name);
+      assert.ok(!columns.includes('project_id'));
+      assert.equal(countRows(database, 'asset_files'), 1, '重建资产表不能级联删除文件');
+      assert.equal(countRows(database, 'entity_bindings'), 1, '重建资产表不能级联删除绑定');
+      assert.deepEqual(database.prepare('PRAGMA foreign_key_check').all(), []);
+      assert.equal((database.prepare('PRAGMA foreign_keys').get() as { foreign_keys: number }).foreign_keys, 1);
+      assert.throws(() => database.prepare("INSERT INTO assets (kind, name, created_at, updated_at) VALUES ('scene', '灯塔', ?, ?)").run(NOW, NOW));
+      database.prepare('DELETE FROM assets WHERE id = 2').run();
+      assert.equal(countRows(database, 'asset_files'), 0, '外键关系重建后仍然有效');
+      assert.equal(countRows(database, 'entity_bindings'), 0);
     } finally {
       database.close();
     }

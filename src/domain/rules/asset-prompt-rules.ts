@@ -45,7 +45,7 @@ export interface AssetDraftDescription {
   readonly name: string;
   /** “标签：内容”形式的行，名称在最前。 */
   readonly lines: readonly string[];
-  /** 名称以外用户填写的字段数（不含项目风格带来的画面风格）。 */
+  /** 名称以外用户填写的字段数。 */
   readonly detailCount: number;
 }
 
@@ -94,13 +94,8 @@ export function assetToDraftValues(asset: AssetRecord): Record<string, string> {
  * 把资产内容整理成提示词素材；空字段不列出。
  * @param kind 资产类型。
  * @param values 表单键到文本。
- * @param projectStyle 项目的视觉风格；图像资产自己没有设置风格时作为画面风格。
  */
-export function describeAssetDraft(
-  kind: AssetKind,
-  values: Readonly<Record<string, unknown>>,
-  projectStyle: string | null
-): AssetDraftDescription {
+export function describeAssetDraft(kind: AssetKind, values: Readonly<Record<string, unknown>>): AssetDraftDescription {
   const read = (key: string): string => {
     const value = values[key];
     return typeof value === 'string' ? value.trim() : '';
@@ -132,8 +127,6 @@ export function describeAssetDraft(
   if (style.length > 0) {
     lines.push(`画面风格：${style}`);
     detailCount += 1;
-  } else if (projectStyle !== null && projectStyle.length > 0) {
-    lines.push(`画面风格（沿用项目风格）：${projectStyle}`);
   }
   addDetail('背景', 'background');
   addDetail('参考图画幅', 'referenceAspectRatio');

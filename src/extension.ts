@@ -137,7 +137,7 @@ export function activate(context: vscode.ExtensionContext): void {
   });
   const textSettingsService = new TextSettingsService(settingsStore, new CopilotModelCatalog());
   const assetRepository = new SqliteAssetRepository(database);
-  const assetService = new AssetService(assetRepository, projectService);
+  const assetService = new AssetService(assetRepository);
   const bindingService = new BindingService(new SqliteBindingRepository(database), assetRepository);
   const providerRepository = new SqliteProviderRepository(database);
   const providerService = new ProviderService({
@@ -154,7 +154,6 @@ export function activate(context: vscode.ExtensionContext): void {
   const assetPromptService = new AssetPromptService({
     text: textGeneration,
     prompts,
-    projects: projectService,
     assets: assetRepository,
     notify: notifyAssetsChanged
   });

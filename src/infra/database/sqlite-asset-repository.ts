@@ -29,7 +29,6 @@ import { runInTransaction } from './transaction';
 /** assets 表的一行。 */
 interface AssetRow {
   readonly id: number;
-  readonly project_id: number;
   readonly kind: AssetKind;
   readonly name: string;
   readonly source_entity_id: number | null;
@@ -81,7 +80,6 @@ interface AssetFileRow {
 function toRecord(row: AssetRow): AssetRecord {
   return {
     id: row.id,
-    projectId: row.project_id,
     kind: row.kind,
     name: row.name,
     sourceEntityId: row.source_entity_id,
@@ -158,17 +156,17 @@ export class SqliteAssetRepository implements AssetRepository {
     return row === undefined ? undefined : toRecord(row);
   }
 
-  findByName(projectId: number, kind: AssetKind, name: string): AssetRecord | undefined {
+  findByName(kind: AssetKind, name: string): AssetRecord | undefined {
     const row = this.database
-      .prepare('SELECT * FROM assets WHERE project_id = ? AND kind = ? AND name = ?')
-      .get(projectId, kind, name) as unknown as AssetRow | undefined;
+      .prepare('SELECT * FROM assets WHERE kind = ? AND name = ?')
+      .get(kind, name) as unknown as AssetRow | undefined;
     return row === undefined ? undefined : toRecord(row);
   }
 
-  listProjectAssets(projectId: number): Array<{ readonly id: number; readonly kind: AssetKind; readonly name: string }> {
+  listNames(): Array<{ readonly id: number; readonly kind: AssetKind; readonly name: string }> {
     return this.database
-      .prepare('SELECT id, kind, name FROM assets WHERE project_id = ? ORDER BY id')
-      .all(projectId) as unknown as Array<{ id: number; kind: AssetKind; name: string }>;
+      .prepare('SELECT id, kind, name FROM assets ORDER BY id')
+      .all() as unknown as Array<{ id: number; kind: AssetKind; name: string }>;
   }
 
   listReferenceFiles(assetId: number): AssetFileRecord[] {
@@ -211,13 +209,12 @@ export class SqliteAssetRepository implements AssetRepository {
     return runInTransaction(this.database, () => {
       const result = this.database
         .prepare(
-          `INSERT INTO assets (project_id, kind, name, source_entity_id, attributes_json, composition, style, background,
+          `INSERT INTO assets (kind, name, source_entity_id, attributes_json, composition, style, background,
              reference_aspect_ratio, extra_requirements, prompt_zh, prompt_en, prompt_revision, prompt_content_revision,
              created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
         .run(
-          input.projectId,
           input.kind,
           input.name,
           input.sourceEntityId,

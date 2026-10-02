@@ -11,7 +11,7 @@ import { Project, ProjectDeletionImpact, ProjectInput, ProjectSummary } from '..
 
 /** 项目的数据访问接口。 */
 export interface ProjectRepository {
-  /** 列出全部项目及其作品数、资产数，按更新时间倒序。 */
+  /** 列出全部项目及其作品数，按更新时间倒序。 */
   listSummaries(): ProjectSummary[];
   /** 按标识查找项目；不存在返回 undefined。 */
   findById(id: number): Project | undefined;

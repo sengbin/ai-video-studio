@@ -385,7 +385,7 @@ if (shouldDiscard) closeForm();
 const confirmed = await aiUi.confirmDelete({
   title: '删除项目',
   message: '将删除项目“灯塔计划”及其下的全部内容，且无法恢复：',
-  details: ['2 个作品', '14 个资产', '3 个视频结果'],
+  details: ['2 个作品', '3 个视频结果'],
   confirmName: '灯塔计划',
   nameLabel: '项目名称'
 });

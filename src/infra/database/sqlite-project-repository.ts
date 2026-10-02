@@ -23,16 +23,14 @@ interface ProjectRow {
   readonly updated_at: string;
 }
 
-/** 带作品数、资产数的项目行。 */
+/** 带作品数的项目行。 */
 interface ProjectSummaryRow extends ProjectRow {
   readonly work_count: number;
-  readonly asset_count: number;
 }
 
 /** 删除影响统计行。 */
 interface DeletionImpactRow {
   readonly work_count: number;
-  readonly asset_count: number;
   readonly video_result_count: number;
 }
 
@@ -44,13 +42,12 @@ export class SqliteProjectRepository implements ProjectRepository {
     const rows = this.database
       .prepare(
         `SELECT p.*,
-                (SELECT COUNT(*) FROM works w WHERE w.project_id = p.id) AS work_count,
-                (SELECT COUNT(*) FROM assets a WHERE a.project_id = p.id) AS asset_count
+                (SELECT COUNT(*) FROM works w WHERE w.project_id = p.id) AS work_count
            FROM projects p
           ORDER BY p.updated_at DESC, p.id DESC`
       )
       .all() as unknown as ProjectSummaryRow[];
-    return rows.map((row) => ({ ...toProject(row), workCount: row.work_count, assetCount: row.asset_count }));
+    return rows.map((row) => ({ ...toProject(row), workCount: row.work_count }));
   }
 
   findById(id: number): Project | undefined {
@@ -102,7 +99,6 @@ export class SqliteProjectRepository implements ProjectRepository {
     const row = this.database
       .prepare(
         `SELECT (SELECT COUNT(*) FROM works WHERE project_id = ?) AS work_count,
-                (SELECT COUNT(*) FROM assets WHERE project_id = ?) AS asset_count,
                 (SELECT COUNT(*)
                    FROM video_results vr
                    JOIN shot_groups g ON g.id = vr.group_id
@@ -111,8 +107,8 @@ export class SqliteProjectRepository implements ProjectRepository {
                    JOIN works w ON w.id = e.work_id
                   WHERE w.project_id = ?) AS video_result_count`
       )
-      .get(id, id, id) as unknown as DeletionImpactRow;
-    return { workCount: row.work_count, assetCount: row.asset_count, videoResultCount: row.video_result_count };
+      .get(id, id) as unknown as DeletionImpactRow;
+    return { workCount: row.work_count, videoResultCount: row.video_result_count };
   }
 
   /** 读取刚写入的项目；读不到说明数据库状态异常，直接报错。 */

@@ -18,7 +18,6 @@ type Fixture = Awaited<ReturnType<typeof createAssetGenerationFixture>>;
 /** 创建带中英文提示词的角色资产。 */
 function createCharacter(fixture: Fixture, overrides: Record<string, unknown> = {}): AssetRecord {
   return createAssetWithPrompts(fixture.assets, 'character', {
-    projectName: '项目甲',
     name: '林夏',
     appearance: '短发',
     referenceAspectRatio: '16:9',
@@ -85,10 +84,10 @@ test('生成目录：没有提示词、没有可用模型时不能生成并说�
       useReferenceImages: false
     });
 
-    const voice = createAssetWithPrompts(fixture.assets, 'audio', { projectName: '项目甲', name: '声音', audioKind: '音色参考', language: '英文', promptZh: '声音' });
+    const voice = createAssetWithPrompts(fixture.assets, 'audio', { name: '声音', audioKind: '音色参考', language: '英文', promptZh: '声音' });
     const audioCatalog = await fixture.generation.getCatalog(voice.id);
     assert.deepEqual([audioCatalog.modelKind, audioCatalog.defaults.language, audioCatalog.models.length], ['audio', 'en', 1]);
-    const music = createAssetWithPrompts(fixture.assets, 'audio', { projectName: '项目甲', name: '配乐', audioKind: '背景音乐', promptZh: '紧张' });
+    const music = createAssetWithPrompts(fixture.assets, 'audio', { name: '配乐', audioKind: '背景音乐', promptZh: '紧张' });
     const musicCatalog = await fixture.generation.getCatalog(music.id);
     assert.equal(musicCatalog.models.length, 0, '假音频模型不支持配乐');
     assert.equal(musicCatalog.availability.available, false);
@@ -259,7 +258,7 @@ test('采用的版本不能删除，进行中的版本要先取消；其他版�
 test('音频：只能采用 1 个文件且不超过 60 秒，采用后音频资产有了文件；之后才能绑定为音色', async () => {
   const fixture = await createAssetGenerationFixture();
   try {
-    const voice = createAssetWithPrompts(fixture.assets, 'audio', { projectName: '项目甲', name: '声音', audioKind: '音色参考', promptZh: '清亮的女声' });
+    const voice = createAssetWithPrompts(fixture.assets, 'audio', { name: '声音', audioKind: '音色参考', promptZh: '清亮的女声' });
     assert.equal(fixture.assetRepository.countReferenceFiles(voice.id), 0);
     const versionId = await generate(fixture, voice);
     const detail = fixture.generation.getVersion(versionId);

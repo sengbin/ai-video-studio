@@ -26,7 +26,6 @@ import { askModel } from '../stages/ask-model';
 import { SUBMIT_ASSET_PROMPTS_TOOL } from '../stages/output-tools/asset-prompt-output-tools';
 import { wrapMaterial } from '../stages/prompt-templates';
 import { InvalidOutputError } from '../stages/structured-generation';
-import { ProjectService } from './project-service';
 
 /** 资产提示词模板使用的变量，模板文件必须与之完全一致（测试校验）。 */
 export const ASSET_PROMPT_VARIABLES: Readonly<Record<string, readonly string[]>> = {
@@ -44,7 +43,6 @@ const ALREADY_RUNNING_MESSAGE = '提示词正在生成中。';
 export interface AssetPromptServiceDependencies {
   readonly text: TextGenerationPort;
   readonly prompts: PromptTemplates;
-  readonly projects: ProjectService;
   readonly assets: AssetRepository;
   /** 提示词状态变化后通知界面刷新。 */
   readonly notify: () => void;
@@ -66,7 +64,7 @@ export class AssetPromptService {
    * @throws ValidationError 信息不足。
    */
   assertCanGenerate(kind: AssetRecord['kind'], values: Readonly<Record<string, unknown>>, hasImages: boolean): void {
-    const draft = describeAssetDraft(kind, values, null);
+    const draft = describeAssetDraft(kind, values);
     if (draft.name === '' || (draft.detailCount === 0 && !hasImages)) {
       throw new ValidationError({ [FORM_LEVEL_ERROR_KEY]: NO_PROMPT_DETAIL_MESSAGE });
     }
@@ -114,11 +112,10 @@ export class AssetPromptService {
 
   /** 执行一次生成并把结果写回资产。 */
   private async run(asset: AssetRecord, images: readonly ImageInput[], controller: AbortController): Promise<void> {
-    const { text, prompts, projects, assets } = this.dependencies;
+    const { text, prompts, assets } = this.dependencies;
     try {
       const model = await text.resolveModel();
-      const projectStyle = asset.kind === 'audio' ? null : (projects.findProject(asset.projectId)?.visualStyle ?? null);
-      const draft = describeAssetDraft(asset.kind, assetToDraftValues(asset), projectStyle);
+      const draft = describeAssetDraft(asset.kind, assetToDraftValues(asset));
       const common = { kindLabel: promptKindLabel(asset), material: wrapMaterial(draft.lines.join('\n')), focus: promptFocus(asset) };
       const isAudio = asset.kind === 'audio';
       const result = await askModel(

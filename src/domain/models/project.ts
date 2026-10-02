@@ -23,15 +23,13 @@ export interface Project extends ProjectInput {
   readonly updatedAt: string;
 }
 
-/** 项目列表中的一行：项目及其作品数、资产数。 */
+/** 项目列表中的一行：项目及其作品数。 */
 export interface ProjectSummary extends Project {
   readonly workCount: number;
-  readonly assetCount: number;
 }
 
-/** 删除项目时会一并删除的内容数量。 */
+/** 删除项目时会一并删除的内容数量（资产不属于项目，不受影响）。 */
 export interface ProjectDeletionImpact {
   readonly workCount: number;
-  readonly assetCount: number;
   readonly videoResultCount: number;
 }

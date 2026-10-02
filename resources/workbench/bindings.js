@@ -153,7 +153,7 @@
     if (await request(name, payload, session.message)) await refresh();
   }
 
-  /** 为实体选择形象资产：只列同项目、同类型、尚未绑定到该实体的资产。 */
+  /** 为实体选择形象资产：只列同类型、尚未绑定到该实体的资产。 */
   function pickVisual(entity) {
     const bound = new Set(entity.visual.map((item) => item.assetId));
     openPicker({

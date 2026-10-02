@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：asset-list.js
-// 说明：资产列表页脚本：列出某种资产类型下所有项目的资产，按项目与名称关键字筛选，在页内弹出页面中新建、编辑资产，显示提示词与图片（音频）生成状态，发起提示词生成、图片（音频）生成并打开版本层，带使用情况提示地删除资产。
+// 说明：资产列表页脚本：列出某种资产类型的全部资产（资产不属于项目），按名称关键字筛选，在页内弹出页面中新建、编辑资产，显示提示词与图片（音频）生成状态，发起提示词生成、图片（音频）生成并打开版本层，带使用情况提示地删除资产。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
@@ -26,7 +26,6 @@
   const KIND_AUDIO = 'audio';
 
   const GENERIC_ERROR_TEXT = '操作失败，请重试。';
-  const FILTER_ALL = 'all';
   const REFRESH_DELAY_MS = 150;
   const MAX_USAGE_LINES = 8;
   const KIND_LABELS = { character: '角色', scene: '场景', prop: '道具', effect: '特效', audio: '音频' };
@@ -37,17 +36,12 @@
   const root = document.getElementById('app');
   /** 页面绑定的资产类型，首次加载成功后由宿主告知。 */
   let kind = '';
-  let projects = [];
   let assets = [];
   let loadError = '';
   let isLoading = true;
   let isFormOpen = false;
-  let filterProjectId = FILTER_ALL;
   let keyword = '';
   let refreshTimer = 0;
-  /** 项目下拉当前对应的项目清单标记，清单变化时才重建下拉；为 null 表示还没有渲染过。 */
-  let projectOptionsKey = null;
-  let projectSlot = null;
   let contentElement = null;
   let messageElement = null;
 
@@ -69,26 +63,6 @@
     }
   }
 
-  /** 项目下拉：全部项目加各个项目；项目被删除时回到“全部项目”。 */
-  function renderProjectFilter() {
-    const key = projects.map((project) => `${project.id}:${project.name}`).join('|');
-    if (!projects.some((project) => String(project.id) === filterProjectId)) filterProjectId = FILTER_ALL;
-    if (key === projectOptionsKey) return;
-    projectOptionsKey = key;
-    const select = aiUi.select({
-      options: [{ value: FILTER_ALL, label: '全部项目' }, ...projects.map((project) => ({ value: String(project.id), label: project.name }))],
-      value: filterProjectId,
-      allowEmpty: false,
-      ariaLabel: '按项目筛选',
-      onChange: (value) => {
-        filterProjectId = value;
-        renderContent();
-      }
-    });
-    projectSlot.textContent = '';
-    projectSlot.append(select.element);
-  }
-
   /** 加载资产并刷新界面；showLoading 为 false 时保留现有内容（后台刷新）。 */
   async function loadAssets(showLoading) {
     if (showLoading) {
@@ -99,13 +73,11 @@
     try {
       const data = await window.hostBridge.request(REQUEST_LOAD);
       kind = data.kind;
-      projects = data.projects;
       assets = data.assets;
     } catch (error) {
       loadError = (error && error.message) || '资产加载失败。';
     }
     isLoading = false;
-    renderProjectFilter();
     renderContent();
     // 版本层打开时跟着刷新（状态、缩略图、资产被删除）。
     void window.aiAssetVersions.refresh();
@@ -128,11 +100,9 @@
     }
   }
 
-  /** 弹出“新建资产”表单；筛选了某个项目时把它作为所属项目的默认值。 */
+  /** 弹出“新建资产”表单。 */
   function openCreateForm() {
-    const params = { kind };
-    if (filterProjectId !== FILTER_ALL) params.projectId = Number(filterProjectId);
-    void showForm({ form: FORM_CREATE, params });
+    void showForm({ form: FORM_CREATE, params: { kind } });
   }
 
   /** 弹出“编辑资产”表单。 */
@@ -323,7 +293,6 @@
     return [
       { title: '预览', width: 80, minWidth: 64, render: (asset) => renderPreview(asset) },
       { title: '名称', width: '20%', minWidth: 140, render: (asset) => aiUi.tableMainCell({ text: asset.name, description: describeAsset(asset) }) },
-      { title: '所属项目', width: '12%', minWidth: 96, render: (asset) => aiUi.chip({ text: asset.projectName }) },
       { title: '提示词', width: 110, minWidth: 90, render: renderPromptStatus },
       { title: kind === KIND_AUDIO ? '音频' : '图片', width: 130, minWidth: 100, render: renderGenerationStatus },
       { title: '当前采用', width: 100, minWidth: 80, render: renderAdopted },
@@ -351,7 +320,7 @@
     return aiUi.h('div', { class: 'assets-state' }, aiUi.h('p', { class: 'description', text }), button && button.element);
   }
 
-  /** 按当前状态刷新内容区：先按项目、再按名称关键字筛选。 */
+  /** 按当前状态刷新内容区：按名称关键字筛选。 */
   function renderContent() {
     contentElement.textContent = '';
     if (isLoading) {
@@ -367,13 +336,11 @@
       return;
     }
     const text = keyword.trim().toLowerCase();
-    const visible = assets.filter(
-      (asset) => (filterProjectId === FILTER_ALL || String(asset.projectId) === filterProjectId) && asset.name.toLowerCase().includes(text)
-    );
+    const visible = assets.filter((asset) => asset.name.toLowerCase().includes(text));
     contentElement.append(visible.length === 0 ? renderState('没有匹配的资产。') : aiUi.table({ columns: buildColumns(), rows: visible, ariaLabel: '资产' }).element);
   }
 
-  /** 渲染页面骨架：搜索框与项目筛选、操作结果、资产区。 */
+  /** 渲染页面骨架：搜索框、操作结果、资产区。 */
   function renderPage() {
     const search = aiUi.textInput({
       type: 'search',
@@ -384,13 +351,11 @@
         renderContent();
       }
     });
-    projectSlot = aiUi.h('div', { class: 'assets-filter' });
-    document.getElementById('page-toolbar').append(aiUi.h('div', { class: 'assets-search' }, search.element), projectSlot);
+    document.getElementById('page-toolbar').append(aiUi.h('div', { class: 'assets-search' }, search.element));
 
     messageElement = aiUi.h('p', { class: 'assets-message', hidden: true, attrs: { role: 'status' } });
     contentElement = aiUi.h('div');
     root.append(messageElement, contentElement);
-    renderProjectFilter();
   }
 
   renderPage();

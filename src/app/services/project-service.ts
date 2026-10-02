@@ -34,7 +34,7 @@ export class ProjectService {
     return this.changeNotifier.subscribe(listener);
   }
 
-  /** 列出全部项目及其作品数、资产数。 */
+  /** 列出全部项目及其作品数。 */
   listProjects(): ProjectSummary[] {
     return this.repository.listSummaries();
   }

@@ -41,9 +41,8 @@ export interface NewBinding {
   readonly note: string;
 }
 
-/** 绑定校验需要的上下文：集所在作品的项目，以及实体的类型与名称。 */
+/** 绑定校验需要的上下文：实体的类型与名称。 */
 export interface BindingContext {
-  readonly projectId: number;
   readonly entityKind: EntityKind;
   readonly entityName: string;
 }

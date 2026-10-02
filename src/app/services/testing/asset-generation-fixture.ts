@@ -52,7 +52,7 @@ export async function createAssetGenerationFixture(
   const projects = new ProjectService(new SqliteProjectRepository(database));
   const assetRepository = new SqliteAssetRepository(database);
   const versions = new SqliteAssetVersionRepository(database);
-  const assets = new AssetService(assetRepository, projects);
+  const assets = new AssetService(assetRepository);
   const image = new FakeImageProvider([
     { code: 'fake-image', displayName: '假图像模型', kind: 'image', capability: FAKE_ASSET_IMAGE_CAPABILITY }
   ]);

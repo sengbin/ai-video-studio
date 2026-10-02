@@ -101,7 +101,7 @@
     const confirmed = await aiUi.confirmDelete({
       title: '删除项目',
       message: `将删除项目“${impact.name}”及其下的全部内容，且无法恢复：`,
-      details: [`${impact.workCount} 个作品`, `${impact.assetCount} 个资产`, `${impact.videoResultCount} 个视频结果`],
+      details: [`${impact.workCount} 个作品`, `${impact.videoResultCount} 个视频结果`],
       confirmName: impact.name,
       nameLabel: '项目名称'
     });
@@ -127,7 +127,6 @@
       render: (project) => project.visualStyle && aiUi.chip({ text: project.visualStyle })
     },
     { title: '作品数', key: 'workCount', type: 'number', muted: (project) => project.workCount === 0 },
-    { title: '资产数', key: 'assetCount', type: 'number', muted: (project) => project.assetCount === 0 },
     {
       title: '更新时间',
       width: 110,

@@ -19,7 +19,6 @@ type Fixture = Awaited<ReturnType<typeof createAssetGenerationFixture>>;
 /** 创建带提示词的图片资产。 */
 function createCharacter(fixture: Fixture): AssetRecord {
   return createAssetWithPrompts(fixture.assets, 'character', {
-    projectName: '项目甲',
     name: '林夏',
     appearance: '短发',
     referenceAspectRatio: '16:9',
@@ -31,7 +30,6 @@ function createCharacter(fixture: Fixture): AssetRecord {
 /** 创建带提示词的音色参考音频资产。 */
 function createVoice(fixture: Fixture): AssetRecord {
   return createAssetWithPrompts(fixture.assets, 'audio', {
-    projectName: '项目甲',
     name: '林夏的声音',
     audioKind: '音色参考',
     language: '中文',
@@ -82,7 +80,6 @@ test('图片：提示词语言选英文时发送英文提示词；勾选参考�
   const fixture = await createAssetGenerationFixture();
   try {
     const asset = createAssetWithPrompts(fixture.assets, 'character', {
-      projectName: '项目甲',
       name: '林夏',
       appearance: '短发',
       promptZh: '中文',
@@ -186,7 +183,7 @@ test('提交遇到限流：保持排队，等待间隔后重试；参数错误�
 
 /** 另一个图片资产，用于需要第二个版本的场景。 */
 function createVoiceAsImage(fixture: Fixture): AssetRecord {
-  return createAssetWithPrompts(fixture.assets, 'prop', { projectName: '项目甲', name: '钥匙', appearance: '黄铜', promptZh: '一把黄铜钥匙', promptEn: 'a brass key' });
+  return createAssetWithPrompts(fixture.assets, 'prop', { name: '钥匙', appearance: '黄铜', promptZh: '一把黄铜钥匙', promptEn: 'a brass key' });
 }
 
 test('下载失败按暂时性失败处理：容忍次数内保持生成中，超过后记为失败', async () => {

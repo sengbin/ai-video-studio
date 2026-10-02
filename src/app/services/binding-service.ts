@@ -4,7 +4,7 @@
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
-// 备注：不依赖 VS Code 和具体存储；形象绑定要求资产与实体同类型，音色绑定要求角色实体与“音色参考”音频；资产必须属于集所在作品的项目；自动匹配只给出建议，不写入。
+// 备注：不依赖 VS Code 和具体存储；形象绑定要求资产与实体同类型，音色绑定要求角色实体与“音色参考”音频；资产不属于项目，任何项目的集都可以绑定；自动匹配只给出建议，不写入。
 // ------------------------------------------------------------------------
 
 import { ConflictError, FORM_LEVEL_ERROR_KEY, NotFoundError, ValidationError } from '../../domain/errors';
@@ -27,7 +27,6 @@ import { ChangeNotifier } from './change-notifier';
 export const BINDING_NOTE_MAX_LENGTH = 200;
 
 const NOT_FOUND_MESSAGE = '集或实体不存在，或实体不属于这一集所在的作品。';
-const OTHER_PROJECT_MESSAGE = '资产不属于这个作品所在的项目。';
 const DUPLICATE_MESSAGE = '这个实体在本集已经绑定过该资产。';
 const NO_AUDIO_FILE_MESSAGE = '这个音频资产还没有音频文件，请先上传，或生成并采用。';
 
@@ -60,13 +59,13 @@ export interface BindingEntityView {
   readonly voice: readonly BindingItemView[];
 }
 
-/** 一集的绑定界面视图：实体及其绑定，以及本项目里可选的资产。 */
+/** 一集的绑定界面视图：实体及其绑定，以及可选的资产。 */
 export interface EpisodeBindingView {
   readonly episodeId: number;
   readonly entities: readonly BindingEntityView[];
-  /** 按实体类型分组的可选形象资产（同项目、同类型）。 */
+  /** 按实体类型分组的可选形象资产（同类型）。 */
   readonly visualAssets: Readonly<Record<EntityKind, readonly BindingAssetOption[]>>;
-  /** 可选的音色参考音频（同项目）。 */
+  /** 可选的音色参考音频。 */
   readonly voiceAssets: readonly BindingAssetOption[];
 }
 
@@ -108,20 +107,17 @@ export class BindingService {
   }
 
   /**
-   * 读取一集的绑定界面视图：启用中的实体各自的形象与音色绑定（主资产在前），以及同项目内可选的资产。
+   * 读取一集的绑定界面视图：启用中的实体各自的形象与音色绑定（主资产在前），以及可选的资产。
    * @throws NotFoundError 集不存在。
    */
   getEpisodeView(episodeId: number): EpisodeBindingView {
-    const projectId = this.bindings.findProjectId(episodeId);
-    if (projectId === undefined) {
+    if (!this.bindings.episodeExists(episodeId)) {
       throw new NotFoundError('集不存在。');
     }
-    const projectAssets = new Map<number, AssetListItem>();
+    const allAssets = new Map<number, AssetListItem>();
     for (const kind of ASSET_KINDS) {
       for (const asset of this.assets.list(kind)) {
-        if (asset.projectId === projectId) {
-          projectAssets.set(asset.id, asset);
-        }
+        allAssets.set(asset.id, asset);
       }
     }
     const toOption = (asset: AssetListItem): BindingAssetOption => ({
@@ -132,11 +128,11 @@ export class BindingService {
     });
     const byName = (left: BindingAssetOption, right: BindingAssetOption): number => left.name.localeCompare(right.name, 'zh-CN');
     const optionsOf = (match: (asset: AssetListItem) => boolean): BindingAssetOption[] =>
-      [...projectAssets.values()].filter(match).map(toOption).sort(byName);
+      [...allAssets.values()].filter(match).map(toOption).sort(byName);
 
     const records = this.bindings.listByEpisode(episodeId);
     const toItem = (binding: BindingRecord): BindingItemView => {
-      const asset = projectAssets.get(binding.assetId);
+      const asset = allAssets.get(binding.assetId);
       return {
         id: binding.id,
         assetId: binding.assetId,
@@ -175,7 +171,7 @@ export class BindingService {
   /**
    * 为集内的实体绑定一个资产。该实体在本集、该用途下的第一个绑定自动成为主资产。
    * @param rawInput `{ episodeId, entityId, assetId, purpose?, note? }`，purpose 缺省为形象。
-   * @throws ValidationError 标识或用途无效、资产与实体不匹配或不属于作品所在项目。
+   * @throws ValidationError 标识或用途无效、资产与实体不匹配。
    * @throws NotFoundError 集、实体或资产不存在。
    * @throws ConflictError 已绑定过这个资产。
    */
@@ -232,13 +228,12 @@ export class BindingService {
   }
 
   /**
-   * 按名称自动匹配：实体的名称或别名与同项目、同类型资产的名称相同，且还没有绑定的，列为建议。
+   * 按名称自动匹配：实体的名称或别名与同类型资产的名称相同，且还没有绑定的，列为建议。
    * 只做形象绑定的建议，不写入，由用户确认后逐条调用 bind。
    * @throws NotFoundError 集不存在。
    */
   suggestMatches(episodeId: number): BindingSuggestion[] {
-    const projectId = this.bindings.findProjectId(episodeId);
-    if (projectId === undefined) {
+    if (!this.bindings.episodeExists(episodeId)) {
       throw new NotFoundError('集不存在。');
     }
     const bound = new Set(
@@ -247,7 +242,7 @@ export class BindingService {
         .filter((binding) => binding.purpose === 'visual')
         .map((binding) => `${binding.entityId}:${binding.assetId}`)
     );
-    const assets = this.assets.listProjectAssets(projectId);
+    const assets = this.assets.listNames();
     const suggestions: BindingSuggestion[] = [];
     for (const entity of this.bindings.listEntityCandidates(episodeId)) {
       const names = new Set([entity.name, ...entity.aliases]);
@@ -290,11 +285,8 @@ function readPurpose(value: unknown, errors: FieldErrors): BindingPurpose {
   return value as BindingPurpose;
 }
 
-/** 检查资产是否能绑定到实体：同项目，形象绑定要求同类型，音色绑定要求角色与音色参考音频。 */
+/** 检查资产是否能绑定到实体：形象绑定要求同类型，音色绑定要求角色与音色参考音频。 */
 function assertCompatible(context: BindingContext, asset: AssetRecord, purpose: BindingPurpose): void {
-  if (asset.projectId !== context.projectId) {
-    throw new ValidationError({ assetId: OTHER_PROJECT_MESSAGE });
-  }
   if (purpose === 'visual') {
     if (asset.kind !== context.entityKind) {
       throw new ValidationError({ assetId: '形象绑定要求资产与实体同类型。' });

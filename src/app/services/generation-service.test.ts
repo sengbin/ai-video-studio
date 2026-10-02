@@ -393,10 +393,9 @@ test('绑定了形象资产的实体：参考图进入快照并在提示词开�
   try {
     fixture.approve();
     const bindings = new BindingService(new SqliteBindingRepository(fixture.database), fixture.assetRepository);
-    const assets = new AssetService(fixture.assetRepository, fixture.projects);
+    const assets = new AssetService(fixture.assetRepository);
     const guard = fixture.storyboards.getView(fixture.work.id, fixture.episodeId).entities.find((entity) => entity.name === '守夜人');
     const asset = assets.createAsset('character', {
-      projectName: '项目甲',
       name: '守夜人形象',
       files: JSON.stringify([{ name: 'a.png', mimeType: 'image/png', size: PNG.length, data: PNG.toString('base64'), width: 64, height: 64 }])
     });

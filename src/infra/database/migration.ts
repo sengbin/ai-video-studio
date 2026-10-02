@@ -15,6 +15,8 @@ export interface Migration {
   readonly name: string;
   /** 升级用的 SQL，可含多条语句。 */
   readonly sql: string;
+  /** 重建被其他表引用的表时设为 true：执行期间关闭外键（否则删旧表会级联删除子表数据），结束后检查外键完整性。 */
+  readonly rebuildsReferencedTables?: boolean;
 }
 
 /** 迁移执行失败或迁移配置不合法时抛出。 */

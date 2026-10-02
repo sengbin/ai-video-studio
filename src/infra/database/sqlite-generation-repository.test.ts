@@ -123,7 +123,7 @@ test('镜头组所在位置与素材内容读取', () => {
     assert.deepEqual(repository.getGroupLocation(seed.groupIds[0]), { projectId: seed.projectId, workId: seed.workId, episodeId: seed.episodeId });
     assert.equal(repository.getGroupLocation(999), undefined);
 
-    database.prepare("INSERT INTO assets (project_id, kind, name, created_at, updated_at) VALUES (?, 'character', '角色', 't', 't')").run(seed.projectId);
+    database.prepare("INSERT INTO assets (kind, name, created_at, updated_at) VALUES ('character', '角色', 't', 't')").run();
     const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 1]);
     const fileId = Number(
       database

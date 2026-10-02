@@ -12,23 +12,19 @@ import { test } from 'node:test';
 import { IN_MEMORY_DATABASE_PATH, openDatabase } from '../../infra/database/database-connection';
 import { SqliteAssetRepository } from '../../infra/database/sqlite-asset-repository';
 import { SqliteAssetVersionRepository } from '../../infra/database/sqlite-asset-version-repository';
-import { SqliteProjectRepository } from '../../infra/database/sqlite-project-repository';
 import { MessageRouter } from '../messaging/message-router';
 import { AssetGenerationService } from '../services/asset-generation-service';
 import { AssetPromptService } from '../services/asset-prompt-service';
 import { AssetService } from '../services/asset-service';
-import { ProjectService } from '../services/project-service';
 import { FILE_PROMPTS, ScriptedText } from '../stages/testing/scripted-text';
 import { ASSET_LIST_REQUESTS, AssetListRequest, AssetListRow, registerAssetListHandlers } from './asset-list-handlers';
 
 function createFixture() {
   const database = openDatabase(IN_MEMORY_DATABASE_PATH);
-  const projects = new ProjectService(new SqliteProjectRepository(database));
   const assetRepository = new SqliteAssetRepository(database);
-  const assets = new AssetService(assetRepository, projects);
-  projects.createProject({ name: '项目甲' });
+  const assets = new AssetService(assetRepository);
   const text = new ScriptedText(() => ({ promptZh: '中文', promptEn: 'english' }));
-  const prompts = new AssetPromptService({ text, prompts: FILE_PROMPTS, projects, assets: assetRepository, notify: () => undefined });
+  const prompts = new AssetPromptService({ text, prompts: FILE_PROMPTS, assets: assetRepository, notify: () => undefined });
   const generation = new AssetGenerationService({
     assets: assetRepository,
     versions: new SqliteAssetVersionRepository(database),
@@ -38,7 +34,7 @@ function createFixture() {
   });
   const state: { pending: AssetListRequest | undefined } = { pending: undefined };
   const router = new MessageRouter();
-  registerAssetListHandlers(router, 'scene', { projects, assets, prompts, generation }, {
+  registerAssetListHandlers(router, 'scene', { assets, prompts, generation }, {
     takePending: () => {
       const taken = state.pending;
       state.pending = undefined;
@@ -49,17 +45,16 @@ function createFixture() {
   return { database, assets, prompts, state, send };
 }
 
-test('读取列表只返回页面绑定类型的资产，并带所属项目名称与项目清单', async () => {
+test('读取列表只返回页面绑定类型的资产', async () => {
   const { database, assets, send } = createFixture();
   try {
-    assets.createAsset('scene', { projectName: '项目甲', name: '灯塔' });
-    assets.createAsset('prop', { projectName: '项目甲', name: '钥匙' });
+    assets.createAsset('scene', { name: '灯塔' });
+    assets.createAsset('prop', { name: '钥匙' });
     const response = await send(ASSET_LIST_REQUESTS.load);
     assert.ok(response?.ok);
-    const data = response.data as { kind: string; projects: Array<{ name: string }>; assets: AssetListRow[] };
+    const data = response.data as { kind: string; assets: AssetListRow[] };
     assert.equal(data.kind, 'scene');
-    assert.deepEqual(data.projects.map((project) => project.name), ['项目甲']);
-    assert.deepEqual(data.assets.map((asset) => [asset.name, asset.projectName]), [['灯塔', '项目甲']]);
+    assert.deepEqual(data.assets.map((asset) => asset.name), ['灯塔']);
   } finally {
     database.close();
   }
@@ -85,11 +80,11 @@ test('参考原图：返回第一张参考图的类型与内容，没有参考�
   try {
     const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
     const file = { name: 'a.png', mimeType: 'image/png', size: png.length, data: png.toString('base64'), width: 1, height: 1 };
-    const withImage = assets.createAsset('scene', { projectName: '项目甲', name: '灯塔', files: JSON.stringify([file]) });
+    const withImage = assets.createAsset('scene', { name: '灯塔', files: JSON.stringify([file]) });
     const image = await send(ASSET_LIST_REQUESTS.referenceImage, { id: withImage.id });
     assert.deepEqual(image?.ok && image.data, { mime: 'image/png', data: png.toString('base64') });
 
-    const without = assets.createAsset('scene', { projectName: '项目甲', name: '空场景' });
+    const without = assets.createAsset('scene', { name: '空场景' });
     const missing = await send(ASSET_LIST_REQUESTS.referenceImage, { id: without.id });
     assert.ok(missing && !missing.ok && missing.error.kind === 'not-found');
   } finally {
@@ -100,7 +95,7 @@ test('参考原图：返回第一张参考图的类型与内容，没有参考�
 test('删除：先取名称与使用情况，再删除；不存在或标识无效时返回错误', async () => {
   const { database, assets, send } = createFixture();
   try {
-    const asset = assets.createAsset('scene', { projectName: '项目甲', name: '灯塔' });
+    const asset = assets.createAsset('scene', { name: '灯塔' });
     const impact = await send(ASSET_LIST_REQUESTS.prepareDelete, { id: asset.id });
     assert.deepEqual(impact?.ok && impact.data, { name: '灯塔', usage: { bindings: [], soundReferences: 0 } });
 

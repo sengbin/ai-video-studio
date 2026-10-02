@@ -17,6 +17,7 @@ import { textGenerationMigration } from './006-text-generation';
 import { jobFailuresMigration } from './007-job-failures';
 import { shotGroupsMigration } from './008-shot-groups';
 import { assetGenerationMigration } from './009-asset-generation';
+import { globalAssetsMigration } from './010-global-assets';
 
 /** 全部数据库迁移，版本号从 1 开始连续递增。 */
 export const MIGRATIONS: readonly Migration[] = [
@@ -28,5 +29,6 @@ export const MIGRATIONS: readonly Migration[] = [
   textGenerationMigration,
   jobFailuresMigration,
   shotGroupsMigration,
-  assetGenerationMigration
+  assetGenerationMigration,
+  globalAssetsMigration
 ];

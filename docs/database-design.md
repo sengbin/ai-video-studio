@@ -36,7 +36,7 @@
 | | `shot_groups` | 镜头组：相邻镜头打包成的一次视频生成单位 |
 | | `shot_entities` | 镜头与出场实体的关系 |
 | | `shot_sounds` | 镜头的声音条目：对白、旁白、音效、配乐 |
-| 资产 | `assets` | 项目资产 |
+| 资产 | `assets` | 全局资产，不属于项目，所有项目共用 |
 | | `asset_files` | 资产图片 |
 | | `asset_versions` | 资产的生成版本：每次提交给图像、音频模型产生一个，同时记录任务状态（迁移 009） |
 | | `asset_version_files` | 版本的生成结果文件：图片或音频（迁移 009） |
@@ -57,7 +57,6 @@
 ```mermaid
 erDiagram
   projects ||--o{ works : 包含
-  projects ||--o{ assets : 拥有
   works ||--o{ work_sources : 素材
   works ||--o{ stage_runs : 生成记录
   works ||--o{ episodes : 包含
@@ -109,7 +108,7 @@ erDiagram
 | `id` | 整数 | 是 | 自增 | 主键 |
 | `name` | 文本 | 是 | | 项目名称，唯一 |
 | `description` | 文本 | 是 | 空串 | 项目描述 |
-| `visual_style` | 文本 | 否 | | 项目视觉风格，资产和分镜脚本默认沿用 |
+| `visual_style` | 文本 | 否 | | 项目视觉风格，分镜脚本默认沿用；从实体新建资产时预填为资产的画面风格（资产不再沿用项目风格） |
 | `default_aspect_ratio` | 文本 | 否 | | 默认画幅，如 `16:9` |
 | `default_resolution` | 文本 | 否 | | 默认分辨率，如 `1080P` |
 | `created_at` | 文本 | 是 | | 创建时间 |
@@ -341,18 +340,17 @@ erDiagram
 
 #### `assets` 资产
 
-资产属于项目，可在多个作品、多集中复用。
+资产不属于项目（迁移 010 去掉了 `project_id`），所有项目共用，可在多个作品、多集中复用，相同的角色、场景不必在每个项目里重复创建和生成。
 
 | 字段 | 类型 | 必填 | 默认 | 说明 |
 |---|---|---|---|---|
 | `id` | 整数 | 是 | 自增 | |
-| `project_id` | 整数 | 是 | | 外键 `projects.id`，级联删除 |
 | `kind` | 文本 | 是 | | `character`、`scene`、`prop`、`effect`、`audio` |
 | `name` | 文本 | 是 | | 资产名称 |
 | `source_entity_id` | 整数 | 否 | | 由哪个脚本实体创建，外键 `script_entities.id`，删除时置空 |
 | `attributes_json` | 文本（JSON） | 是 | `{}` | 按类型区分的描述字段，见 4.5 |
 | `composition` | 文本 | 是 | 空串 | 视角与构图 |
-| `style` | 文本 | 否 | | 画面风格；为空表示沿用项目风格 |
+| `style` | 文本 | 否 | | 画面风格；为空表示不指定风格 |
 | `background` | 文本 | 是 | 空串 | 背景 |
 | `reference_aspect_ratio` | 文本 | 否 | | 参考图画幅，仅表示参考图尺寸比例 |
 | `extra_requirements` | 文本 | 是 | 空串 | 补充要求 |
@@ -367,7 +365,7 @@ erDiagram
 | `created_at` | 文本 | 是 | | |
 | `updated_at` | 文本 | 是 | | |
 
-约束：`(project_id, kind, name)` 唯一。
+约束：`(kind, name)` 全局唯一。
 
 音频类型的资产不使用 `composition`、`style`、`background`、`reference_aspect_ratio`，这些字段保持空；它的描述字段见 4.5。提示词字段在音频资产里用作“音频生成提示词”。
 
@@ -621,7 +619,7 @@ erDiagram
 
 ### 4.8 独立音轨（预留）
 
-用于“声音与视频分开生成、再合成”的方式。**本阶段只设计结构，不开发功能，也不建表**；开发时新增迁移 `010-audio-tracks`。
+用于“声音与视频分开生成、再合成”的方式。**本阶段只设计结构，不开发功能，也不建表**；开发时新增迁移 `011-audio-tracks`。
 
 #### `episode_audio_tracks` 集的独立音轨
 
@@ -726,7 +724,7 @@ erDiagram
 | `episodes` | `(work_id, seq)` 唯一 | 集顺序 |
 | `script_entities` | `(work_id, kind, name)` 唯一 | 实体去重与匹配 |
 | `shots` | `(storyboard_script_id, seq)` 唯一 | 镜头顺序 |
-| `assets` | `(project_id, kind, name)` 唯一 | 资产列表与去重 |
+| `assets` | `(kind, name)` 唯一 | 资产列表与去重 |
 | `asset_files` | `(asset_id, role, sort_order)` | 读取缩略图和参考图 |
 | `asset_versions` | `(asset_id, version)` 唯一 | 版本列表与版本号 |
 | `asset_versions` | `(status)` | 队列扫描、启动恢复 |
@@ -749,7 +747,7 @@ erDiagram
 
 | 被删除对象 | 影响 |
 |---|---|
-| 项目 | 级联删除其作品、资产及下属全部数据；界面须二次确认并列出数量 |
+| 项目 | 级联删除其作品及下属全部数据，不影响资产（仅把资产的 `source_entity_id` 置空）；界面须二次确认并列出数量 |
 | 作品 | 级联删除素材、生成记录、集、实体、参数和以下全部内容 |
 | 集 | 级联删除分镜脚本、镜头、绑定、参数、生成任务和结果 |
 | 资产 | 级联删除图片、生成版本及版本文件和绑定；界面须先提示被哪些集使用以及版本数量；单独删除版本时，当前采用的版本不能删除（先采用其他版本），进行中的版本需先取消 |
@@ -803,7 +801,8 @@ erDiagram
 | 7 | `007-job-failures` | 重建 `video_jobs`、`video_results`、`result_frames`：失败分类与服务商分类一致并增加 `error_code`，结果视频的时长、宽高允许为空（测试阶段丢弃旧数据） | 已实现（步骤 8） |
 | 8 | `008-shot-groups` | 新增 `shot_groups`，`shots` 增加 `group_id`；重建 `video_jobs`、`video_results`、`result_frames`，任务与结果改为挂在镜头组上（测试阶段丢弃旧数据） | 已实现（步骤 8） |
 | 9 | `009-asset-generation` | `assets` 增加修订号、提示词状态、采用版本字段；新增 `asset_versions`、`asset_version_files` | 已实现（步骤 11） |
-| 10 | `010-audio-tracks` | `episode_audio_tracks`（预留，开发独立音轨时再新增） | 后续 |
+| 10 | `010-global-assets` | 重建 `assets`：去掉 `project_id`，唯一约束改为 `(kind, name)`；重名资产保留最早的一个，其余在名称后加（项目名）；原来沿用项目风格的图像资产把项目风格写入 `style`；资产文件、绑定、生成版本全部保留（迁移执行器支持 `rebuildsReferencedTables`：执行期间关闭外键，结束后检查完整性） | 已实现 |
+| 11 | `011-audio-tracks` | `episode_audio_tracks`（预留，开发独立音轨时再新增） | 后续 |
 
 拆分说明：镜头引用资产文件，因此资产在分镜之前建立；前五个迁移创建了 22 张表，迁移 8 再增加镜头组表，各功能的仓库随功能实现逐步补全。
 

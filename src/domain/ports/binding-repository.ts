@@ -29,6 +29,6 @@ export interface BindingRepository {
   setPrimary(id: number): boolean;
   /** 列出集所在作品的启用中的实体，用于按名称自动匹配。 */
   listEntityCandidates(episodeId: number): BindingEntityCandidate[];
-  /** 读取集所在作品的项目；集不存在返回 undefined。 */
-  findProjectId(episodeId: number): number | undefined;
+  /** 集是否存在。 */
+  episodeExists(episodeId: number): boolean;
 }

@@ -72,7 +72,7 @@ export interface AssetContent {
   /** 按类型区分的描述字段，值为非空文本；音频还含 audio_kind、language。 */
   readonly attributes: Readonly<Record<string, string>>;
   readonly composition: string;
-  /** 画面风格；null 表示沿用项目风格。 */
+  /** 画面风格；null 表示不指定。 */
   readonly style: string | null;
   readonly background: string;
   readonly referenceAspectRatio: string | null;
@@ -81,9 +81,8 @@ export interface AssetContent {
   readonly promptEn: string;
 }
 
-/** 新建资产需要的内容：所属项目、类型与来源实体加上可编辑内容。 */
+/** 新建资产需要的内容：类型与来源实体加上可编辑内容；资产不属于项目，全部项目共用。 */
 export interface AssetInput extends AssetContent {
-  readonly projectId: number;
   readonly kind: AssetKind;
   /** 由哪个脚本实体创建；手动创建为 null。 */
   readonly sourceEntityId: number | null;

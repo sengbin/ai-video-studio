@@ -26,7 +26,7 @@ const MP3 = Buffer.from([0x49, 0x44, 0x33, 3, 0, 0]);
 function createFixture() {
   const database = openDatabase(IN_MEMORY_DATABASE_PATH);
   const projects = new ProjectService(new SqliteProjectRepository(database));
-  const service = new AssetService(new SqliteAssetRepository(database), projects);
+  const service = new AssetService(new SqliteAssetRepository(database));
   const first = projects.createProject({ name: '项目甲' });
   const second = projects.createProject({ name: '项目乙' });
   return { database, projects, service, first, second };
@@ -60,7 +60,6 @@ test('创建图片类资产：保存描述字段、选项与文件，列表带�
   const { database, service } = createFixture();
   try {
     const asset = service.createAsset('character', {
-      projectName: '项目甲',
       name: '林夏',
       characterType: '人类',
       appearance: '短发',
@@ -104,7 +103,7 @@ test('创建图片类资产：保存描述字段、选项与文件，列表带�
 test('提示词：创建与编辑表单都不含提示词，编辑保留已有提示词；手动保存提示词校验长度、生成中拒绝，保存即确认', () => {
   const { database, service } = createFixture();
   try {
-    const asset = service.createAsset('prop', { projectName: '项目甲', name: '钥匙', appearance: '黄铜', promptZh: '会被忽略' });
+    const asset = service.createAsset('prop', { name: '钥匙', appearance: '黄铜', promptZh: '会被忽略' });
     assert.deepEqual([asset.promptZh, asset.promptEn, asset.promptRevision, asset.promptContentRevision], ['', '', 0, 0]);
 
     const saved = service.updatePrompts(asset.id, { promptZh: ' 中文提示词 ', promptEn: 'english prompt' });
@@ -132,11 +131,10 @@ test('提示词：创建与编辑表单都不含提示词，编辑保留已有�
 test('创建：没有文件也可以；不合格的缩略图被忽略，不影响保存；宽高不合法时为空', () => {
   const { database, service } = createFixture();
   try {
-    service.createAsset('prop', { projectName: '项目甲', name: '钥匙' });
+    service.createAsset('prop', { name: '钥匙' });
     assert.equal(service.listAssets('prop')[0].fileCount, 0);
 
     const asset = service.createAsset('prop', {
-      projectName: '项目甲',
       name: '怀表',
       files: files(imageItem('c.png', PNG, { thumbnail: { mimeType: 'image/jpeg', data: Buffer.from('not image').toString('base64') }, width: -1, height: 1.5 }))
     });
@@ -148,13 +146,12 @@ test('创建：没有文件也可以；不合格的缩略图被忽略，不影�
   }
 });
 
-test('创建校验：名称、项目、选项、文件内容的错误一并返回', () => {
+test('创建校验：名称、选项、文件内容的错误一并返回', () => {
   const { database, service } = createFixture();
   try {
     assert.throws(
       () =>
         service.createAsset('scene', {
-          projectName: '不存在的项目',
           name: ' ',
           referenceAspectRatio: '5:7',
           placeType: 'x'.repeat(501),
@@ -162,51 +159,49 @@ test('创建校验：名称、项目、选项、文件内容的错误一并返�
         }),
       (error) =>
         error instanceof ValidationError &&
-        ['projectName', 'name', 'referenceAspectRatio', 'placeType', 'files'].every((key) => error.fieldErrors[key] !== undefined)
+        ['name', 'referenceAspectRatio', 'placeType', 'files'].every((key) => error.fieldErrors[key] !== undefined)
     );
     assert.throws(
-      () => service.createAsset('scene', { projectName: '项目甲', name: '灯塔', files: files(...Array.from({ length: 11 }, (_, index) => imageItem(`${index}.png`))) }),
+      () => service.createAsset('scene', { name: '灯塔', files: files(...Array.from({ length: 11 }, (_, index) => imageItem(`${index}.png`))) }),
       (error) => error instanceof ValidationError && /最多 10 张/.test(error.fieldErrors.files)
     );
-    assert.throws(() => service.createAsset('scene', { projectName: '项目甲', name: '灯塔', files: 'not json' }), ValidationError);
+    assert.throws(() => service.createAsset('scene', { name: '灯塔', files: 'not json' }), ValidationError);
     assert.equal(service.listAssets('scene').length, 0);
   } finally {
     database.close();
   }
 });
 
-test('重名：同项目同类型拒绝，不同项目或不同类型允许；检查接口排除自身', () => {
-  const { database, service, first, second } = createFixture();
+test('重名：同类型全局拒绝，不同类型允许；检查接口排除自身', () => {
+  const { database, service } = createFixture();
   try {
-    const asset = service.createAsset('scene', { projectName: '项目甲', name: '灯塔' });
+    const asset = service.createAsset('scene', { name: '灯塔' });
     assert.throws(
-      () => service.createAsset('scene', { projectName: '项目甲', name: '灯塔' }),
+      () => service.createAsset('scene', { name: '灯塔' }),
       (error) => error instanceof ConflictError && error.field === 'name'
     );
-    service.createAsset('scene', { projectName: '项目乙', name: '灯塔' });
-    service.createAsset('prop', { projectName: '项目甲', name: '灯塔' });
+    service.createAsset('prop', { name: '灯塔' });
 
-    assert.equal(service.isNameAvailable(first.id, 'scene', '灯塔'), false);
-    assert.equal(service.isNameAvailable(first.id, 'scene', '灯塔', asset.id), true);
-    assert.equal(service.isNameAvailable(second.id, 'effect', '灯塔'), true);
+    assert.equal(service.isNameAvailable('scene', '灯塔'), false);
+    assert.equal(service.isNameAvailable('scene', '灯塔', asset.id), true);
+    assert.equal(service.isNameAvailable('effect', '灯塔'), true);
   } finally {
     database.close();
   }
 });
 
-test('修改：更新内容并整体替换文件，所属项目与类型不变，重名拒绝', () => {
-  const { database, service, first } = createFixture();
+test('修改：更新内容并整体替换文件，类型不变，重名拒绝', () => {
+  const { database, service } = createFixture();
   try {
-    const asset = service.createAsset('character', { projectName: '项目甲', name: '林夏', style: '水彩插画', files: files(imageItem('a.png')) });
-    service.createAsset('character', { projectName: '项目甲', name: '周远' });
+    const asset = service.createAsset('character', { name: '林夏', style: '水彩插画', files: files(imageItem('a.png')) });
+    service.createAsset('character', { name: '周远' });
 
     const updated = service.updateAsset(asset.id, {
-      projectName: '项目乙',
       name: '林夏（雨天）',
       appearance: '披着雨衣',
       files: files(imageItem('b.jpg', JPEG), imageItem('c.png'))
     });
-    assert.deepEqual([updated.projectId, updated.kind, updated.name], [first.id, 'character', '林夏（雨天）']);
+    assert.deepEqual([updated.kind, updated.name], ['character', '林夏（雨天）']);
     assert.deepEqual(updated.attributes, { appearance: '披着雨衣' });
     assert.equal(updated.style, null);
     assert.deepEqual(service.getReferenceFiles(asset.id).map((file) => file.fileName), ['b.jpg', 'c.png']);
@@ -226,7 +221,6 @@ test('音频资产：保存类型、描述、语言与时长；语言只对音�
   const { database, service } = createFixture();
   try {
     const voice = service.createAsset('audio', {
-      projectName: '项目甲',
       name: '林夏的声音',
       audioKind: '音色参考',
       description: '清亮的女声',
@@ -237,7 +231,6 @@ test('音频资产：保存类型、描述、语言与时长；语言只对音�
     assert.deepEqual([voice.composition, voice.style, voice.background, voice.referenceAspectRatio, voice.promptZh], ['', null, '', null, '']);
 
     const music = service.createAsset('audio', {
-      projectName: '项目甲',
       name: '紧张配乐',
       audioKind: 'music',
       language: '英文',
@@ -251,7 +244,7 @@ test('音频资产：保存类型、描述、语言与时长；语言只对音�
     assert.equal(service.getReferenceFiles(voice.id)[0].mime, 'audio/wav');
     assert.equal(service.getReferenceFiles(music.id)[0].mime, 'audio/mpeg');
 
-    const base = { projectName: '项目甲', name: '新音频', audioKind: 'sfx' };
+    const base = { name: '新音频', audioKind: 'sfx' };
     const errorOf = (extra: object) => {
       try {
         service.createAsset('audio', { ...base, ...extra });
@@ -275,7 +268,7 @@ test('音频资产：保存类型、描述、语言与时长；语言只对音�
 test('使用情况与删除：被绑定的音频不能改类型；删除资产连同文件和绑定，提示被哪些集使用', () => {
   const { database, service, first } = createFixture();
   try {
-    const asset = service.createAsset('audio', { projectName: '项目甲', name: '音色', audioKind: 'voice', files: files(audioItem('v.wav')) });
+    const asset = service.createAsset('audio', { name: '音色', audioKind: 'voice', files: files(audioItem('v.wav')) });
     const work = database
       .prepare("INSERT INTO works (project_id, name, kind, created_at, updated_at) VALUES (?, '作品甲', 'series', 't', 't')")
       .run(first.id);
@@ -317,26 +310,31 @@ test('数据变化通知：成功的写操作通知，失败的不通知', () =>
     const unsubscribe = service.onDidChangeAssets(() => {
       count += 1;
     });
-    const asset = service.createAsset('effect', { projectName: '项目甲', name: '火花' });
+    const asset = service.createAsset('effect', { name: '火花' });
     service.updateAsset(asset.id, { name: '火花二' });
-    assert.throws(() => service.createAsset('effect', { projectName: '项目甲', name: '' }));
+    assert.throws(() => service.createAsset('effect', { name: '' }));
     service.deleteAsset(asset.id);
     assert.equal(count, 3);
     unsubscribe();
-    service.createAsset('effect', { projectName: '项目甲', name: '烟雾' });
+    service.createAsset('effect', { name: '烟雾' });
     assert.equal(count, 3);
   } finally {
     database.close();
   }
 });
 
-test('删除项目时级联删除资产与文件；来源实体删除后资产保留', () => {
+test('删除项目不影响资产；来源实体随作品删除后资产保留、来源清空', () => {
   const { database, projects, service, first } = createFixture();
   try {
-    service.createAsset('character', { projectName: '项目甲', name: '林夏', files: files(imageItem('a.png')) });
+    const insert = (sql: string, ...params: Array<string | number>) => Number(database.prepare(sql).run(...params).lastInsertRowid);
+    const work = insert("INSERT INTO works (project_id, name, kind, created_at, updated_at) VALUES (?, '作品甲', 'single', 't', 't')", first.id);
+    const entity = insert("INSERT INTO script_entities (work_id, kind, name, created_at, updated_at) VALUES (?, 'character', '林夏', 't', 't')", work);
+    const asset = service.createAsset('character', { name: '林夏', files: files(imageItem('a.png')) }, { sourceEntityId: entity });
+    assert.equal(asset.sourceEntityId, entity);
+
     projects.deleteProject(first.id);
-    assert.equal(service.listAssets('character').length, 0);
-    assert.equal(database.prepare('SELECT COUNT(*) AS n FROM asset_files').get()?.n, 0);
+    const [kept] = service.listAssets('character');
+    assert.deepEqual([kept.id, kept.sourceEntityId, kept.fileCount], [asset.id, null, 1]);
   } finally {
     database.close();
   }
