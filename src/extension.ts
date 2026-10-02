@@ -14,6 +14,7 @@ import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { MessageRouter } from './app/messaging/message-router';
 import { AssetListPages } from './app/pages/asset-list-pages';
+import { BackupPages } from './app/pages/backup-pages';
 import { ProjectPages } from './app/pages/project-pages';
 import { SettingsPages } from './app/pages/settings-pages';
 import { WorkListPages } from './app/pages/work-list-pages';
@@ -25,6 +26,7 @@ import { AssetGenerationQueue } from './app/queue/asset-generation-queue';
 import { AssetGenerationService } from './app/services/asset-generation-service';
 import { AssetPromptService } from './app/services/asset-prompt-service';
 import { AssetService } from './app/services/asset-service';
+import { BackupHost, BackupService } from './app/services/backup-service';
 import { BindingService } from './app/services/binding-service';
 import { ChangeNotifier } from './app/services/change-notifier';
 import { GenerationProfileService } from './app/services/generation-profile-service';
@@ -46,8 +48,11 @@ import { CopilotModelCatalog } from './infra/copilot/copilot-model-catalog';
 import { CopilotTextGeneration } from './infra/copilot/copilot-text-generation';
 import { VsCodeTextGenerationSettings } from './infra/copilot/vscode-text-generation-settings';
 import { openDatabase } from './infra/database/database-connection';
+import { DatabaseFilePaths, applyPendingRestore, resolveDatabaseFilePaths } from './infra/database/database-restore';
+import { MIGRATIONS } from './infra/database/migrations';
 import { SqliteAssetRepository } from './infra/database/sqlite-asset-repository';
 import { SqliteAssetVersionRepository } from './infra/database/sqlite-asset-version-repository';
+import { SqliteBackupStorage } from './infra/database/sqlite-backup-storage';
 import { SqliteBindingRepository } from './infra/database/sqlite-binding-repository';
 import { SqliteGenerationProfileRepository } from './infra/database/sqlite-generation-profile-repository';
 import { SqliteGenerationRepository } from './infra/database/sqlite-generation-repository';
@@ -61,7 +66,7 @@ import { SqliteWorkSourceReader } from './infra/database/sqlite-work-source-read
 import { FilePromptTemplates } from './infra/prompts/file-prompt-templates';
 import { createBuiltinProviderRegistry } from './infra/providers/builtin-providers';
 import { VsCodeSecretStore } from './infra/secrets/vscode-secret-store';
-import { LocalResultStore } from './infra/storage/local-result-store';
+import { LocalResultStore, RESULT_VIDEO_DIRECTORY_NAME } from './infra/storage/local-result-store';
 import { HttpMediaDownloader } from './infra/storage/http-media-downloader';
 import { SidebarActionRegistry } from './sidebar/sidebar-actions';
 import { registerSidebarHandlers } from './sidebar/sidebar-handlers';
@@ -89,7 +94,8 @@ const CREATION_ENTRIES: ReadonlyArray<readonly [string, WorkSourceType]> = [
  * @param context 扩展上下文，用于登记需要随扩展释放的资源。
  */
 export function activate(context: vscode.ExtensionContext): void {
-  const database = openDatabaseOrReport(context);
+  const databasePaths = resolveDatabaseFilePaths(context.globalStorageUri.fsPath, DATABASE_FILE_NAME);
+  const database = openDatabaseOrReport(context, databasePaths);
   if (database === undefined) {
     return;
   }
@@ -233,6 +239,13 @@ export function activate(context: vscode.ExtensionContext): void {
     panels
   );
   const settingsPages = new SettingsPages({ text: textSettingsService, providers: providerService }, panels);
+  // 数据备份：备份只含数据库，结果视频文件在存储目录的 videos 子目录，不在备份内；恢复在重新加载窗口时生效。
+  const backupService = new BackupService({
+    storage: new SqliteBackupStorage(database, databasePaths, path.join(context.globalStorageUri.fsPath, RESULT_VIDEO_DIRECTORY_NAME)),
+    host: createBackupHost(),
+    latestSchemaVersion: MIGRATIONS.length
+  });
+  const backupPages = new BackupPages(backupService, panels);
   const workbenchPages = new WorkbenchPages(
     { generation: generationService, profiles: profileService, bindings: bindingService, assets: assetService, prompts: assetPromptService, providers: providerService, ...services },
     // 结果视频用系统默认的视频播放器打开，也可导出到用户选择的位置或在文件夹中显示。
@@ -246,6 +259,7 @@ export function activate(context: vscode.ExtensionContext): void {
     .register('project-list', 'main', () => projectPages.showProjectList())
     .register('project-list', 'action', () => projectPages.showCreateForm())
     .register('model-settings', 'main', () => settingsPages.show())
+    .register('data-backup', 'main', () => backupPages.show())
     .register('video-workbench', 'main', () => workbenchPages.show());
   for (const [itemId, sourceType] of CREATION_ENTRIES) {
     // 主入口：打开该素材来源的作品列表页；尾部操作：打开列表页并弹出新建作品表单。
@@ -307,6 +321,35 @@ function createWorkbenchHost(): WorkbenchHost {
   };
 }
 
+/** 数据备份使用的宿主能力：选择备份的保存位置、选择要恢复的备份文件、重新加载窗口。 */
+function createBackupHost(): BackupHost {
+  return {
+    pickBackupTarget: async (suggestedName) => {
+      const target = await vscode.window.showSaveDialog({
+        defaultUri: vscode.Uri.file(path.join(os.homedir(), suggestedName)),
+        filters: { SQLite数据库: ['sqlite'] },
+        saveLabel: '备份到此处'
+      });
+      return target?.fsPath;
+    },
+    pickRestoreSource: async () => {
+      const [source] =
+        (await vscode.window.showOpenDialog({
+          canSelectMany: false,
+          canSelectFiles: true,
+          canSelectFolders: false,
+          defaultUri: vscode.Uri.file(os.homedir()),
+          filters: { SQLite数据库: ['sqlite', 'db'], 所有文件: ['*'] },
+          openLabel: '选择备份文件'
+        })) ?? [];
+      return source?.fsPath;
+    },
+    reloadWindow: async () => {
+      await vscode.commands.executeCommand('workbench.action.reloadWindow');
+    }
+  };
+}
+
 /** 视频任务成功或失败时在右下角通知（每个任务每种结果只通知一次），点“打开工作台”进入工作台。 */
 function notifyFinishedJobs(context: vscode.ExtensionContext, generation: GenerationService, openWorkbench: () => void): void {
   const notified = new Set<string>();
@@ -330,16 +373,34 @@ function notifyFinishedJobs(context: vscode.ExtensionContext, generation: Genera
 }
 
 /**
- * 在全局存储目录中打开数据库；失败时提示用户并返回 undefined。
+ * 在全局存储目录中打开数据库；失败时提示用户并返回 undefined。打开前先应用数据备份页准备好的恢复。
  * @param context 扩展上下文。
+ * @param paths 数据库相关文件的路径。
  */
-function openDatabaseOrReport(context: vscode.ExtensionContext): ReturnType<typeof openDatabase> | undefined {
+function openDatabaseOrReport(context: vscode.ExtensionContext, paths: DatabaseFilePaths): ReturnType<typeof openDatabase> | undefined {
   try {
     mkdirSync(context.globalStorageUri.fsPath, { recursive: true });
-    return openDatabase(vscode.Uri.joinPath(context.globalStorageUri, DATABASE_FILE_NAME).fsPath);
+    applyPendingRestoreAndReport(paths);
+    return openDatabase(paths.databasePath);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     void vscode.window.showErrorMessage(`AIGC Video Studio 无法打开数据库：${detail}`);
     return undefined;
+  }
+}
+
+/**
+ * 应用数据备份页准备好的恢复，并提示结果；恢复失败时当前数据库保持不变，扩展继续使用它。
+ * @param paths 数据库相关文件的路径。
+ */
+function applyPendingRestoreAndReport(paths: DatabaseFilePaths): void {
+  try {
+    const autoBackupPath = applyPendingRestore(paths, new Date());
+    if (autoBackupPath !== undefined) {
+      void vscode.window.showInformationMessage(`AIGC Video Studio 已从备份恢复数据，恢复前的数据库已自动备份到 ${autoBackupPath}。`);
+    }
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    void vscode.window.showErrorMessage(`AIGC Video Studio 从备份恢复失败，已继续使用当前数据：${detail}`);
   }
 }

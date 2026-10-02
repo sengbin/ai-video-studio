@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：binding-service.test.ts
-// 说明：实体绑定服务（含 SQLite 仓库）与请求处理的自动化测试：绑定规则、主资产维护、解除、按名称自动匹配。
+// 说明：实体绑定服务（含 SQLite 仓库）与请求处理的自动化测试：绑定规则、主资产维护、解除、按名称自动匹配、试听音色参考。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
@@ -94,7 +94,7 @@ test('绑定校验：类型、用途、重复、不存在与标识无效', () =>
   try {
     const character = assets.createAsset('character', { name: '甲角色' });
     const voice = assets.createAsset('audio', { name: '音色', audioKind: '音色参考', files: AUDIO_FILES });
-    const music = assets.createAsset('audio', { name: '配乐', audioKind: '背景音乐', files: AUDIO_FILES });
+    const music = assets.createAsset('audio', { name: '配乐', audioKind: 'music', files: AUDIO_FILES });
     const base = { episodeId: episode1, entityId: guard };
     const fieldError = (input: object) => {
       try {
@@ -179,7 +179,7 @@ test('绑定界面视图：只含启用的实体，可选资产不区分项目�
     const rain = assets.createAsset('character', { name: '守夜人·雨天' });
     assets.createAsset('scene', { name: '灯塔' });
     const voice = assets.createAsset('audio', { name: '低沉嗓音', audioKind: '音色参考', files: AUDIO_FILES });
-    assets.createAsset('audio', { name: '配乐', audioKind: '背景音乐', files: AUDIO_FILES });
+    assets.createAsset('audio', { name: '配乐', audioKind: 'music', files: AUDIO_FILES });
 
     service.bind({ episodeId: episode1, entityId: guard, assetId: day.id });
     const second = service.bind({ episodeId: episode1, entityId: guard, assetId: rain.id });
@@ -216,6 +216,38 @@ test('音色绑定要求音频已有文件：还没有文件的音频不在可�
     const ready = assets.createAsset('audio', { name: '有文件', audioKind: '音色参考', files: AUDIO_FILES });
     assert.deepEqual(service.getEpisodeView(episode1).voiceAssets.map((asset) => asset.name), ['有文件']);
     assert.equal(service.bind({ episodeId: episode1, entityId: guard, assetId: ready.id, purpose: 'voice' }).isPrimary, true);
+  } finally {
+    database.close();
+  }
+});
+
+test('试听音色参考：读取第一个参考文件的内容；不是音色参考、没有文件、资产不存在时报错', async () => {
+  const { database, assets, service } = createFixture();
+  try {
+    const voice = assets.createAsset('audio', { name: '低沉嗓音', audioKind: '音色参考', files: AUDIO_FILES });
+    assert.deepEqual(service.readVoiceAudio(voice.id), { mime: 'audio/wav', data: WAV.toString('base64') });
+
+    const music = assets.createAsset('audio', { name: '背景乐', audioKind: 'music', files: AUDIO_FILES });
+    assert.throws(
+      () => service.readVoiceAudio(music.id),
+      (error) => error instanceof ValidationError && /音色参考/.test(error.fieldErrors.assetId)
+    );
+    const character = assets.createAsset('character', { name: '守夜人' });
+    assert.throws(() => service.readVoiceAudio(character.id), ValidationError);
+    const empty = assets.createAsset('audio', { name: '还没有文件', audioKind: '音色参考' });
+    assert.throws(() => service.readVoiceAudio(empty.id), (error) => error instanceof NotFoundError && /还没有音频文件/.test(error.message));
+    assert.throws(() => service.readVoiceAudio(9999), NotFoundError);
+
+    // 请求处理：载荷用 assetId，错误按类型返回。
+    const router = new MessageRouter();
+    registerBindingHandlers(router, service);
+    const send = (payload?: unknown) => router.handle({ type: 'request', requestId: 1, name: BINDING_REQUESTS.voiceAudio, payload });
+    const ok = await send({ assetId: voice.id });
+    assert.deepEqual(ok?.ok && ok.data, { mime: 'audio/wav', data: WAV.toString('base64') });
+    const missing = await send({ assetId: 9999 });
+    assert.ok(missing && !missing.ok && missing.error.kind === 'not-found');
+    const invalid = await send({});
+    assert.ok(invalid && !invalid.ok && invalid.error.kind === 'validation');
   } finally {
     database.close();
   }

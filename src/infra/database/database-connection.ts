@@ -7,8 +7,8 @@
 // 备注：使用 Node 内置的 node:sqlite；升级前若库已有数据，先用 VACUUM INTO 备份。
 // ------------------------------------------------------------------------
 
-import { existsSync, rmSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
+import { writeSnapshot } from './database-snapshot';
 import { Migration } from './migration';
 import { getPendingMigrations, readSchemaVersion, runMigrations } from './migration-runner';
 import { MIGRATIONS } from './migrations';
@@ -45,10 +45,5 @@ function backupBeforeUpgrade(database: DatabaseSync, filePath: string, migration
   if (currentVersion === 0 || getPendingMigrations(currentVersion, migrations).length === 0) {
     return;
   }
-  const backupPath = `${filePath}.backup-v${currentVersion}`;
-  if (existsSync(backupPath)) {
-    rmSync(backupPath);
-  }
-  // VACUUM INTO 要求目标文件不存在，路径中的单引号按 SQL 规则转义。
-  database.exec(`VACUUM INTO '${backupPath.replace(/'/g, "''")}'`);
+  writeSnapshot(database, `${filePath}.backup-v${currentVersion}`);
 }

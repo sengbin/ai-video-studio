@@ -4,7 +4,7 @@
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
-// 备注：通过 aiStage.open(workId, stage, episodeId?) 打开，同一作品的同一阶段（分镜脚本还要同一集）只有一个产出层；阶段内容由 stage-creative.js、stage-screenplay.js、stage-storyboard.js 通过 aiStage.registerStage 登记；请求载荷都带 workId 与 stage（分镜脚本还带 episodeId），事件名称与 src/app/pages/stage-handlers.ts 一致；依赖 form/form-runtime.js（aiForm）与 shared/page-format.js（pageFormat）。
+// 备注：通过 aiStage.open(workId, stage, episodeId?, focus?) 打开（focus 为打开后要定位的对象，由阶段内容解释：分镜脚本为镜头标识），同一作品的同一阶段（分镜脚本还要同一集）只有一个产出层；阶段内容由 stage-creative.js、stage-screenplay.js、stage-storyboard.js 通过 aiStage.registerStage 登记；请求载荷都带 workId 与 stage（分镜脚本还带 episodeId），事件名称与 src/app/pages/stage-handlers.ts 一致；依赖 form/form-runtime.js（aiForm）与 shared/page-format.js（pageFormat）。
 // ------------------------------------------------------------------------
 
 'use strict';
@@ -32,7 +32,7 @@
   /**
    * 各阶段登记的“阶段内容”：
    * { stage, label, regenerateForm, keptNote, discardMessage, approveNote(view), confirmRegenerate?(view), titleSuffix?(view), create(context) }，
-   * create 接收 { call, runAction, showMessage, reload, getView, confirmDiscard }，返回 { render(view, container), renderSummary(view), isDirty(), discard() }。
+   * create 接收 { call, runAction, showMessage, reload, getView, confirmDiscard }，返回 { render(view, container), renderSummary(view), isDirty(), discard(), focus?(target) }（focus 定位到打开时指定的对象，视图尚未加载时由内容自己记下，加载后再定位）。
    */
   const providers = new Map();
   /** 已打开的产出层：“阶段:作品标识” → { workId, handle, refresh }。 */
@@ -53,9 +53,10 @@
    * @param {number} workId 作品标识。
    * @param {string} stage 阶段，如 creative、screenplay、storyboard_script。
    * @param {number|null} episodeId 集标识，仅分镜脚本阶段使用。
+   * @param {number|null} focus 打开后要定位的对象；为 null 时不定位。
    * @returns 弹出页面的句柄。
    */
-  function createStageView(workId, stage, episodeId) {
+  function createStageView(workId, stage, episodeId, focus) {
     const provider = providers.get(stage);
     if (!provider) throw new Error(`没有登记阶段：${stage}`);
 
@@ -331,7 +332,15 @@
       beforeClose: () => confirmDiscardEdits()
     });
     const key = viewKey(workId, stage, episodeId);
-    openViews.set(key, { workId, handle, refresh: scheduleRefresh });
+    openViews.set(key, {
+      workId,
+      handle,
+      refresh: scheduleRefresh,
+      focus: (target) => {
+        if (content.focus) content.focus(target);
+      }
+    });
+    if (focus !== null && content.focus) content.focus(focus);
     void handle.closed.then(() => {
       window.clearTimeout(refreshTimer);
       openViews.delete(key);
@@ -345,15 +354,17 @@
    * @param {number} workId 作品标识。
    * @param {string} stage 阶段，缺省为创意。
    * @param {number|null} episodeId 集标识，分镜脚本阶段必填。
+   * @param {number|null} focus 打开后要定位的对象（分镜脚本阶段为镜头标识）；已经打开时同样重新定位。
    * @returns 弹出页面的句柄。
    */
-  function open(workId, stage = 'creative', episodeId = null) {
+  function open(workId, stage = 'creative', episodeId = null, focus = null) {
     const existing = openViews.get(viewKey(workId, stage, episodeId));
     if (existing) {
       existing.handle.element.focus();
+      if (focus !== null) existing.focus(focus);
       return existing.handle;
     }
-    return createStageView(workId, stage, episodeId);
+    return createStageView(workId, stage, episodeId, focus);
   }
 
   /** 关闭作品已不存在的产出层（作品被删除，或随所属项目一起删除）。 */

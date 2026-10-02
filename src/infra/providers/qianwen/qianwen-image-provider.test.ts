@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：qianwen-image-provider.test.ts
-// 说明：千问AI平台图像适配器的自动化测试：模型声明、请求校验、请求体构造（尺寸换算）、任务提交与查询、错误分类。
+// 说明：千问AI平台图像适配器的自动化测试：模型声明、请求校验、请求体构造（尺寸换算）、任务提交与查询、测试连接、错误分类。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
@@ -50,6 +50,31 @@ async function rejectedWith(action: Promise<unknown>): Promise<ProviderError> {
   }
   assert.fail('应抛出错误');
 }
+
+test('测试连接：查询不存在的任务，带错误码的业务错误说明地址与密钥可用，其他失败按分类报错', async () => {
+  const reachable = createProvider([{ status: 400, body: { code: 'InvalidParameter', message: 'task not found' } }]);
+  await reachable.provider.checkConnection(CONTEXT);
+  assert.deepEqual([reachable.calls[0].method, reachable.calls[0].url], ['GET', 'https://api.test/api/v1/tasks/00000000-0000-0000-0000-000000000000']);
+  assert.equal(reachable.calls[0].headers.Authorization, `Bearer ${CONTEXT.apiKey}`);
+
+  await createProvider([{ body: {} }]).provider.checkConnection(CONTEXT);
+
+  const badKey = createProvider([{ status: 401, body: { code: 'InvalidApiKey', message: 'Invalid API-key provided.' } }]);
+  assert.equal((await rejectedWith(badKey.provider.checkConnection(CONTEXT))).category, 'auth');
+
+  const wrongPath = createProvider([{ status: 404, body: {} }]);
+  const notFound = await rejectedWith(wrongPath.provider.checkConnection(CONTEXT));
+  assert.deepEqual([notFound.category, /接口地址是否正确/.test(notFound.message)], ['invalid_request', true]);
+
+  const offline = createProvider([new TypeError('fetch failed')]);
+  assert.equal((await rejectedWith(offline.provider.checkConnection(CONTEXT))).category, 'network');
+  const server = createProvider([{ status: 500, body: { code: 'InternalError', message: 'x' } }]);
+  assert.equal((await rejectedWith(server.provider.checkConnection(CONTEXT))).category, 'server');
+
+  const noEndpoint = createProvider([]);
+  assert.match((await rejectedWith(noEndpoint.provider.checkConnection({ apiKey: 'k', settings: {} }))).message, /接口地址/);
+  assert.equal(noEndpoint.calls.length, 0);
+});
 
 test('适配器声明：四个模型及能力', () => {
   const { provider } = createProvider();

@@ -24,6 +24,7 @@ import { FetchFunction, QianwenApiClient } from './qianwen-api-client';
 import { QIANWEN_PROVIDER, QIANWEN_VIDEO_MODELS, WAN3_AUDIO_MAX_BYTES, WAN3_IMAGE_MAX_BYTES, WAN3_SEED_MAX } from './qianwen-catalog';
 import {
   ASYNC_HEADERS,
+  CONNECTION_PROBE_PATH,
   ExtraParamSpec,
   QUERY_TASK_PATH,
   buildTaskState,
@@ -37,9 +38,6 @@ import {
 
 /** 创建任务的接口路径。 */
 const CREATE_TASK_PATH = '/services/aigc/video-generation/video-synthesis';
-
-/** 测试连接时查询的任务标识：不会存在。 */
-const CONNECTION_PROBE_TASK_ID = '00000000-0000-0000-0000-000000000000';
 
 /** 素材类型（请求体 input.media[].type）。 */
 const MEDIA_TYPE_FIRST_FRAME = 'first_frame';
@@ -96,7 +94,7 @@ export class QianwenVideoProvider implements VideoModelProvider {
   }
 
   checkConnection(context: ProviderCallContext): Promise<void> {
-    return this.client.checkConnection(context, `${QUERY_TASK_PATH}/${CONNECTION_PROBE_TASK_ID}`);
+    return this.client.checkConnection(context, CONNECTION_PROBE_PATH);
   }
 
   async query(ref: RemoteJobRef, context: ProviderCallContext): Promise<RemoteJobState<VideoJobResult>> {

@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：submit-panel.js
-// 说明：提交面板（检查器的“提交”页签，对应表单 F10）：勾选要提交的镜头组，调用宿主的“预览提交”得到逐组汇总（整组时长、首帧来源、参考素材数量、声音）与阻断问题、提醒，没有阻断问题（提醒需勾选“已了解”）时才能提交所选镜头组。
+// 说明：提交面板（检查器的“提交”页签，对应表单 F10）：勾选要提交的镜头组，调用宿主的“预览提交”得到逐组汇总（整组时长、首帧来源、参考素材数量、声音与声音内容、种子）与阻断问题、提醒，没有阻断问题（提醒需勾选“已了解”）时才能提交所选镜头组。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-03
@@ -32,6 +32,8 @@
     ];
     if (preview.referenceAudioCount > 0) parts.push(`参考音频 ${preview.referenceAudioCount} 段`);
     parts.push(`声音：${AUDIO_MODE_LABELS[preview.audioMode] || '默认'}`);
+    if (preview.audioMode === 'native' && preview.audioElements !== null) parts.push(`声音内容：${aiProfile.describeElements(preview.audioElements) || '无'}`);
+    parts.push(preview.seed === null ? '种子：随机' : `种子：${preview.seed}`);
     return parts.join(' · ');
   }
 
@@ -80,7 +82,7 @@
     /** 选择或参数、任务状态变化后，稍作等待再请求预览；内容没有变化时不重复请求。 */
     function schedulePreview(view, ids) {
       const { resolved } = host.getState();
-      const key = JSON.stringify([episodeKey, ids, resolved && resolved.values, view.groups.map((group) => [group.id, group.totalSeconds, group.jobs.map((job) => [job.id, job.status])])]);
+      const key = JSON.stringify([episodeKey, ids, resolved && resolved.values, view.groups.map((group) => [group.id,       group.totalSeconds, group.overrides, group.jobs.map((job) => [job.id, job.status])])]);
       if (key === previewKey) return;
       previewKey = key;
       window.clearTimeout(timer);
@@ -156,7 +158,7 @@
     /** 影响显示的宿主状态摘要：集、各镜头组与任务状态、实体绑定、生效参数。 */
     function stateKey() {
       const { view, resolved, episodeKey: key, busyGroupIds } = host.getState();
-      const groups = view ? view.groups.map((group) => [group.id, group.seq, group.totalSeconds, group.shots.length, group.jobs.map((job) => [job.id, job.status]), group.entities.map((entity) => entity.bound)]) : [];
+      const groups = view ? view.groups.map((group) => [group.id, group.seq, group.totalSeconds, group.shots.length, group.overrides, group.jobs.map((job) => [job.id, job.status]), group.entities.map((entity) => entity.bound)]) : [];
       return JSON.stringify([key, view && view.canGenerate, view && view.blockReason, groups, resolved && [resolved.values, resolved.issues], [...busyGroupIds]]);
     }
 

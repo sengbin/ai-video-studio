@@ -1,10 +1,10 @@
 // ------------------------------------------------------------------------
 // 名称：qianwen-audio-provider.ts
-// 说明：千问AI平台音频适配器：按模型能力校验请求，调用同步的音频生成与音乐生成接口，并以任务引用的形式交回结果。
+// 说明：千问AI平台音频适配器：按模型能力校验请求，调用同步的音频生成与音乐生成接口，并以任务引用的形式交回结果；测试连接借用任务查询接口。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
-// 备注：平台音频接口是同步的：submit 内完成调用，音频地址与时长编码进 remoteJobId，query 解码后直接返回成功；音频地址 24 小时后过期。
+// 备注：平台音频接口是同步的：submit 内完成调用，音频地址与时长编码进 remoteJobId，query 解码后直接返回成功；音频地址 24 小时后过期。音频接口自身没有查询接口，测试连接查询“不存在的任务”：它与音频接口共用同一接口地址和访问密钥，且不会产生生成费用。
 // ------------------------------------------------------------------------
 
 import { ProviderError } from '../../../domain/errors';
@@ -27,7 +27,7 @@ import {
   QianwenAudioModel
 } from './qianwen-audio-catalog';
 import { QIANWEN_PROVIDER } from './qianwen-catalog';
-import { mapExtraParams, readObject, toDataUri, validateExtraParams, validateMediaFiles } from './qianwen-protocol';
+import { CONNECTION_PROBE_PATH, mapExtraParams, readObject, toDataUri, validateExtraParams, validateMediaFiles } from './qianwen-protocol';
 
 /** 千问AI平台的音频适配器。 */
 export class QianwenAudioProvider implements AudioModelProvider {
@@ -73,6 +73,10 @@ export class QianwenAudioProvider implements AudioModelProvider {
     }
     const result: AudioJobResult = { audioUrl: toHttpsUrl(audio.url), durationSeconds: readDuration(audio, readObject(response.usage)) };
     return { modelCode: request.modelCode, remoteJobId: JSON.stringify(result) };
+  }
+
+  checkConnection(context: ProviderCallContext): Promise<void> {
+    return this.client.checkConnection(context, CONNECTION_PROBE_PATH);
   }
 
   async query(ref: RemoteJobRef): Promise<RemoteJobState<AudioJobResult>> {

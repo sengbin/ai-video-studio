@@ -4,7 +4,7 @@
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
-// 备注：向 stage.js 的外壳登记；请求名称与 src/app/pages/stage-handlers.ts、表单名称与 src/app/forms/storyboard-form.ts 一致；镜头的 ref 就是镜头标识，页面原样回传；支持在末尾新增、删除镜头以及与相邻镜头互换位置（上移、下移）。
+// 备注：向 stage.js 的外壳登记；请求名称与 src/app/pages/stage-handlers.ts、表单名称与 src/app/forms/storyboard-form.ts 一致；镜头的 ref 就是镜头标识，页面原样回传；支持在末尾新增、删除镜头以及与相邻镜头互换位置（上移、下移）；打开时可由 aiStage.open 的 focus 参数（镜头标识）定位到所选镜头：选中、滚动到可见。
 // ------------------------------------------------------------------------
 
 'use strict';
@@ -58,6 +58,8 @@
   function create(context) {
     /** 当前选中的镜头标识；为 null 时选第一个。 */
     let selectedId = null;
+    /** 打开时要定位的镜头标识；视图加载完成后的第一次渲染选中它并滚动到可见，之后清空。 */
+    let pendingFocusId = null;
     /** 编辑器当前对应的“版本:镜头:权限”，用来判断切换后是否需要重建。 */
     let editorKey = '';
     /** 编辑器创建时镜头内容的快照，用于判断宿主数据是否变了。 */
@@ -88,6 +90,28 @@
       editorDirty = false;
       selectedId = id;
       renderBody(context.getView(), bodyContainer);
+    }
+
+    /** 把左侧列表中选中的镜头滚动到可见（列表自身有滚动条，镜头多时选中项可能在视口外）。 */
+    function scrollSelectedIntoView() {
+      const selected = bodyContainer && bodyContainer.querySelector('.stage-item[aria-current="true"]');
+      if (selected) selected.scrollIntoView({ block: 'nearest' });
+    }
+
+    /** 选中指定镜头并滚动到可见；镜头不在当前版本里，或用户选择保留未保存的修改时不变。 */
+    async function focusShot(shotId) {
+      if (!context.getView().shots.some((shot) => shot.id === shotId)) return;
+      await select(shotId);
+      if (selectedId === shotId) scrollSelectedIntoView();
+    }
+
+    /** 定位到指定镜头：视图已加载时立即定位，否则记下来，等第一次渲染时定位。 */
+    function focus(shotId) {
+      if (context.getView() === null) {
+        pendingFocusId = shotId;
+        return;
+      }
+      void focusShot(shotId);
     }
 
     /** 左侧列表中的一个镜头。 */
@@ -477,17 +501,24 @@
         return;
       }
       const keepsNew = selectedId === NEW_SHOT && view.actions.canEdit;
-      if (!keepsNew && !view.shots.some((shot) => shot.id === selectedId)) {
+      const focusId = pendingFocusId;
+      pendingFocusId = null;
+      if (focusId !== null && view.shots.some((shot) => shot.id === focusId)) {
+        selectedId = focusId;
+        editorDirty = false;
+      } else if (!keepsNew && !view.shots.some((shot) => shot.id === selectedId)) {
         selectedId = view.shots[0].id;
         editorDirty = false;
       }
       const shot = selectedId === NEW_SHOT ? blankShot(view) : view.shots.find((candidate) => candidate.id === selectedId);
       container.append(renderList(view), aiUi.h('div', { class: 'stage-detail' }, renderEditor(view, shot)));
+      if (focusId !== null) scrollSelectedIntoView();
     }
 
     return {
       render: renderBody,
       renderSummary,
+      focus,
       isDirty: () => editorDirty,
       discard: () => {
         editorDirty = false;

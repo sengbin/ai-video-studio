@@ -25,10 +25,11 @@ import {
   planGroupRequest,
   readSubmitInput,
   readTailFrameFailure,
-  readTailFrameInput
+  readTailFrameInput,
+  validateGroupParams
 } from './generation-rules';
 
-const PARAMS: GenerationParams = { modelId: 1, aspectRatio: '16:9', resolution: '720P', audioMode: null };
+const PARAMS: GenerationParams = { modelId: 1, aspectRatio: '16:9', resolution: '720P', audioMode: null, audioElements: null, seed: null, durationSeconds: null };
 
 function sound(overrides: Partial<SoundRecord>): SoundRecord {
   return { id: 1, kind: 'dialogue', speakerEntityId: null, text: '台词', delivery: '', startOffsetSeconds: null, durationSeconds: null, isEnabled: true, ...overrides };
@@ -67,7 +68,44 @@ const GUARD: EntityReferences = { entityId: 1, name: '守夜人', kind: 'charact
 
 test('读取提交请求：去重镜头组，可选参数为空时取 null', () => {
   const input = readSubmitInput({ workId: 1, episodeId: 2, groupIds: [5, 5, 6], params: { modelId: 3, aspectRatio: '', resolution: '720P' } });
-  assert.deepEqual(input, { workId: 1, episodeId: 2, groupIds: [5, 6], params: { modelId: 3, aspectRatio: null, resolution: '720P', audioMode: null } });
+  assert.deepEqual(input, {
+    workId: 1,
+    episodeId: 2,
+    groupIds: [5, 6],
+    params: { modelId: 3, aspectRatio: null, resolution: '720P', audioMode: null, audioElements: null, seed: null, durationSeconds: null }
+  });
+});
+
+test('读取提交请求：声音内容去重并按固定顺序排列，种子取整数；不合法时指出字段', () => {
+  const read = (params: Record<string, unknown>) => readSubmitInput({ workId: 1, episodeId: 2, groupIds: [5], params: { modelId: 3, ...params } }).params;
+  const parsed = read({ audioElements: ['sfx', 'dialogue', 'sfx'], seed: 0 });
+  assert.deepEqual(parsed.audioElements, ['dialogue', 'sfx']);
+  assert.equal(parsed.seed, 0);
+  const fieldOf = (params: Record<string, unknown>): string[] => {
+    try {
+      read(params);
+    } catch (error) {
+      if (error instanceof ValidationError) return Object.keys(error.fieldErrors);
+    }
+    return [];
+  };
+  assert.deepEqual(fieldOf({ audioElements: [] }), ['audioElements']);
+  assert.deepEqual(fieldOf({ audioElements: ['voice'] }), ['audioElements']);
+  assert.deepEqual(fieldOf({ seed: -1 }), ['seed']);
+  assert.deepEqual(fieldOf({ seed: 1.5 }), ['seed']);
+  assert.deepEqual(fieldOf({ seed: 2147483648 }), ['seed']);
+  assert.deepEqual(fieldOf({ seed: '7' }), ['seed']);
+});
+
+test('检查镜头组参数：模型不支持种子、指定时长小于镜头总时长或不在模型取值内时给出阻断问题', () => {
+  const withParams = (overrides: Partial<GenerationParams>): GenerationParams => ({ ...PARAMS, ...overrides });
+  assert.deepEqual(validateGroupParams(FAKE_VIDEO_CAPABILITY, withParams({ seed: 7, durationSeconds: 8 }), 6), []);
+  assert.deepEqual(validateGroupParams(FAKE_VIDEO_CAPABILITY, withParams({}), 6), []);
+  const noSeed = { ...FAKE_VIDEO_CAPABILITY, seed: false };
+  assert.match(validateGroupParams(noSeed, withParams({ seed: 7 }), 6).join(), /不支持随机种子/);
+  assert.match(validateGroupParams(FAKE_VIDEO_CAPABILITY, withParams({ durationSeconds: 5 }), 6).join(), /小于这一组镜头的总时长 6 秒/);
+  assert.match(validateGroupParams(FAKE_VIDEO_CAPABILITY, withParams({ durationSeconds: 11 }), 6).join(), /不在模型支持的取值内（2–10 秒/);
+  assert.match(validateGroupParams(FAKE_VIDEO_CAPABILITY, withParams({ durationSeconds: 7.5 }), 6).join(), /不在模型支持的取值内/);
 });
 
 test('读取提交请求：标识、镜头组数量、声音模式不合法时报错', () => {
@@ -211,7 +249,15 @@ test('失败说明：本扩展自己产生的错误码有专门的说明，其�
 test('编译镜头：使用中文提示词、对齐时长，默认原生声音并记录快照', () => {
   const snapshot = plan({ durationSeconds: 3.6 });
   assert.equal(snapshot.prompt, '中景，守夜人缓缓登上灯塔');
-  assert.deepEqual(snapshot.params, { aspectRatio: '16:9', resolution: '720P', durationSeconds: 4, audioMode: 'native', seed: null, extraParams: {} });
+  assert.deepEqual(snapshot.params, {
+    aspectRatio: '16:9',
+    resolution: '720P',
+    durationSeconds: 4,
+    audioMode: 'native',
+    audioElements: ['dialogue', 'sfx'],
+    seed: null,
+    extraParams: {}
+  });
   assert.deepEqual([snapshot.storyboardRunId, snapshot.providerCode, snapshot.modelCode], [3, 'fake', 'fake-video']);
   assert.match(snapshot.warnings.join(), /已调整为 4 秒/);
 });
@@ -249,7 +295,37 @@ test('编译镜头：原生声音把启用的条目写入提示词，模型不�
   // 假模型只支持对白和音效。
   assert.ok(snapshot.prompt.endsWith('声音：守夜人（低声）说：“要下雨了”；音效：海浪声（远处）'));
   assert.ok(!snapshot.prompt.includes('已关闭') && !snapshot.prompt.includes('夜深了'));
-  assert.ok(snapshot.warnings.includes('模型不支持部分声音内容，已忽略。'));
+  assert.ok(snapshot.warnings.includes('模型不支持以下声音内容，已忽略：旁白、配乐。'));
+});
+
+test('编译镜头：声音内容只传选中的类型；选了模型不支持的内容才提醒，没选的类型不提醒；没选对白时不带音色参考', () => {
+  const sounds = [
+    sound({ id: 1, kind: 'dialogue', speakerEntityId: 1, text: '要下雨了' }),
+    sound({ id: 2, kind: 'narration', text: '夜深了' }),
+    sound({ id: 3, kind: 'sfx', text: '海浪声' })
+  ];
+  const onlySfx = plan({ sounds }, [GUARD], FAKE_VIDEO_CAPABILITY, { ...PARAMS, audioElements: ['sfx'] });
+  assert.ok(onlySfx.prompt.endsWith('声音：音效：海浪声'));
+  assert.ok(!onlySfx.prompt.includes('要下雨了'));
+  assert.deepEqual(onlySfx.params.audioElements, ['sfx']);
+  assert.deepEqual(onlySfx.warnings.filter((warning) => warning.includes('声音内容')), []);
+
+  const withNarration = plan({ sounds }, [GUARD], FAKE_VIDEO_CAPABILITY, { ...PARAMS, audioElements: ['narration', 'sfx'] });
+  assert.ok(withNarration.warnings.includes('模型不支持以下声音内容，已忽略：旁白。'));
+  assert.deepEqual(withNarration.params.audioElements, ['sfx']);
+
+  const voiced: EntityReferences = { ...GUARD, voiceFileId: 201 };
+  const withVoiceModel = { ...FAKE_VIDEO_CAPABILITY, voiceReference: true, audioInputMax: { count: 2, maxSeconds: 15 } };
+  assert.deepEqual(plan({ sounds }, [voiced], withVoiceModel, { ...PARAMS, audioElements: ['sfx'] }).referenceAudioFileIds, []);
+  assert.deepEqual(plan({ sounds }, [voiced], withVoiceModel, { ...PARAMS, audioElements: ['dialogue'] }).referenceAudioFileIds, [201]);
+});
+
+test('编译镜头：种子写入快照；本组指定生成时长时直接采用，不再向上对齐', () => {
+  const seeded = plan({ durationSeconds: 3.6 }, [], FAKE_VIDEO_CAPABILITY, { ...PARAMS, seed: 42, durationSeconds: 8 });
+  assert.equal(seeded.params.seed, 42);
+  assert.equal(seeded.params.durationSeconds, 8);
+  assert.ok(!seeded.warnings.some((warning) => warning.includes('已调整为')));
+  assert.equal(plan({ durationSeconds: 3.6 }).params.durationSeconds, 4, '没有指定时按镜头总时长对齐');
 });
 
 test('编译镜头：选择无声时不写声音提示词；音色参考只给有对白的角色且受模型支持', () => {

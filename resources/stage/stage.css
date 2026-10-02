@@ -94,6 +94,8 @@
 .stage-item.is-selected {
   background: var(--option-selected-bg);
   border-color: var(--focus-border);
+  /* 3px 内侧左标记：选中状态不只靠颜色区分 */
+  box-shadow: inset 3px 0 0 var(--vscode-button-background);
 }
 
 .stage-item__title {

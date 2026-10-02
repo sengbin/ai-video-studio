@@ -247,6 +247,11 @@
   margin-top: 6px;
 }
 
+/* 参数字段下方的“恢复沿用上一级”按钮 */
+.wb-profile__restore {
+  margin-top: 6px;
+}
+
 /* 后续组采用的视频基于上一组旧版本尾帧时的提示 */
 .wb-stale {
   margin: 0 0 6px;

@@ -92,6 +92,8 @@ test('校验：合法请求没有问题；画幅、分辨率、时长、声音�
   const issues = provider.validate(request({ aspectRatio: '5:4', resolution: '4K', durationSeconds: 31, seed: -5 }));
   assert.equal(issues.length, 4);
   assert.ok(provider.validate(request({ durationSeconds: 1 })).length === 1);
+  assert.match(provider.validate(request({ seed: 2147483648 })).join(), /随机种子必须是 0 到 2147483647/);
+  assert.match(provider.validate(request({ seed: 1.5 })).join(), /随机种子/);
   assert.deepEqual(provider.validate(request({ modelCode: 'x' })), ['千问AI平台没有模型 x。']);
 });
 

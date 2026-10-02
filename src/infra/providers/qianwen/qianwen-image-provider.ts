@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：qianwen-image-provider.ts
-// 说明：千问AI平台图像适配器：按模型能力校验请求，把与模型无关的图像生成请求转换为 image-generation 异步任务，并查询任务状态。
+// 说明：千问AI平台图像适配器：按模型能力校验请求，把与模型无关的图像生成请求转换为 image-generation 异步任务，并查询任务状态；用查询不存在的任务来测试连接。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
@@ -34,6 +34,7 @@ import {
 } from './qianwen-image-catalog';
 import {
   ASYNC_HEADERS,
+  CONNECTION_PROBE_PATH,
   QUERY_TASK_PATH,
   buildTaskState,
   mapExtraParams,
@@ -86,6 +87,10 @@ export class QianwenImageProvider implements ImageModelProvider {
     const model = findModel(request.modelCode) as QianwenImageModel;
     const response = await this.client.postJson(context, IMAGE_CREATE_TASK_PATH, buildRequestBody(request, model), ASYNC_HEADERS);
     return { modelCode: request.modelCode, remoteJobId: readTaskId(response) };
+  }
+
+  checkConnection(context: ProviderCallContext): Promise<void> {
+    return this.client.checkConnection(context, CONNECTION_PROBE_PATH);
   }
 
   async query(ref: RemoteJobRef, context: ProviderCallContext): Promise<RemoteJobState<ImageJobResult>> {

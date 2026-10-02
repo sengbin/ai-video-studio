@@ -13,10 +13,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { DatabaseSync } from 'node:sqlite';
+import { EMPTY_PROFILE } from '../../domain/models/generation-profile';
 import { IN_MEMORY_DATABASE_PATH, openDatabase } from './database-connection';
 import { Migration, MigrationError } from './migration';
 import { readSchemaVersion, runMigrations } from './migration-runner';
 import { MIGRATIONS } from './migrations';
+import { SqliteGenerationProfileRepository } from './sqlite-generation-profile-repository';
 import { runInTransaction } from './transaction';
 
 const NOW = '2026-01-01T00:00:00.000Z';
@@ -621,6 +623,29 @@ test('迁移 011：生成参数重建后保留作品级与集级记录，新增�
     assert.throws(() => database.prepare("INSERT INTO generation_profiles (scope, group_id, resolution, updated_at) VALUES ('group', 1, '720P', ?)").run(NOW), '同一个镜头组只有一条覆盖');
     database.prepare('DELETE FROM shot_groups WHERE id = 1').run();
     assert.equal(countRows(database, 'generation_profiles'), 2, '镜头组删除后它的覆盖随之清除');
+  } finally {
+    database.close();
+  }
+});
+
+test('迁移 012：生成参数新增生成时长列，已有记录的时长为空，种子与声音内容列可往返保存，时长必须大于 0', () => {
+  const database = new DatabaseSync(IN_MEMORY_DATABASE_PATH);
+  try {
+    database.exec('PRAGMA foreign_keys = ON');
+    runMigrations(database, MIGRATIONS.slice(0, 11));
+    const { workId } = seedWorkWithEpisode(database);
+    database.prepare("INSERT INTO generation_profiles (scope, work_id, resolution, seed, updated_at) VALUES ('work', ?, '720P', 5, ?)").run(workId, NOW);
+
+    runMigrations(database, MIGRATIONS);
+    assert.equal(readSchemaVersion(database), MIGRATIONS.length);
+    const row = database.prepare('SELECT resolution, seed, duration_seconds FROM generation_profiles').get();
+    assert.deepEqual({ ...row }, { resolution: '720P', seed: 5, duration_seconds: null });
+
+    const profiles = new SqliteGenerationProfileRepository(database);
+    const values = { ...EMPTY_PROFILE, audioMode: 'native' as const, audioElements: ['dialogue' as const, 'music' as const], seed: 0, durationSeconds: 7.5 };
+    profiles.save({ scope: 'work', workId }, values, NOW);
+    assert.deepEqual(profiles.find({ scope: 'work', workId }), values);
+    assert.throws(() => database.prepare("UPDATE generation_profiles SET duration_seconds = 0 WHERE scope = 'work'").run());
   } finally {
     database.close();
   }

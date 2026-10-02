@@ -111,18 +111,6 @@
     if (data) viewImage(title, data);
   }
 
-  /** 试听音频：点击后才读取音频内容并播放。 */
-  async function playAudio(file, slot, button) {
-    button.setDisabled(true);
-    const data = await request(REQUEST_FILE_DATA, { fileId: file.id });
-    button.setDisabled(false);
-    if (!data) return;
-    slot.textContent = '';
-    const player = aiUi.h('audio', { attrs: { controls: 'controls', src: `data:${data.mime};base64,${data.data}` } });
-    slot.append(player);
-    void player.play().catch(() => undefined);
-  }
-
   /** 图片版本的缩略图网格：点击缩略图看原图，复选框决定采用哪几张。 */
   function renderImages(detail) {
     const grid = aiUi.h('div', { class: 'asset-ver__grid' });
@@ -160,15 +148,13 @@
   function renderAudio(detail) {
     const [file] = detail.files;
     if (!file) return aiUi.h('p', { class: 'description', text: '没有结果文件。' });
-    const slot = aiUi.h('div', { class: 'asset-ver__player' });
-    const button = aiUi.button({ text: '试听', compact: true, ariaLabel: '试听音频', onClick: () => void playAudio(file, slot, button) });
+    const preview = aiUi.audioPreview({ ariaLabel: '试听音频', load: () => request(REQUEST_FILE_DATA, { fileId: file.id }) });
     const duration = file.durationSeconds === null ? '' : `${Number(file.durationSeconds.toFixed(1))} 秒 · `;
     return aiUi.h(
       'div',
       { class: 'asset-ver__audio' },
       aiUi.h('span', { text: `${duration}${file.mime.replace('audio/', '').toUpperCase()}${file.isAdopted ? ' · 已采用' : ''}` }),
-      button.element,
-      slot
+      preview.element
     );
   }
 

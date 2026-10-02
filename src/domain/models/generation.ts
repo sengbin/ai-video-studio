@@ -8,7 +8,7 @@
 // ------------------------------------------------------------------------
 
 import { ProviderFailure } from '../errors';
-import { VideoAudioMode } from './model-capability';
+import { VideoAudioElement, VideoAudioMode } from './model-capability';
 
 /** 任务状态：等待前序、排队、生成中、成功、失败、已取消。 */
 export type JobStatus = 'waiting' | 'queued' | 'running' | 'succeeded' | 'failed' | 'canceled';
@@ -32,6 +32,12 @@ export interface GenerationParams {
   readonly aspectRatio: string | null;
   readonly resolution: string | null;
   readonly audioMode: VideoAudioMode | null;
+  /** 声音模式为原生生成时选用的声音内容；null 表示模型支持的全部。 */
+  readonly audioElements: readonly VideoAudioElement[] | null;
+  /** 随机种子；null 表示不传（随机）。 */
+  readonly seed: number | null;
+  /** 本组指定的生成时长（秒）；null 表示按组内镜头总时长向上对齐到模型支持的取值。只来自镜头组覆盖，提交请求本身不携带。 */
+  readonly durationSeconds: number | null;
 }
 
 /** 任务请求快照中实际使用的参数（组时长已按模型能力调整）。 */
@@ -40,6 +46,8 @@ export interface SnapshotParams {
   readonly resolution: string | null;
   readonly durationSeconds: number | null;
   readonly audioMode: VideoAudioMode | null;
+  /** 实际传给模型的声音内容（已去掉模型不支持的项）；声音模式不是原生生成时为 null。早期版本提交的快照没有这个键。 */
+  readonly audioElements?: readonly VideoAudioElement[] | null;
   readonly seed: number | null;
   readonly extraParams: Readonly<Record<string, unknown>>;
 }

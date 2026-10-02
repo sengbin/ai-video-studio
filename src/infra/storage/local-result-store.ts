@@ -22,6 +22,9 @@ const MAX_RESULT_BYTES = 500 * 1024 * 1024;
 /** 下载中的临时文件后缀。 */
 const PARTIAL_SUFFIX = '.part';
 
+/** 结果视频在存储根目录下的子目录名；数据备份页据此告知用户这些文件不在数据库备份内。 */
+export const RESULT_VIDEO_DIRECTORY_NAME = 'videos';
+
 /** 把结果视频保存在本地目录的存储。 */
 export class LocalResultStore implements ResultStore {
   /**
@@ -37,7 +40,7 @@ export class LocalResultStore implements ResultStore {
     if (!url.startsWith('https://')) {
       throw new Error('结果地址必须是 https 地址。');
     }
-    const filePath = `videos/${location.projectId}/${location.workId}/${location.episodeId}/${groupId}-${jobId}.mp4`;
+    const filePath = `${RESULT_VIDEO_DIRECTORY_NAME}/${location.projectId}/${location.workId}/${location.episodeId}/${groupId}-${jobId}.mp4`;
     const absolutePath = this.resolvePath(filePath);
     const partialPath = `${absolutePath}${PARTIAL_SUFFIX}`;
     await mkdir(path.dirname(absolutePath), { recursive: true });

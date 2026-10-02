@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：bindings.js
-// 说明：实体绑定面板（F9，检查器的“绑定”页签）：按类型分组列出本集的实体，可选择形象资产、设为主资产、解除，角色实体可选择音色参考音频，并支持按名称自动匹配；选择资产仍用弹出页。
+// 说明：实体绑定面板（F9，检查器的“绑定”页签）：按类型分组列出本集的实体，可选择形象资产、设为主资产、解除，角色实体可选择音色参考音频并试听，并支持按名称自动匹配；选择资产仍用弹出页。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
@@ -15,6 +15,7 @@
   const REQUEST_UNBIND = 'bindings.unbind';
   const REQUEST_SET_PRIMARY = 'bindings.setPrimary';
   const REQUEST_SUGGEST = 'bindings.suggest';
+  const REQUEST_VOICE_AUDIO = 'bindings.voiceAudio';
 
   const GENERIC_ERROR_TEXT = '操作失败，请重试。';
   const MAX_SUGGESTION_LINES = 12;
@@ -90,8 +91,8 @@
     const page = aiUi.openPage({ title, content, width: 520, height: 460, minWidth: 360, minHeight: 280, buttons: [{ id: 'cancel', text: '取消', isCancel: true }] });
   }
 
-  /** 一条绑定：缩略图、名称、主资产标记、设为主资产与解除。 */
-  function renderItem(item, siblingCount) {
+  /** 一条绑定：缩略图、名称、主资产标记、设为主资产与解除；音色参考带“试听”。 */
+  function renderItem(item, siblingCount, withPreview) {
     const buttons = [];
     if (siblingCount > 1 && !item.isPrimary) {
       buttons.push(aiUi.button({ text: '设为主资产', compact: true, ariaLabel: `把${item.assetName}设为主资产`, onClick: () => void changeBinding(REQUEST_SET_PRIMARY, { id: item.id }) }).element);
@@ -104,8 +105,17 @@
       aiUi.h('span', { class: 'wb-bind-item__name', text: item.assetName, attrs: { title: item.assetName } }),
       siblingCount > 1 && item.isPrimary ? aiUi.chip({ text: '主资产' }) : null,
       item.durationSeconds === null ? null : aiUi.h('span', { class: 'description', text: `${item.durationSeconds} 秒` }),
+      withPreview ? renderVoicePreview(item) : null,
       buttons
     );
+  }
+
+  /** 音色参考的试听控件：点击后才向宿主读取音频内容；失败时在面板提示区显示原因。 */
+  function renderVoicePreview(item) {
+    return aiUi.audioPreview({
+      ariaLabel: `试听音色参考：${item.assetName}`,
+      load: () => request(REQUEST_VOICE_AUDIO, { assetId: item.assetId }, session.message)
+    }).element;
   }
 
   /** 形象资产单元格：已绑定的资产与“选择资产”“新建资产”。 */
@@ -136,7 +146,7 @@
     return aiUi.h(
       'div',
       { class: 'wb-bind-cell' },
-      entity.voice.length === 0 ? aiUi.h('span', { class: 'description', text: '未指定（只使用设定里的文字音色）' }) : entity.voice.map((item) => renderItem(item, 1)),
+      entity.voice.length === 0 ? aiUi.h('span', { class: 'description', text: '未指定（只使用设定里的文字音色）' }) : entity.voice.map((item) => renderItem(item, 1, true)),
       aiUi.button({ text: entity.voice.length === 0 ? '选择音色' : '更换音色', compact: true, ariaLabel: `为${entity.name}选择音色参考`, onClick: () => pickVoice(entity) }).element
     );
   }

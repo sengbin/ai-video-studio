@@ -80,7 +80,7 @@ export const SIDEBAR_SECTIONS: readonly SidebarMenuSection[] = [
     surface: 'flat',
     items: [
       { id: 'model-settings', title: '模型' },
-      { id: 'data-backup', title: '数据备份', badge: '预览' }
+      { id: 'data-backup', title: '数据备份' }
     ]
   }
 ];

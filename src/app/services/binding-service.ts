@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：binding-service.ts
-// 说明：实体绑定应用服务：为集内的脚本实体绑定资产（形象或音色），切换主资产，解除绑定，以及按名称自动匹配出绑定建议。
+// 说明：实体绑定应用服务：为集内的脚本实体绑定资产（形象或音色），切换主资产，解除绑定，以及按名称自动匹配出绑定建议、读取音色参考音频用于试听。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
@@ -29,6 +29,7 @@ export const BINDING_NOTE_MAX_LENGTH = 200;
 const NOT_FOUND_MESSAGE = '集或实体不存在，或实体不属于这一集所在的作品。';
 const DUPLICATE_MESSAGE = '这个实体在本集已经绑定过该资产。';
 const NO_AUDIO_FILE_MESSAGE = '这个音频资产还没有音频文件，请先上传，或生成并采用。';
+const VOICE_ONLY_MESSAGE = '只能试听“音色参考”类型的音频资产。';
 
 /** 绑定界面里的一个可选资产。 */
 export interface BindingAssetOption {
@@ -166,6 +167,27 @@ export class BindingService {
       },
       voiceAssets: optionsOf((asset) => asset.kind === 'audio' && asset.attributes.audio_kind === 'voice' && asset.fileCount > 0)
     };
+  }
+
+  /**
+   * 读取音色参考音频的内容，用于实体绑定页试听；取资产的第一个参考文件。
+   * @returns 音频的 MIME 类型与 Base64 内容（不带前缀）。
+   * @throws NotFoundError 资产不存在，或还没有音频文件。
+   * @throws ValidationError 资产不是“音色参考”类型的音频。
+   */
+  readVoiceAudio(assetId: number): { readonly mime: string; readonly data: string } {
+    const asset = this.assets.findById(assetId);
+    if (asset === undefined) {
+      throw new NotFoundError(`资产 ${assetId} 不存在。`);
+    }
+    if (asset.kind !== 'audio' || asset.attributes.audio_kind !== 'voice') {
+      throw new ValidationError({ assetId: VOICE_ONLY_MESSAGE });
+    }
+    const [file] = this.assets.listReferenceFiles(assetId);
+    if (file === undefined) {
+      throw new NotFoundError(NO_AUDIO_FILE_MESSAGE);
+    }
+    return { mime: file.mime, data: file.content.toString('base64') };
   }
 
   /**

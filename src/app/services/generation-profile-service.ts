@@ -12,7 +12,7 @@ import { EMPTY_PROFILE, EffectiveProfile, ProfileScope, ProfileTarget, ProfileVa
 import { GenerationProfileRepository } from '../../domain/ports/generation-profile-repository';
 import { ProviderRepository } from '../../domain/ports/provider-repository';
 import { ScreenplayRepository } from '../../domain/ports/screenplay-repository';
-import { ProfileChanges, applyProfileChanges, readProfileChanges, resolveProfile } from '../../domain/rules/generation-profile-rules';
+import { ProfileChanges, applyProfileChanges, assertChangesAllowedInScope, readProfileChanges, resolveProfile } from '../../domain/rules/generation-profile-rules';
 import { readEntityId, readRecord } from '../../domain/rules/field-readers';
 import { ChangeNotifier } from './change-notifier';
 import { ProjectService } from './project-service';
@@ -74,7 +74,7 @@ export class GenerationProfileService {
    * 保存某一级的参数修改：changes 里出现的字段被覆盖，值为 null（或空串）表示恢复继承。
    * @param rawInput `{ scope: 'work' | 'episode', workId, episodeId, changes }`。
    * @returns 保存后的参数视图。
-   * @throws ValidationError 范围、字段或值不合法，或模型不是可用的视频模型。
+   * @throws ValidationError 范围、字段或值不合法（含在作品、集范围设置只能按镜头组设置的生成时长），或模型不是可用的视频模型。
    * @throws NotFoundError 作品或集不存在。
    */
   save(rawInput: unknown): EpisodeProfileView {
@@ -112,8 +112,9 @@ export class GenerationProfileService {
     this.saveChanges({ scope: 'work', workId }, readProfileChanges(changes));
   }
 
-  /** 校验模型后把修改合并到该范围已保存的值并通知变化。 */
+  /** 校验范围与模型后把修改合并到该范围已保存的值并通知变化。 */
   private saveChanges(target: ProfileTarget, changes: ProfileChanges): void {
+    assertChangesAllowedInScope(target.scope, changes);
     if (changes.modelId !== undefined && changes.modelId !== null) {
       const model = this.dependencies.models.findModelById(changes.modelId);
       if (model === undefined || model.kind !== 'video') {

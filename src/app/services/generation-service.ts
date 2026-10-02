@@ -10,7 +10,7 @@
 import { FORM_LEVEL_ERROR_KEY, NotFoundError, ProviderError, ValidationError } from '../../domain/errors';
 import { ACTIVE_JOB_STATUSES, GenerationParams, JOB_STATUS_LABELS, JobFailure, JobStatus, VideoJobRecord, VideoResultRecord } from '../../domain/models/generation';
 import { EMPTY_PROFILE, ProfileValues } from '../../domain/models/generation-profile';
-import { VideoAudioMode, VideoCapability } from '../../domain/models/model-capability';
+import { DurationCapability, VideoAudioElement, VideoAudioMode, VideoCapability } from '../../domain/models/model-capability';
 import { EntityKind, ENTITY_KIND_LABELS } from '../../domain/models/screenplay';
 import { StageDisplayStatus, StageRun } from '../../domain/models/stage-run';
 import { ShotGroup, ShotRecord } from '../../domain/models/storyboard';
@@ -34,8 +34,10 @@ import {
   planGroupRequest,
   readSubmitInput,
   readTailFrameFailure,
-  readTailFrameInput
+  readTailFrameInput,
+  validateGroupParams
 } from '../../domain/rules/generation-rules';
+import { describeDuration } from '../../domain/rules/model-capability-rules';
 import {
   GROUP_SECONDS_MAX,
   GROUP_SECONDS_MIN,
@@ -88,6 +90,14 @@ export interface WorkbenchModel {
   readonly aspectRatios: readonly string[];
   readonly resolutions: readonly string[];
   readonly audioModes: readonly VideoAudioMode[];
+  /** 原生支持的声音内容。 */
+  readonly audioElements: readonly VideoAudioElement[];
+  /** 是否支持随机种子；不支持时参数页签的种子置灰。 */
+  readonly supportsSeed: boolean;
+  /** 时长约束，页面据此检查本组指定的生成时长。 */
+  readonly duration: DurationCapability;
+  /** 时长约束的文字描述，如“2–30 秒，可由模型自动决定”。 */
+  readonly durationText: string;
   /** 单次最多可生成的时长（秒）；没有上限信息时为 null。镜头组超过它就不能用该模型生成。 */
   readonly maxGroupSeconds: number | null;
 }
@@ -122,6 +132,8 @@ export interface JobParamsView {
   /** 整组视频的时长（秒）。 */
   readonly durationSeconds: number | null;
   readonly audioMode: VideoAudioMode | null;
+  /** 实际传给模型的声音内容；声音模式不是原生生成、或早期版本提交的任务为 null。 */
+  readonly audioElements: readonly VideoAudioElement[] | null;
   readonly seed: number | null;
 }
 
@@ -227,6 +239,10 @@ export interface GroupPreview {
   readonly referenceImageCount: number;
   readonly referenceAudioCount: number;
   readonly audioMode: VideoAudioMode | null;
+  /** 实际传给模型的声音内容；声音模式不是原生生成、或组不能提交时为 null。 */
+  readonly audioElements: readonly VideoAudioElement[] | null;
+  /** 本组使用的随机种子；为空表示随机。 */
+  readonly seed: number | null;
   /** 阻断问题：有任何一条时这一组不能提交。 */
   readonly blocking: readonly string[];
   /** 提醒：不阻止提交。 */
@@ -268,7 +284,10 @@ function mergeGroupParams(base: GenerationParams, override: ProfileValues | unde
     modelId: override.modelId ?? base.modelId,
     aspectRatio: override.aspectRatio ?? base.aspectRatio,
     resolution: override.resolution ?? base.resolution,
-    audioMode: override.audioMode ?? base.audioMode
+    audioMode: override.audioMode ?? base.audioMode,
+    audioElements: override.audioElements ?? base.audioElements,
+    seed: override.seed ?? base.seed,
+    durationSeconds: override.durationSeconds ?? base.durationSeconds
   };
 }
 
@@ -333,6 +352,10 @@ export class GenerationService {
         aspectRatios: capability.aspectRatios,
         resolutions: capability.resolutions,
         audioModes: capability.audioModes,
+        audioElements: capability.audioElements,
+        supportsSeed: capability.seed,
+        duration: capability.duration,
+        durationText: describeDuration(capability.duration),
         maxGroupSeconds: maxGroupSeconds(capability.duration)
       };
     });
@@ -484,6 +507,8 @@ export class GenerationService {
         referenceImageCount: 0,
         referenceAudioCount: 0,
         audioMode: input.params.audioMode,
+        audioElements: null,
+        seed: input.params.seed,
         blocking: issues,
         warnings: []
       });
@@ -510,6 +535,11 @@ export class GenerationService {
       const { usable, call, capability, modelMax } = resolvedContext;
       if (modelMax !== null && total > modelMax) {
         reject(groupId, group, [`这一组共 ${total} 秒，超过所选模型单次最长 ${modelMax} 秒。请拆分这一组、重新分组，或换一个支持更长时长的模型。`]);
+        continue;
+      }
+      const paramIssues = validateGroupParams(capability, groupParams, total);
+      if (paramIssues.length > 0) {
+        reject(groupId, group, paramIssues);
         continue;
       }
       // 组的第一个镜头设为“上一镜头尾帧作首帧”时，这一组要接在上一组后面（第一组没有上一组，不适用）。
@@ -576,6 +606,8 @@ export class GenerationService {
         referenceImageCount: snapshot.referenceImageFileIds.length,
         referenceAudioCount: snapshot.referenceAudioFileIds.length,
         audioMode: snapshot.params.audioMode,
+        audioElements: snapshot.params.audioElements ?? null,
+        seed: snapshot.params.seed,
         blocking: [],
         warnings: jobs.listResultsByGroups([group.id]).length > 0 ? [...snapshot.warnings, '这一组已有成功的结果，本次会产生新的版本，不会覆盖已有视频。'] : snapshot.warnings
       });
@@ -932,6 +964,7 @@ export class GenerationService {
         resolution: job.snapshot.params.resolution,
         durationSeconds: job.snapshot.params.durationSeconds,
         audioMode: job.snapshot.params.audioMode,
+        audioElements: job.snapshot.params.audioElements ?? null,
         seed: job.snapshot.params.seed
       },
       prompt: job.snapshot.prompt,

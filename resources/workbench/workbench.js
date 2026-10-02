@@ -175,12 +175,12 @@
   function profileGroup() {
     if (!view || view.groups.length === 0) return null;
     const group = view.groups[selectedGroupIndex()];
-    return { id: group.id, seq: group.seq, overrides: group.overrides };
+    return { id: group.id, seq: group.seq, overrides: group.overrides, totalSeconds: group.totalSeconds };
   }
 
   /** 一个镜头组的生效参数：本组覆盖优先于本集的生效值；还没有参数视图时为 null。 */
   function groupResolved(group) {
-    return catalog && profile ? aiProfile.resolveForGroup(catalog, profile, group.overrides) : null;
+    return catalog && profile ? aiProfile.resolveForGroup(catalog, profile, group) : null;
   }
 
   /** 保存某一级的参数修改，成功后用返回的视图刷新工具栏、提交按钮和参数页；镜头组级的覆盖保存后重新读取本集视图。 */
@@ -257,6 +257,12 @@
     aiStage.open(workId, STAGE_STORYBOARD, episodeId);
   }
 
+  /** 弹出分镜脚本产出层并定位到一个镜头组的第一个镜头。 */
+  function editGroupShots(group) {
+    const { workId, episodeId } = parseEpisodeKey(episodeKey);
+    aiStage.open(workId, STAGE_STORYBOARD, episodeId, group.shots.length > 0 ? group.shots[0].id : null);
+  }
+
   function hasActiveJob(group) {
     return group.jobs.some((job) => ACTIVE_STATUSES.includes(job.status));
   }
@@ -293,7 +299,7 @@
   /** 本组覆盖了哪些参数，一行文字；没有覆盖为空串。 */
   function describeOverrides(group) {
     const { overrides } = group;
-    const labels = { modelId: '模型', aspectRatio: '画幅', resolution: '分辨率', audioMode: '声音' };
+    const labels = { modelId: '模型', aspectRatio: '画幅', resolution: '分辨率', audioMode: '声音', audioElements: '声音内容', seed: '种子', durationSeconds: '生成时长' };
     const parts = Object.keys(labels)
       .filter((field) => overrides[field] !== null)
       .map((field) => {
@@ -302,6 +308,8 @@
           const model = catalog && catalog.models.find((item) => item.id === value);
           return `${labels[field]}：${model ? model.displayName : '（不可用）'}`;
         }
+        if (field === 'audioElements') return `${labels[field]}：${aiProfile.describeElements(value)}`;
+        if (field === 'durationSeconds') return `${labels[field]}：${value} 秒`;
         return `${labels[field]}：${field === 'audioMode' ? AUDIO_MODE_LABELS[value] || value : value}`;
       });
     return parts.join(' · ');
@@ -318,7 +326,9 @@
         modelId: Number(resolved.values.modelId),
         aspectRatio: resolved.values.aspectRatio,
         resolution: resolved.values.resolution,
-        audioMode: resolved.values.audioMode
+        audioMode: resolved.values.audioMode,
+        audioElements: resolved.values.audioElements,
+        seed: resolved.values.seed
       }
     };
   }
@@ -495,6 +505,7 @@
       `${job.shotCount} 个镜头`,
       job.usesPreviousTail ? '首帧：上一组尾帧' : '',
       AUDIO_MODE_LABELS[params.audioMode] || '',
+      params.audioMode === 'native' && params.audioElements ? aiProfile.describeElements(params.audioElements) : '',
       params.seed === null ? '' : `种子 ${params.seed}`
     ]
       .filter(Boolean)
@@ -513,6 +524,7 @@
       { label: '镜头数', value: String(job.shotCount) },
       { label: '首帧', value: job.usesPreviousTail ? '上一组尾帧' : '无' },
       { label: '声音', value: AUDIO_MODE_LABELS[params.audioMode] || orNone(params.audioMode) },
+      { label: '声音内容', value: params.audioElements ? aiProfile.describeElements(params.audioElements) : '（未指定）' },
       { label: '种子', value: orNone(params.seed) },
       { label: '结果', value: describeResult(job.result) },
       { label: '提示词', value: job.prompt, long: true }
@@ -643,7 +655,7 @@
     if (previous && group.jobs.length === 0 && previous.jobs.length === 0 && !submitting.has(group.id)) {
       buttons.push(aiUi.button({ text: '并入上一组', compact: true, ariaLabel: `把第 ${group.seq} 组并入上一组`, onClick: () => void mergeIntoPrevious(group) }));
     }
-    buttons.push(aiUi.button({ text: '编辑镜头', compact: true, ariaLabel: `编辑第 ${group.seq} 组的镜头`, onClick: openStoryboard }));
+    buttons.push(aiUi.button({ text: '编辑镜头', compact: true, ariaLabel: `编辑第 ${group.seq} 组的镜头`, onClick: () => editGroupShots(group) }));
     if (resultCount(group) > 1) {
       buttons.push(aiUi.button({ text: `结果版本（${resultCount(group)}）`, compact: true, ariaLabel: `查看第 ${group.seq} 组的结果版本`, onClick: () => openVersions(group) }));
     }

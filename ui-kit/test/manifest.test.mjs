@@ -27,6 +27,7 @@ test('令牌样式最先加载，核心脚本最先加载', () => {
 test('每个脚本只依赖排在它前面的脚本（按 aiUi.xxx 的使用检查）', () => {
   const providers = {
     'ui-button.js': ['button'],
+    'ui-audio-preview.js': ['audioPreview'],
     'ui-input-controls.js': ['textInput', 'textArea'],
     'ui-select.js': ['select'],
     'ui-choice-controls.js': ['radioGroup', 'checkbox', 'checkboxGroup', 'switchControl'],

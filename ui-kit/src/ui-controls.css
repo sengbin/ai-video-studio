@@ -1,7 +1,7 @@
 /*
  * ------------------------------------------------------------------------
  * 名称：ui-controls.css
- * 说明：界面组件库的控件样式：按钮、单行与多行输入、下拉列表、单选、复选、开关和字段包装。
+ * 说明：界面组件库的控件样式：按钮、试听、单行与多行输入、下拉列表、单选、复选、开关和字段包装。
  * 作者：Lion
  * 邮箱：chengbin@3578.cn
  * 日期：2026-09-30
@@ -104,6 +104,20 @@
   color: var(--disabled-text);
   background: var(--disabled-bg);
   cursor: default;
+}
+
+/* ---------- 试听 ---------- */
+/* 按钮与播放器同一行，宽度不够时播放器换到下一行 */
+.ui-audio-preview {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  max-width: 100%;
+}
+
+.ui-audio-preview audio {
+  max-width: 100%;
 }
 
 /* ---------- 单行、多行输入 ---------- */

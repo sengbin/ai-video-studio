@@ -33,6 +33,7 @@ const UI_LIBRARY_SCRIPTS = [
     'ui-core.js',
     'ui-scrollbar.js',
     'ui-button.js',
+    'ui-audio-preview.js',
     'ui-input-controls.js',
     'ui-select.js',
     'ui-choice-controls.js',
@@ -94,6 +95,9 @@ export const WORKBENCH_PAGE_RESOURCES: PageResources = createEditorPageResources
 
 /** 模型设置页：设置即时保存，没有弹出表单。 */
 export const SETTINGS_PAGE_RESOURCES: PageResources = createEditorPageResources(['settings/settings.css'], ['settings/settings.js']);
+
+/** 数据备份页：备份与恢复的确认都用组件库的对话框，没有表单。 */
+export const BACKUP_PAGE_RESOURCES: PageResources = createEditorPageResources(['backup/backup.css'], ['backup/backup.js']);
 
 /** 侧栏页面：有自己的布局，不加载编辑器区的基础样式。 */
 export const SIDEBAR_PAGE_RESOURCES: PageResources = {

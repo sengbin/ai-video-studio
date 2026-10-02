@@ -1,0 +1,119 @@
+/*
+ * ------------------------------------------------------------------------
+ * 名称：backup.css
+ * 说明：数据备份页样式：宽松设置分区（页面与卡片内边距 12px、卡片间距 12px）、卡片标题与说明、数据库信息列表、操作行与状态文字、设置对话框变体的按钮尺寸。
+ * 作者：Lion
+ * 邮箱：chengbin@3578.cn
+ * 日期：2026-10-03
+ * 备注：卡片表面用主题令牌混合，亮暗主题各有修正；按钮样式在组件库基础上调整为“设置对话框变体”（高 28px、圆角 5px），对话框里的按钮同样适用。
+ * ------------------------------------------------------------------------
+ */
+
+:root {
+  --backup-card-bg: color-mix(in srgb, var(--vscode-editorWidget-background, var(--bg)) 90%, rgb(255, 255, 255));
+  --backup-page-padding: 12px;
+  --backup-card-gap: 12px;
+  --backup-card-padding: 12px;
+  --backup-card-radius: 6px;
+  --backup-content-max-width: 720px;
+  --backup-label-width: 88px;
+}
+
+body.vscode-light {
+  --backup-card-bg: color-mix(in srgb, var(--bg) 62%, rgb(226, 226, 226));
+}
+
+body.vscode-dark {
+  --backup-card-bg: color-mix(in srgb, var(--bg) 97%, rgb(255, 255, 255));
+}
+
+body.backup-page {
+  padding: var(--backup-page-padding);
+}
+
+/* 内容宽度受限，避免大屏上一行过长 */
+.backup-page #app {
+  display: flex;
+  flex-direction: column;
+  gap: var(--backup-card-gap);
+  max-width: var(--backup-content-max-width);
+  min-width: 0;
+}
+
+.backup-card {
+  min-width: 0;
+  padding: var(--backup-card-padding);
+  background: var(--backup-card-bg);
+  border: 0;
+  border-radius: var(--backup-card-radius);
+  box-shadow: none;
+}
+
+.backup-card__title {
+  margin: 0 0 4px;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.backup-card__description {
+  margin: 0 0 10px;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+/* 数据库信息：标签列固定宽度，值可换行；窄屏时标签与值上下排列 */
+.backup-facts {
+  display: grid;
+  grid-template-columns: var(--backup-label-width) minmax(0, 1fr);
+  gap: 6px 12px;
+  margin: 0;
+}
+
+.backup-facts dt {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.backup-facts dd {
+  min-width: 0;
+  margin: 0;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 420px) {
+  .backup-facts {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+
+  .backup-facts dd {
+    margin: 0 0 6px;
+  }
+}
+
+/* 操作行：按钮在前，状态文字紧随其后，宽度不够时换行 */
+.backup-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+}
+
+.backup-status {
+  min-width: 0;
+  margin: 0;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+/* 设置对话框变体：按钮高 28px、圆角 5px、字体 12px、字重 500、水平内边距 12px */
+.backup-page .ui-button {
+  height: 28px;
+  padding: 0 12px;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: 5px;
+}

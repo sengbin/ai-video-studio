@@ -1,22 +1,31 @@
 // ------------------------------------------------------------------------
 // 名称：generation-profile.ts
-// 说明：生成参数的领域模型：作品级、集级参数值，以及合并后的生效参数与每个值的来源。
+// 说明：生成参数的领域模型：作品级、集级、镜头组级参数值（模型、画幅、分辨率、声音模式、声音内容、随机种子、本组生成时长），以及合并后的生效参数与每个值的来源。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
 // 备注：对应 generation_profiles 表（作品、集、镜头组三级覆盖，生效时本组 → 本集 → 作品 → 项目默认）；字段为 null 表示沿用上一级。
 // ------------------------------------------------------------------------
 
-import { VideoAudioMode } from './model-capability';
+import { VideoAudioElement, VideoAudioMode } from './model-capability';
 
 /** 可保存参数的范围：作品默认、本集覆盖、本组覆盖（镜头组是视频生成的单位）。 */
 export type ProfileScope = 'work' | 'episode' | 'group';
 
 /** 目前可保存的参数字段。 */
-export const PROFILE_FIELDS = ['modelId', 'aspectRatio', 'resolution', 'audioMode'] as const;
+export const PROFILE_FIELDS = ['modelId', 'aspectRatio', 'resolution', 'audioMode', 'audioElements', 'seed', 'durationSeconds'] as const;
 
 /** 参数字段名。 */
 export type ProfileField = (typeof PROFILE_FIELDS)[number];
+
+/** 随机种子的取值上限（含）：32 位有符号整数的最大值；各模型的实际范围由适配器校验。 */
+export const SEED_MAX = 2147483647;
+
+/** 镜头组指定生成时长的上限（秒），仅作输入合理性检查；模型支持的范围在提交时按模型能力校验。 */
+export const GROUP_DURATION_MAX_SECONDS = 3600;
+
+/** 只能在镜头组范围保存的参数字段：每组的镜头总时长不同，作品、集共用同一个时长没有意义。 */
+export const GROUP_ONLY_FIELDS: readonly ProfileField[] = ['durationSeconds'];
 
 /** 某一级保存的参数值；null 表示沿用上一级。 */
 export interface ProfileValues {
@@ -24,10 +33,24 @@ export interface ProfileValues {
   readonly aspectRatio: string | null;
   readonly resolution: string | null;
   readonly audioMode: VideoAudioMode | null;
+  /** 声音模式为模型原生生成时传给模型的声音内容（按固定顺序、至少一项）；null 表示沿用上一级，最终仍为空时取模型支持的全部。 */
+  readonly audioElements: readonly VideoAudioElement[] | null;
+  /** 随机种子，0 至 SEED_MAX；null 表示沿用上一级，最终仍为空时不传（随机）。 */
+  readonly seed: number | null;
+  /** 本组生成时长（秒），仅镜头组可设置；null 表示按组内镜头总时长向上对齐到模型支持的取值。 */
+  readonly durationSeconds: number | null;
 }
 
 /** 没有设置任何值。 */
-export const EMPTY_PROFILE: ProfileValues = { modelId: null, aspectRatio: null, resolution: null, audioMode: null };
+export const EMPTY_PROFILE: ProfileValues = {
+  modelId: null,
+  aspectRatio: null,
+  resolution: null,
+  audioMode: null,
+  audioElements: null,
+  seed: null,
+  durationSeconds: null
+};
 
 /** 参数的保存位置。 */
 export type ProfileTarget =

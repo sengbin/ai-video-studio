@@ -28,6 +28,7 @@ ui-kit/                        组件库（自绘控件、对话框及其测试�
     ui-core.js                 命名空间 aiUi、元素创建 h、唯一 id、事件发射器、层容器、指针跟踪、控件基类
     ui-scrollbar.js            悬停标记（data-ui-hover），配合 ui-scrollbar.css 显示滚动条
     ui-button.js               按钮（含添加、修改、删除预设）
+    ui-audio-preview.js        试听：“试听”按钮，点击后才读取音频并显示播放器
     ui-input-controls.js       单行输入框、多行文本框
     ui-select.js               下拉列表
     ui-choice-controls.js      单选组、复选框、复选框组、开关
@@ -43,6 +44,8 @@ ui-kit/                        组件库（自绘控件、对话框及其测试�
     ui-file-picker.test.mjs    文件选择测试（Base64 读取、限制、排序、变化通知）
     ui-dialog.test.mjs         对话框测试（确认、删除确认、拖动、调整大小）
     ui-table.test.mjs          表格测试（表头与行、列类型、占位与淡色、重设行数据、标签）
+    ui-audio-preview.test.mjs  试听测试（点击才读取、读取期间禁用、失败不显示播放器、再次点击从头播放）
+    stage-focus.test.mjs       分镜脚本产出层定位到所选镜头的页面测试（加载 resources/stage 脚本，放在这里随 npm test 运行）
     ui-styles.test.mjs         样式静态检查（滚动条、禁用态令牌）
 ```
 
@@ -329,6 +332,27 @@ const files = images.getValue();   // [{ name, mimeType, size, data }]，data �
 - 文件内容异步读取，读取中显示“读取中…”；提交前用 `whenReady()` 等待读取完成（表单引擎已自动处理）。
 - 前端限制只是体验层，宿主必须按内容重新校验（文件头、编码、大小），见 `src/domain/rules/work-rules.ts`。
 - 控件对象的 `focusTarget` 为选择按钮，`ariaTarget` 为外层 `role="group"`，`labelable` 为 false，因此字段包装用 `aria-labelledby` 关联标签。
+
+### 5.13 试听 `aiUi.audioPreview`
+
+```js
+const preview = aiUi.audioPreview({
+  ariaLabel: `试听音色参考：${name}`,
+  load: () => window.hostBridge.request('bindings.voiceAudio', { assetId })   // 返回 { mime, data }，data 为不带前缀的 Base64
+});
+container.append(preview.element);
+```
+
+| 选项 | 说明 |
+|---|---|
+| `load` | 必填；读取音频内容，返回 `{ mime, data }`。读取失败时由调用方自己提示原因并返回 `undefined`，控件不显示播放器 |
+| `text`、`ariaLabel` | 按钮文字（默认“试听”）与无障碍名称；同一页有多个试听按钮时用 `ariaLabel` 区分 |
+
+行为：
+
+- 点击按钮才调用 `load`；读取期间按钮禁用，成功后在按钮旁显示带控件的 `<audio>`（`data:` 地址）并自动播放；之后再点按钮不重复读取，从头播放。浏览器拒绝自动播放时，用户仍可点播放器上的按钮。
+- 页面 CSP 需允许 `media-src data:`（`createPageHtml` 已包含）；返回对象的 `element` 为根元素，`button` 为试听按钮的控件对象。
+- 资产版本层（音频版本）与工作台实体绑定页（音色参考）共用。
 
 ## 6. 字段包装 `aiUi.field`
 

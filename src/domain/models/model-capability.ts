@@ -29,6 +29,17 @@ export type VideoAudioMode = 'none' | 'native';
 /** 视频原生声音内容。 */
 export type VideoAudioElement = 'dialogue' | 'narration' | 'sfx' | 'music';
 
+/** 全部视频原生声音内容，按界面显示与提示词编译的固定顺序排列。 */
+export const VIDEO_AUDIO_ELEMENTS: readonly VideoAudioElement[] = ['dialogue', 'narration', 'sfx', 'music'];
+
+/** 视频原生声音内容的显示名称。 */
+export const VIDEO_AUDIO_ELEMENT_LABELS: Readonly<Record<VideoAudioElement, string>> = {
+  dialogue: '对白',
+  narration: '旁白',
+  sfx: '音效',
+  music: '配乐'
+};
+
 /** 请求中的时长取此值，表示由模型自动决定（智能时长），仅当能力的 allowAuto 为 true 时可用。 */
 export const AUTO_DURATION_SECONDS = -1;
 
@@ -70,6 +81,7 @@ export interface VideoCapability {
   readonly lastFrame: boolean;
   /** 参考图数量上限；0 表示不支持参考图。 */
   readonly referenceImagesMax: number;
+  /** 是否支持随机种子：为 false 时生成参数不能设置种子；取值范围由适配器校验。 */
   readonly seed: boolean;
   readonly promptLanguages: readonly PromptLanguage[];
   readonly promptMaxLength: number;

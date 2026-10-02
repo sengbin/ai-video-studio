@@ -19,6 +19,7 @@ import { shotGroupsMigration } from './008-shot-groups';
 import { assetGenerationMigration } from './009-asset-generation';
 import { globalAssetsMigration } from './010-global-assets';
 import { groupProfilesMigration } from './011-group-profiles';
+import { profileDurationMigration } from './012-profile-duration';
 
 /** 全部数据库迁移，版本号从 1 开始连续递增。 */
 export const MIGRATIONS: readonly Migration[] = [
@@ -32,5 +33,6 @@ export const MIGRATIONS: readonly Migration[] = [
   shotGroupsMigration,
   assetGenerationMigration,
   globalAssetsMigration,
-  groupProfilesMigration
+  groupProfilesMigration,
+  profileDurationMigration
 ];

@@ -181,10 +181,6 @@
   gap: 8px;
 }
 
-.asset-ver__player audio {
-  max-width: 100%;
-}
-
 .asset-ver__prompt {
   margin: 4px 0 0;
   white-space: pre-wrap;

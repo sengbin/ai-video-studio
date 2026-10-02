@@ -14,17 +14,9 @@ import {
   ImageCapability,
   ModelCapability,
   ModelKind,
-  VideoAudioElement,
+  VIDEO_AUDIO_ELEMENT_LABELS,
   VideoCapability
 } from '../models/model-capability';
-
-/** 视频原生声音内容的显示名称。 */
-const AUDIO_ELEMENT_LABELS: Readonly<Record<VideoAudioElement, string>> = {
-  dialogue: '对白',
-  narration: '旁白',
-  sfx: '音效',
-  music: '配乐'
-};
 
 /** 音频类型的显示名称。 */
 const AUDIO_KIND_LABELS: Readonly<Record<string, string>> = { voice: '音色参考', music: '配乐', sfx: '音效' };
@@ -96,8 +88,11 @@ export function isDurationAllowed(duration: DurationCapability, seconds: number)
   return step === undefined || min === undefined || Number.isInteger((seconds - min) / step);
 }
 
-/** 时长约束的文字描述，如“2–30 秒，可由模型自动决定”。 */
-function describeDuration(duration: DurationCapability): string {
+/**
+ * 时长约束的文字描述，如“2–30 秒，可由模型自动决定”。
+ * @param duration 时长约束。
+ */
+export function describeDuration(duration: DurationCapability): string {
   let text: string;
   if (duration.options !== undefined) {
     text = `${duration.options.join(LIST_SEPARATOR)} 秒`;
@@ -123,7 +118,7 @@ function summarizeVideo(capability: VideoCapability): string[] {
   if (capability.referenceImagesMax > 0) inputs.push(`参考图（最多 ${capability.referenceImagesMax} 张）`);
   if (capability.audioInputMax !== null) inputs.push(`参考音频（最多 ${capability.audioInputMax.count} 段）`);
   const audio = capability.audioModes.includes('native')
-    ? `原生生成${capability.audioElements.length > 0 ? `（${capability.audioElements.map((element) => AUDIO_ELEMENT_LABELS[element]).join(LIST_SEPARATOR)}）` : ''}`
+    ? `原生生成${capability.audioElements.length > 0 ? `（${capability.audioElements.map((element) => VIDEO_AUDIO_ELEMENT_LABELS[element]).join(LIST_SEPARATOR)}）` : ''}`
     : '无声';
   return [
     ...listLine('画幅', capability.aspectRatios),

@@ -235,7 +235,7 @@ test('目标模型：选项取自可用模型，保存为作品默认并在下�
     await runner.whenIdle();
     assert.equal(started.length, 1);
     assert.ok(text.requests.at(-1)?.user.includes('目标视频画幅为 9:16'), '所选画幅传给了分镜提示词');
-    assert.deepEqual(profiles.getWorkDefaults(work.id).values, { modelId, aspectRatio: '9:16', resolution: '720P', audioMode: null });
+    assert.deepEqual(profiles.getWorkDefaults(work.id).values, { ...EMPTY_PROFILE, modelId, aspectRatio: '9:16', resolution: '720P' });
 
     const again = await open({ workId: work.id });
     assert.deepEqual([again.initialValues.videoModel, again.initialValues.aspectRatio, again.initialValues.resolution], [FAKE_MODEL_LABEL, '9:16', '720P']);

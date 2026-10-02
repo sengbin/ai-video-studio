@@ -10,6 +10,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { NotFoundError, ValidationError } from '../../domain/errors';
+import { EMPTY_PROFILE } from '../../domain/models/generation-profile';
 import { VideoCapability } from '../../domain/models/model-capability';
 import { VideoGenerationRequest } from '../../domain/ports/provider-adapters';
 import { ProviderRegistry } from '../../domain/ports/provider-registry';
@@ -152,6 +153,10 @@ test('工作台清单：列出有分镜脚本的作品与集，以及可用的�
         aspectRatios: FAKE_VIDEO_CAPABILITY.aspectRatios,
         resolutions: FAKE_VIDEO_CAPABILITY.resolutions,
         audioModes: FAKE_VIDEO_CAPABILITY.audioModes,
+        audioElements: FAKE_VIDEO_CAPABILITY.audioElements,
+        supportsSeed: true,
+        duration: FAKE_VIDEO_CAPABILITY.duration,
+        durationText: '2–10 秒',
         maxGroupSeconds: 10
       }
     ]);
@@ -790,18 +795,18 @@ test('镜头组参数覆盖：保存、恢复继承、校验归属与模型，�
   try {
     fixture.approve();
     const [first, second] = fixture.groupIds();
-    assert.deepEqual(fixture.episode().groups[0].overrides, { modelId: null, aspectRatio: null, resolution: null, audioMode: null });
+    assert.deepEqual(fixture.episode().groups[0].overrides, EMPTY_PROFILE);
 
-    assert.deepEqual(saveGroupProfile(fixture, first, { resolution: '1080P', audioMode: 'none' }), { modelId: null, aspectRatio: null, resolution: '1080P', audioMode: 'none' });
+    assert.deepEqual(saveGroupProfile(fixture, first, { resolution: '1080P', audioMode: 'none' }), { ...EMPTY_PROFILE, resolution: '1080P', audioMode: 'none' });
     saveGroupProfile(fixture, first, { audioMode: null });
-    assert.deepEqual(fixture.episode().groups[0].overrides, { modelId: null, aspectRatio: null, resolution: '1080P', audioMode: null });
+    assert.deepEqual(fixture.episode().groups[0].overrides, { ...EMPTY_PROFILE, resolution: '1080P' });
     assert.equal(fixture.episode().groups[1].overrides.resolution, null, '只影响指定的组');
     assert.ok(second > first);
 
     assert.throws(() => saveGroupProfile(fixture, 99999, { resolution: '720P' }), ValidationError);
     assert.throws(() => saveGroupProfile(fixture, first, { modelId: 99999 }), (error) => error instanceof ValidationError && error.fieldErrors.modelId !== undefined);
     assert.throws(() => saveGroupProfile(fixture, first, {}), ValidationError);
-    assert.throws(() => saveGroupProfile(fixture, first, { seed: 1 }), ValidationError);
+    assert.throws(() => saveGroupProfile(fixture, first, { extraParams: {} }), ValidationError);
   } finally {
     fixture.database.close();
   }
@@ -845,5 +850,69 @@ test('镜头组参数覆盖：提交与预览按每组自己的参数编译，�
     assert.match(result.rejected[0].issues.join(), /这一组指定的视频模型不可用/);
   } finally {
     disabled.database.close();
+  }
+});
+
+test('种子与声音内容：本次提交的值写入快照并出现在预览里；镜头组覆盖优先，版本视图能看到', async () => {
+  const fixture = await createFixture({ groupMaxSeconds: '4' });
+  try {
+    fixture.approve();
+    const [first, second] = fixture.groupIds();
+    saveGroupProfile(fixture, second, { seed: 9, audioElements: ['sfx'] });
+    const params = { seed: 7, audioMode: 'native', audioElements: ['sfx', 'dialogue'] };
+    const preview = await fixture.generation.previewSubmit({
+      workId: fixture.work.id,
+      episodeId: fixture.episodeId,
+      groupIds: [first, second],
+      params: { modelId: fixture.modelId, ...PARAMS, ...params }
+    });
+    assert.deepEqual(preview.groups.map((group) => [group.seed, group.audioElements]), [
+      [7, ['dialogue', 'sfx']],
+      [9, ['sfx']]
+    ]);
+
+    const result = await submitGroups(fixture, [first, second], params);
+    assert.equal(result.rejected.length, 0);
+    const [firstJob] = fixture.jobs.listJobsByGroups([first]);
+    const [secondJob] = fixture.jobs.listJobsByGroups([second]);
+    assert.deepEqual([firstJob.snapshot.params.seed, firstJob.snapshot.params.audioElements], [7, ['dialogue', 'sfx']]);
+    assert.deepEqual([secondJob.snapshot.params.seed, secondJob.snapshot.params.audioElements], [9, ['sfx']]);
+    const view = fixture.episode().groups[1].jobs[0];
+    assert.deepEqual([view.params.seed, view.params.audioMode, view.params.audioElements], [9, 'native', ['sfx']]);
+  } finally {
+    fixture.database.close();
+  }
+});
+
+test('生成时长：本组指定的时长按模型能力校验，小于镜头总时长、不在取值内或模型不支持种子时拒绝那一组', async () => {
+  const fixture = await createFixture({ groupMaxSeconds: '4' });
+  try {
+    fixture.approve();
+    const [first, second] = fixture.groupIds();
+    const total = fixture.episode().groups[0].totalSeconds;
+    saveGroupProfile(fixture, first, { durationSeconds: 10 });
+    saveGroupProfile(fixture, second, { durationSeconds: 1 });
+    const result = await submitGroups(fixture, [first, second]);
+    assert.deepEqual(result.submitted.map((item) => item.groupId), [first]);
+    assert.equal(fixture.jobs.listJobsByGroups([first])[0].snapshot.params.durationSeconds, 10, '直接采用指定的时长');
+    assert.match(result.rejected[0].issues.join(), /小于这一组镜头的总时长/);
+    assert.ok(total < 10);
+
+    saveGroupProfile(fixture, second, { durationSeconds: 11 });
+    assert.match((await submitGroups(fixture, [second])).rejected[0].issues.join(), /不在模型支持的取值内/);
+    saveGroupProfile(fixture, second, { durationSeconds: null });
+    assert.equal((await submitGroups(fixture, [second])).rejected.length, 0, '清除后按镜头总时长对齐');
+  } finally {
+    fixture.database.close();
+  }
+
+  const noSeed = await createFixture({ groupMaxSeconds: '4' }, { ...FAKE_VIDEO_CAPABILITY, seed: false });
+  try {
+    noSeed.approve();
+    const [first] = noSeed.groupIds();
+    assert.match((await submitGroups(noSeed, [first], { seed: 5 })).rejected[0].issues.join(), /不支持随机种子/);
+    assert.equal((await submitGroups(noSeed, [first])).rejected.length, 0, '不设置种子照常提交');
+  } finally {
+    noSeed.database.close();
   }
 });

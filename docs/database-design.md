@@ -516,7 +516,7 @@ erDiagram
 
 #### `generation_profiles` 生成参数
 
-每个作品、集、镜头最多一条，字段为空表示沿用上一级。
+每个作品、集、镜头组最多一条，字段为空表示沿用上一级。
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
@@ -531,17 +531,19 @@ erDiagram
 | `min_shot_seconds` | 实数 | 否 | 单镜头最短时长，仅作品级使用 |
 | `max_shot_seconds` | 实数 | 否 | 单镜头最长时长，仅作品级使用 |
 | `audio_mode` | 文本 | 否 | `none` 无声、`native` 模型原生生成、`external` 独立音轨（预留，本阶段不可选） |
-| `audio_elements_json` | 文本（JSON） | 否 | 启用的声音内容，数组，元素为 `dialogue`、`narration`、`sfx`、`music`；仅 `audio_mode` 不为 `none` 时有意义 |
-| `seed` | 整数 | 否 | 随机种子 |
+| `audio_elements_json` | 文本（JSON） | 否 | 启用的声音内容，数组，元素为 `dialogue`、`narration`、`sfx`、`music`，按这个顺序去重保存、至少一项；仅 `audio_mode` 为 `native` 时有意义；为空表示模型支持的全部（已实现，工作台参数页签读写） |
+| `seed` | 整数 | 否 | 随机种子，0 至 2147483647；为空表示随机，不传给模型；仅模型能力声明支持种子时可用（已实现，工作台参数页签读写） |
+| `duration_seconds` | 实数 | 否 | 本组生成时长（秒），迁移 012 新增，大于 0，**仅 `scope = group` 使用**（作品、集不保存）：整组视频的时长；为空表示按组内镜头总时长向上对齐到模型支持的取值 |
 | `extra_params_json` | 文本（JSON） | 是 | 模型专有参数，默认 `{}` |
 | `updated_at` | 文本 | 是 | |
 
 约束：
 
 - `work_id`、`episode_id`、`group_id` 三者中有且仅有一个非空，且与 `scope` 一致（CHECK）。
-- 每个目标最多一条：`work_id`、`episode_id`、`shot_id` 各建一个部分唯一索引。
+- 每个目标最多一条：`work_id`、`episode_id`、`group_id` 各建一个部分唯一索引。
+- `duration_seconds` 为空或大于 0（CHECK）；只能在镜头组范围保存，由规则层在保存时拒绝作品、集范围的写入。
 
-**参数合并规则**：对每个参数，依次取镜头、集、作品的值，取第一个非空值；画幅和分辨率最后回退到项目默认值。单镜头时长以 `shots.duration_seconds` 为准，并校验落在作品级时长范围和模型能力范围内。
+**参数合并规则**：对每个参数，依次取镜头组、集、作品的值，取第一个非空值；画幅和分辨率最后回退到项目默认值。种子为空表示随机（不传），声音内容为空表示模型支持的全部；`duration_seconds` 只取镜头组的值。提交时按每组自己合并后的参数校验：种子要求模型能力声明支持；指定的生成时长不得小于组内镜头总时长，并须落在模型能力的时长范围内（`min`、`max`、`step` 或 `options`）；模型不支持的声音内容在提交预览中列出并忽略。单镜头时长仍以 `shots.duration_seconds` 为准（在分镜脚本阶段编辑），“单镜头时长范围”目前保存在分镜脚本阶段记录的输入快照中，本表的 `min_shot_seconds`、`max_shot_seconds` 暂未写入。
 
 ### 4.7 生成任务与结果
 
@@ -573,7 +575,7 @@ erDiagram
 |---|---|
 | `providerCode`、`modelCode` | 服务商与模型标识 |
 | `shotIds` | 本次生成包含的镜头（组内全部），按序号排列 |
-| `params` | 合并后的最终参数：`aspectRatio`、`resolution`、`durationSeconds`（组总时长，按模型能力向上对齐）、`audioMode`、`seed`、`extraParams` |
+| `params` | 合并后的最终参数：`aspectRatio`、`resolution`、`durationSeconds`（组总时长，按模型能力向上对齐；本组指定了生成时长时取指定值）、`audioMode`、`audioElements`（实际编译进提示词的声音内容，已去掉模型不支持的项；声音模式不是原生生成时为 `null`；早期版本提交的快照没有这个键）、`seed`、`extraParams` |
 | `prompt` | 编译后的提示词：参考图编号说明开头；多镜头时每个镜头写成“(开始 - 结束) 镜头提示词 声音：…”的时间段（如 `(0:00 - 0:04)`），单镜头不加时间段 |
 | `referenceImageFileIds` | 组内出场实体（去重）使用的资产图片文件 ID 列表（只存引用，提交给服务商前才读取内容） |
 | `referenceAudioFileIds` | 使用的资产音频文件 ID 列表（含角色音色参考） |
@@ -619,7 +621,7 @@ erDiagram
 
 ### 4.8 独立音轨（预留）
 
-用于“声音与视频分开生成、再合成”的方式。**本阶段只设计结构，不开发功能，也不建表**；开发时新增迁移 `012-audio-tracks`（011 已用于镜头组参数）。
+用于“声音与视频分开生成、再合成”的方式。**本阶段只设计结构，不开发功能，也不建表**；开发时新增迁移 `013-audio-tracks`（011 已用于镜头组参数，012 已用于生成参数的生成时长）。
 
 #### `episode_audio_tracks` 集的独立音轨
 
@@ -803,11 +805,12 @@ erDiagram
 | 9 | `009-asset-generation` | `assets` 增加修订号、提示词状态、采用版本字段；新增 `asset_versions`、`asset_version_files` | 已实现（步骤 11） |
 | 10 | `010-global-assets` | 重建 `assets`：去掉 `project_id`，唯一约束改为 `(kind, name)`；重名资产保留最早的一个，其余在名称后加（项目名）；原来沿用项目风格的图像资产把项目风格写入 `style`；资产文件、绑定、生成版本全部保留（迁移执行器支持 `rebuildsReferencedTables`：执行期间关闭外键，结束后检查完整性） | 已实现 |
 | 11 | `011-group-profiles` | 重建 `generation_profiles`：范围改为作品、集、镜头组，新增 `group_id` | 已实现 |
-| 12 | `012-audio-tracks` | `episode_audio_tracks`（预留，开发独立音轨时再新增） | 后续 |
+| 12 | `012-profile-duration` | `generation_profiles` 新增 `duration_seconds`（本组生成时长）；种子、声音内容列早已预留，无需改表 | 已实现 |
+| 13 | `013-audio-tracks` | `episode_audio_tracks`（预留，开发独立音轨时再新增） | 后续 |
 
 拆分说明：镜头引用资产文件，因此资产在分镜之前建立；前五个迁移创建了 22 张表，迁移 8 再增加镜头组表，各功能的仓库随功能实现逐步补全。
 
-已发布的脚本不再修改；结构变更一律新增下一个编号的脚本。测试阶段不考虑已有数据，需要重建表（例如修改 CHECK 约束）时，新增的迁移可以直接丢弃该表及其下游表的数据，不做数据搬迁，正式发布后不再允许。升级前先复制数据库文件作为备份。
+已发布的脚本不再修改；结构变更一律新增下一个编号的脚本。测试阶段不考虑已有数据，需要重建表（例如修改 CHECK 约束）时，新增的迁移可以直接丢弃该表及其下游表的数据，不做数据搬迁；首次发布版本（0.0.1）之后不再允许，迁移 001 至 012 视为已发布。升级前先复制数据库文件作为备份。
 
 ## 9. 与架构文档的差异说明
 

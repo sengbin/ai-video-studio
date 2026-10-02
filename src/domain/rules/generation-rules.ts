@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：generation-rules.ts
-// 说明：视频生成的规则：提交请求的读取与校验、把镜头组的总时长对齐到模型允许的取值、把一组镜头编译为带时间段的提示词与请求快照（含以上一组尾帧作首帧）、工作台上传的尾帧图片的校验，以及失败原因的界面说明。
+// 说明：视频生成的规则：提交请求的读取与校验、把镜头组的总时长对齐到模型允许的取值（或按本组指定的生成时长）、检查种子与指定时长能否用于所选模型、把一组镜头编译为带时间段的提示词与请求快照（含以上一组尾帧作首帧、按选定的声音内容编译声音）、工作台上传的尾帧图片的校验，以及失败原因的界面说明。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
@@ -9,10 +9,12 @@
 
 import { FORM_LEVEL_ERROR_KEY, ValidationError } from '../errors';
 import { GenerationParams, JobFailure, JobSnapshot } from '../models/generation';
-import { DurationCapability, VideoAudioMode, VideoCapability } from '../models/model-capability';
+import { DurationCapability, VIDEO_AUDIO_ELEMENTS, VIDEO_AUDIO_ELEMENT_LABELS, VideoAudioElement, VideoAudioMode, VideoCapability } from '../models/model-capability';
 import { ENTITY_KIND_LABELS, EntityKind } from '../models/screenplay';
 import { ShotRecord, SoundRecord } from '../models/storyboard';
 import { readRecord } from './field-readers';
+import { AUDIO_ELEMENTS_ERROR_TEXT, SEED_ERROR_TEXT, isValidSeed, readAudioElements } from './generation-profile-rules';
+import { describeDuration, isDurationAllowed } from './model-capability-rules';
 import { sumSeconds } from './shot-group-rules';
 
 /** 一次提交最多包含的镜头组数。 */
@@ -101,7 +103,7 @@ function readOptionalParam(source: Record<string, unknown>, key: string, label: 
 
 /**
  * 读取并校验提交请求。
- * @param rawInput 界面提交的原始内容：workId、episodeId、groupIds、params（modelId、aspectRatio、resolution、audioMode）。
+ * @param rawInput 界面提交的原始内容：workId、episodeId、groupIds、params（modelId、aspectRatio、resolution、audioMode、audioElements、seed）。
  * @throws ValidationError 内容不合法。
  */
 export function readSubmitInput(rawInput: unknown): SubmitInput {
@@ -117,6 +119,15 @@ export function readSubmitInput(rawInput: unknown): SubmitInput {
   if (audioMode !== null && audioMode !== 'none' && audioMode !== 'native') {
     throw new ValidationError({ audioMode: '声音模式不合法。' });
   }
+  // 声音内容与种子为空表示不指定；填写了就必须合法，不合法时指出字段而不是静默丢弃。
+  const audioElements = params.audioElements === undefined || params.audioElements === null ? null : readAudioElements(params.audioElements);
+  if (audioElements === undefined) {
+    throw new ValidationError({ audioElements: AUDIO_ELEMENTS_ERROR_TEXT });
+  }
+  const seed = params.seed === undefined || params.seed === null ? null : params.seed;
+  if (seed !== null && !isValidSeed(seed)) {
+    throw new ValidationError({ seed: SEED_ERROR_TEXT });
+  }
   return {
     workId,
     episodeId,
@@ -125,7 +136,11 @@ export function readSubmitInput(rawInput: unknown): SubmitInput {
       modelId: readIdentifier(params, 'modelId', '模型'),
       aspectRatio: readOptionalParam(params, 'aspectRatio', '画幅'),
       resolution: readOptionalParam(params, 'resolution', '分辨率'),
-      audioMode
+      audioMode,
+      audioElements,
+      seed,
+      // 生成时长只能按镜头组指定，提交请求不携带；镜头组的覆盖在合并参数时补上。
+      durationSeconds: null
     }
   };
 }
@@ -220,6 +235,31 @@ export function maxGroupSeconds(duration: DurationCapability): number | null {
   return duration.max ?? null;
 }
 
+/**
+ * 检查镜头组的生成参数能否用于所选模型：随机种子需要模型支持；指定的生成时长不得小于组内镜头总时长（不截断镜头），且必须在模型支持的取值内。
+ * 画幅、分辨率、声音模式等由适配器按模型能力校验，这里不重复。
+ * @param capability 所选模型的能力。
+ * @param params 这一组合并后的生成参数。
+ * @param totalSeconds 组内镜头时长之和（秒）。
+ * @returns 阻断问题说明；没有问题为空数组。
+ */
+export function validateGroupParams(capability: VideoCapability, params: GenerationParams, totalSeconds: number): string[] {
+  const issues: string[] = [];
+  if (params.seed !== null && !capability.seed) {
+    issues.push('所选模型不支持随机种子，请清除种子设置或换一个模型。');
+  }
+  const requested = params.durationSeconds;
+  if (requested !== null) {
+    // 指定时长小于镜头总时长会让后面的镜头没有时间呈现，直接拒绝而不是静默截断。
+    if (requested < totalSeconds - EPSILON) {
+      issues.push(`指定的生成时长 ${requested} 秒小于这一组镜头的总时长 ${totalSeconds} 秒，镜头会被截断。请调大生成时长，或清除该设置，按镜头总时长生成。`);
+    } else if (!isDurationAllowed(capability.duration, requested)) {
+      issues.push(`指定的生成时长 ${requested} 秒不在模型支持的取值内（${describeDuration(capability.duration)}）。`);
+    }
+  }
+  return issues;
+}
+
 /** 出场实体的绑定情况：形象参考图与音色参考音频的资产文件标识，没有绑定为 null。 */
 export interface EntityReferences {
   readonly entityId: number;
@@ -279,7 +319,7 @@ export function formatTimestamp(seconds: number): string {
 /**
  * 把一个镜头组编译为任务请求快照：多镜头用“(开始 - 结束)”时间段依次描述，拼上参考素材与声音说明，按模型能力对齐时长与声音，并列出提醒。
  * 上一组尾帧作首帧由调用方通过 useFirstFrame 告知（尾帧图片不进快照，由任务记录）；指定图片首帧本版本尚未支持：组内第一个镜头设置了它时忽略并提醒；组内其他镜头的首帧设置在同一个视频内自然衔接，不需要处理。
- * 组总时长超过模型单次最长时长的情况由调用方先用 maxGroupSeconds 拒绝；这里对齐后的时长不会超过模型最长时长。
+ * 组总时长超过模型单次最长时长的情况由调用方先用 maxGroupSeconds 拒绝；这里对齐后的时长不会超过模型最长时长。本组指定了生成时长（params.durationSeconds）时直接采用，是否合法由调用方先用 validateGroupParams 检查。
  * @param input 镜头组、模型能力、生成参数与出场实体的绑定。
  */
 export function planGroupRequest(input: GroupPlanInput): JobSnapshot {
@@ -313,16 +353,19 @@ export function planGroupRequest(input: GroupPlanInput): JobSnapshot {
     }
   }
 
-  // 声音：只有原生声音模式才编译声音提示词和音色参考；模型不支持的声音内容忽略并提醒。
+  // 声音：只有原生声音模式才编译声音提示词和音色参考；用户选的声音内容（缺省为全部）之外的条目不传，选了但模型不支持的内容忽略并提醒。
   const referenceAudioFileIds: number[] = [];
   const soundsByShot = new Map<number, string[]>();
+  let usedAudioElements: VideoAudioElement[] | null = null;
   if (audioMode === 'native') {
+    const selected = params.audioElements ?? VIDEO_AUDIO_ELEMENTS;
+    usedAudioElements = VIDEO_AUDIO_ELEMENTS.filter((element) => selected.includes(element) && capability.audioElements.includes(element));
     const names = new Map(entities.map((entity) => [entity.entityId, entity.name]));
-    const skipped = new Set<string>();
+    const skipped = new Set<VideoAudioElement>();
     for (const shot of shots) {
       const lines: string[] = [];
       for (const sound of shot.sounds) {
-        if (!sound.isEnabled) continue;
+        if (!sound.isEnabled || !selected.includes(sound.kind)) continue;
         if (!capability.audioElements.includes(sound.kind)) {
           skipped.add(sound.kind);
           continue;
@@ -331,9 +374,14 @@ export function planGroupRequest(input: GroupPlanInput): JobSnapshot {
       }
       soundsByShot.set(shot.id, lines);
     }
-    if (skipped.size > 0) warnings.push('模型不支持部分声音内容，已忽略。');
+    if (skipped.size > 0) {
+      warnings.push(`模型不支持以下声音内容，已忽略：${VIDEO_AUDIO_ELEMENTS.filter((element) => skipped.has(element)).map((element) => VIDEO_AUDIO_ELEMENT_LABELS[element]).join('、')}。`);
+    }
 
-    const speakerIds = new Set(shots.flatMap((shot) => shot.sounds.filter((sound) => sound.isEnabled && sound.kind === 'dialogue').map((sound) => sound.speakerEntityId)));
+    // 音色参考只服务于对白：没有选对白时，说话人不需要音色参考。
+    const speakerIds = new Set(
+      shots.flatMap((shot) => shot.sounds.filter((sound) => sound.isEnabled && sound.kind === 'dialogue' && selected.includes('dialogue')).map((sound) => sound.speakerEntityId))
+    );
     const audioLimit = useFirstFrame ? null : capability.audioInputMax;
     for (const entity of entities) {
       if (audioLimit === null || entity.voiceFileId === null || !speakerIds.has(entity.entityId) || referenceAudioFileIds.length >= audioLimit.count) continue;
@@ -342,8 +390,10 @@ export function planGroupRequest(input: GroupPlanInput): JobSnapshot {
     }
   }
 
+  // 时长：本组指定了生成时长就按指定值（校验由 validateGroupParams 负责，多出的时间并入最后一个镜头），否则按镜头总时长向上对齐到模型支持的取值。
   const total = sumSeconds(shots);
-  const duration = fitGroupDuration(capability.duration, total);
+  const duration: FittedDuration =
+    params.durationSeconds === null ? fitGroupDuration(capability.duration, total) : { seconds: params.durationSeconds, adjusted: false, exceedsMax: false };
   if (duration.adjusted) {
     warnings.push(`这一组共 ${total} 秒，不在模型支持的取值内，已调整为 ${duration.seconds} 秒。`);
   }
@@ -374,7 +424,8 @@ export function planGroupRequest(input: GroupPlanInput): JobSnapshot {
       resolution: params.resolution,
       durationSeconds: duration.seconds,
       audioMode,
-      seed: null,
+      audioElements: usedAudioElements,
+      seed: params.seed,
       extraParams: {}
     },
     referenceImageFileIds,

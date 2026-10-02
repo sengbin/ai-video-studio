@@ -26,7 +26,9 @@ const state = {
   configuration: new Map(),
   /** 右下角通知的记录，按弹出顺序。 */
   messages: [],
-  nextPanelId: 1
+  nextPanelId: 1,
+  /** 最近一次“另存为”对话框返回的路径；“打开文件”对话框据此返回，没有时为 undefined。 */
+  lastSavedPath: undefined
 };
 
 /** 简化的 Uri：只保留文件路径。 */
@@ -139,9 +141,15 @@ const window = {
     state.messages.push({ level: 'warning', message });
     return Promise.resolve(undefined);
   },
-  /** “另存为”对话框：直接返回系统临时目录下的建议文件名。 */
+  /** “另存为”对话框：直接返回系统临时目录下的建议文件名，并记下该路径供“打开文件”对话框使用。 */
   showSaveDialog(options) {
-    return Promise.resolve(Uri.file(path.join(require('node:os').tmpdir(), path.basename(options.defaultUri.fsPath))));
+    const target = Uri.file(path.join(require('node:os').tmpdir(), path.basename(options.defaultUri.fsPath)));
+    state.lastSavedPath = target.fsPath;
+    return Promise.resolve(target);
+  },
+  /** “打开文件”对话框：返回最近一次“另存为”的路径（数据备份页先备份、再从该备份恢复）；没有时模拟用户取消。 */
+  showOpenDialog() {
+    return Promise.resolve(state.lastSavedPath === undefined ? undefined : [Uri.file(state.lastSavedPath)]);
   }
 };
 
