@@ -4,7 +4,7 @@
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
-// 备注：目标视频模型、画幅、分辨率保存为作品默认生成参数（与工作台“生成参数”共用），不属于分镜脚本的生成参数；提交时按所选模型的能力检查画幅、分辨率与单组最长时长，没有可用视频模型时不显示这三项；生成表单的作品由入口固定；多集时可多选集，一次为每个所选集各生成一份；剧本未确认时不能打开表单。
+// 备注：目标视频模型、画幅、分辨率保存为作品默认生成参数（与工作台“生成参数”共用），不属于分镜脚本的生成参数；画幅另随生成请求传给分镜工作流用于提示构图；提交时按所选模型的能力检查画幅、分辨率与单组最长时长，没有可用视频模型时不显示这三项；生成表单的作品由入口固定；多集时可多选集，一次为每个所选集各生成一份；剧本未确认时不能打开表单。
 // ------------------------------------------------------------------------
 
 import { FORM_LEVEL_ERROR_KEY, ValidationError } from '../../domain/errors';
@@ -287,7 +287,9 @@ async function createStartForm(dependencies: StoryboardFormDependencies, workId:
       }
       const paramValues = withoutTargetValues(values);
       const changes = hasTargets ? readTargetChanges(values, targetValues, models, normalizeStoryboardParams(paramValues)) : {};
-      await storyboards.start(workId, ids, paramValues);
+      // 画幅留空时由服务取项目默认画幅；没有可选模型时沿用作品默认。
+      const aspectRatio = hasTargets ? values[TARGET_KEYS.aspectRatio] || null : defaults.aspectRatio;
+      await storyboards.start(workId, ids, paramValues, aspectRatio);
       // 生成已启动后再保存默认参数，启动失败时不改动作品默认。
       if (Object.keys(changes).length > 0) {
         profiles.saveWorkDefaults(workId, changes);

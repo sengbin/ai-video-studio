@@ -4,7 +4,7 @@
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
-// 备注：产出直接写入分镜脚本、镜头表（不需要合并）；重试时已有产出则跳过；镜头引用的实体按名称映射为实体标识。
+// 备注：产出直接写入分镜脚本、镜头表（不需要合并）；重试时已有产出则跳过；镜头引用的实体按名称映射为实体标识；目标画幅写入输入快照并按横屏、竖屏提示构图。
 // ------------------------------------------------------------------------
 
 import { FORM_LEVEL_ERROR_KEY, ValidationError } from '../../domain/errors';
@@ -29,6 +29,8 @@ export interface StoryboardRunInput {
   readonly workName: string;
   /** 生成时项目的视觉风格；本次没有自定义风格时沿用它。 */
   readonly projectStyle: string | null;
+  /** 目标视频画幅（如 16:9）；null 表示没有指定，由模型按常规构图。旧记录没有该字段时也为 null。 */
+  readonly aspectRatio: string | null;
   readonly params: StoryboardParams;
 }
 
@@ -42,11 +44,15 @@ export interface StoryboardWorkflowDependencies {
 
 /** 提示词模板使用的变量，模板文件必须与之完全一致（测试校验）。 */
 export const STORYBOARD_PROMPT_VARIABLES: Readonly<Record<string, readonly string[]>> = {
-  storyboard: ['material', 'entities', 'style', 'shotRules', 'continuityRule', 'audioRule', 'extra']
+  storyboard: ['material', 'entities', 'style', 'aspectRatio', 'shotRules', 'continuityRule', 'audioRule', 'extra']
 };
 
 const NOT_APPLICABLE = '（无）';
 const NO_STYLE = '（没有指定，按剧情自行确定一种统一的画面风格，并在各镜头中保持一致）';
+const NO_ASPECT_RATIO = '（没有指定，按常见视频的横屏构图处理）';
+/** 画幅文本的最大长度，与生成参数里的画幅一致。 */
+const ASPECT_RATIO_MAX_LENGTH = 20;
+const ASPECT_RATIO_PATTERN = /^(\d+(?:\.\d+)?):(\d+(?:\.\d+)?)$/;
 
 /** 镜头数量与时长的要求；episodeSeconds 是本集目标时长，作为全部镜头总时长的上限。 */
 function describeShotRules(params: StoryboardParams, episodeSeconds: number | null): string {
@@ -67,6 +73,27 @@ function describeShotRules(params: StoryboardParams, episodeSeconds: number | nu
     `相邻镜头会按顺序合并成组，一组一次生成一个视频，每组总时长不超过 ${groupMax} 秒，因此单个镜头不能超过 ${groupMax} 秒；建议每个镜头 4 到 6 秒，同一场次的镜头尽量连续排列。`
   );
   return parts.join('');
+}
+
+/** 画幅的要求：说明目标画幅，并按横屏、竖屏、方形给出构图提示；无法解析宽高比时只说明画幅。 */
+export function describeAspectRatio(aspectRatio: string | null): string {
+  if (aspectRatio === null) {
+    return NO_ASPECT_RATIO;
+  }
+  const matched = ASPECT_RATIO_PATTERN.exec(aspectRatio);
+  const width = matched === null ? 0 : Number(matched[1]);
+  const height = matched === null ? 0 : Number(matched[2]);
+  const lead = `目标视频画幅为 ${aspectRatio}。`;
+  if (width <= 0 || height <= 0) {
+    return `${lead}按这个画幅安排构图。`;
+  }
+  if (width > height) {
+    return `${lead}这是横屏画面，可以使用横向的宽幅构图和左右方向的人物调度，景别按需要自由选择。`;
+  }
+  if (width < height) {
+    return `${lead}这是竖屏画面，构图以纵向层次为主，主体居中偏上，景别以中景、近景和特写为主，避免依赖左右宽幅的横向调度。`;
+  }
+  return `${lead}这是方形画面，主体居中，构图紧凑，左右与上下留白均衡。`;
 }
 
 /** 镜头连贯的要求。 */
@@ -122,9 +149,10 @@ export class StoryboardWorkflow implements StageWorkflow {
       { key: 'projectStyle', label: '项目视觉风格', required: false, maxLength: PROJECT_VISUAL_STYLE_MAX_LENGTH },
       errors
     );
+    const aspectRatio = readOptionalText(source, { key: 'aspectRatio', label: '画幅', required: false, maxLength: ASPECT_RATIO_MAX_LENGTH }, errors);
     assertNoFieldErrors(errors);
     const params = normalizeStoryboardParams(typeof source.params === 'object' && source.params !== null ? source.params : source);
-    return { workName, projectStyle, params };
+    return { workName, projectStyle, aspectRatio, params };
   }
 
   async execute(context: StageContext): Promise<void> {
@@ -157,6 +185,7 @@ export class StoryboardWorkflow implements StageWorkflow {
         material: wrapMaterial(`【第 ${episode.seq} 集 ${episode.title}】\n梗概：${episode.synopsis}\n\n${episode.screenplayText}`),
         entities: describeEntities(entities, descriptions),
         style: params.visualStyle ?? input.projectStyle ?? NO_STYLE,
+        aspectRatio: describeAspectRatio(input.aspectRatio ?? null),
         shotRules: describeShotRules(params, episode.targetDurationSeconds),
         continuityRule: describeContinuity(params),
         audioRule: describeAudio(params),

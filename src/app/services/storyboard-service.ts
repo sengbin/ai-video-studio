@@ -156,11 +156,12 @@ export class StoryboardService {
    * @param workId 作品标识。
    * @param episodeIds 集标识；必须属于该作品且不重复，至少一集。
    * @param rawParams 表单提交的生成参数。
+   * @param aspectRatio 目标视频画幅，用于提示模型按横屏或竖屏构图；缺省时取项目的默认画幅，都没有则不指定。
    * @throws NotFoundError 作品不存在。
    * @throws ValidationError 参数不合法、集不属于作品、剧本未确认或某一集正在生成。
    * @throws TextGenerationError 没有可用的 Copilot 模型。
    */
-  async start(workId: number, episodeIds: readonly number[], rawParams: unknown): Promise<StageRun[]> {
+  async start(workId: number, episodeIds: readonly number[], rawParams: unknown, aspectRatio: string | null = null): Promise<StageRun[]> {
     const { works, projects, screenplays, runs, runner, stages } = this.dependencies;
     const work = works.getWork(workId);
     this.assertCanStart(workId);
@@ -178,12 +179,12 @@ export class StoryboardService {
       throw new ValidationError({ [FORM_LEVEL_ERROR_KEY]: '所选的集里有正在生成的分镜脚本，请等待完成或先取消。' });
     }
 
-    const projectStyle = projects.getProject(work.projectId).visualStyle;
+    const project = projects.getProject(work.projectId);
     const started: StageRun[] = [];
     for (const episodeId of ids) {
       const run = await runner.start({
         target: storyboardTarget(workId, episodeId),
-        input: { workName: work.name, projectStyle, params: rawParams }
+        input: { workName: work.name, projectStyle: project.visualStyle, aspectRatio: aspectRatio ?? project.defaultAspectRatio, params: rawParams }
       });
       stages.notifyChanged(run);
       started.push(run);

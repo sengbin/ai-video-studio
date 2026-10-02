@@ -221,7 +221,7 @@ test('目标模型：没有可用视频模型时不显示模型、画幅、分�
 });
 
 test('目标模型：选项取自可用模型，保存为作品默认并在下次打开时作为初始值，单组最长时长默认值不超过模型上限', async () => {
-  const { database, open, work, started, runner, profiles, modelId } = await createFixture('单个短视频');
+  const { database, open, work, started, runner, profiles, modelId, text } = await createFixture('单个短视频');
   try {
     const form = await open({ workId: work.id });
     const field = (key: string) => form.schema.fields.find((item) => item.key === key);
@@ -234,6 +234,7 @@ test('目标模型：选项取自可用模型，保存为作品默认并在下�
     await form.submit({ ...form.initialValues, videoModel: FAKE_MODEL_LABEL, aspectRatio: '9:16', resolution: '720P', groupMaxSeconds: '10' });
     await runner.whenIdle();
     assert.equal(started.length, 1);
+    assert.ok(text.requests.at(-1)?.user.includes('目标视频画幅为 9:16'), '所选画幅传给了分镜提示词');
     assert.deepEqual(profiles.getWorkDefaults(work.id).values, { modelId, aspectRatio: '9:16', resolution: '720P', audioMode: null });
 
     const again = await open({ workId: work.id });

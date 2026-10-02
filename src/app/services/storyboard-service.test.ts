@@ -11,6 +11,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { NotFoundError, TextGenerationError, ValidationError } from '../../domain/errors';
 import { normalizeWorkCreation } from '../../domain/rules/work-rules';
+import { describeAspectRatio } from '../stages/storyboard-workflow';
 import { Responder, standardResponder } from '../stages/testing/scripted-text';
 import { createServiceFixture } from './testing/service-fixture';
 
@@ -352,4 +353,37 @@ test('取消与删除：删除作品前取消各集正在进行的生成；没�
   } finally {
     fixture.database.close();
   }
+});
+
+test('生成：目标画幅写入提示词，横屏、竖屏给出不同的构图提示；没有传入时取项目默认画幅，都没有则说明未指定', async () => {
+  const fixture = await createFixture();
+  try {
+    const episodeId = firstEpisodeId(fixture);
+    const lastUser = () => fixture.text.requests.at(-1)?.user ?? '';
+
+    await fixture.storyboards.start(fixture.work.id, [episodeId], {});
+    await fixture.runner.whenIdle();
+    assert.ok(lastUser().includes('## 画幅') && lastUser().includes('没有指定，按常见视频的横屏构图处理'));
+
+    await fixture.storyboards.start(fixture.work.id, [episodeId], {}, '9:16');
+    await fixture.runner.whenIdle();
+    assert.ok(lastUser().includes('目标视频画幅为 9:16') && lastUser().includes('竖屏'));
+
+    await fixture.storyboards.start(fixture.work.id, [episodeId], {}, '16:9');
+    await fixture.runner.whenIdle();
+    assert.ok(lastUser().includes('目标视频画幅为 16:9') && lastUser().includes('横屏'));
+
+    fixture.projects.updateProject(fixture.project.id, { name: '项目甲', defaultAspectRatio: '1:1' });
+    await fixture.storyboards.start(fixture.work.id, [episodeId], {});
+    await fixture.runner.whenIdle();
+    assert.ok(lastUser().includes('目标视频画幅为 1:1') && lastUser().includes('方形'), '没有传入画幅时取项目默认画幅');
+  } finally {
+    fixture.database.close();
+  }
+});
+
+test('画幅提示：解析不了宽高比时只说明画幅，没有指定时说明未指定', () => {
+  assert.match(describeAspectRatio('宽屏'), /目标视频画幅为 宽屏。按这个画幅安排构图/);
+  assert.match(describeAspectRatio('21:9'), /横屏/);
+  assert.match(describeAspectRatio(null), /没有指定/);
 });

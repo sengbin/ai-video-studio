@@ -14,6 +14,10 @@
 
 {{style}}
 
+## 画幅
+
+{{aspectRatio}}
+
 ## 镜头要求
 
 - {{shotRules}}
