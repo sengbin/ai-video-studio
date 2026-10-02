@@ -153,6 +153,7 @@
     if (key === toolbarKey) return;
     toolbarKey = key;
     toolbarElement.textContent = '';
+    if (episodeKey === '') return;
 
     const episodeSelect = aiUi.select({
       options: episodeOptions(),
@@ -525,6 +526,10 @@
   async function loadEpisode(showLoading) {
     if (!catalog || episodeKey === '') {
       view = null;
+      profile = null;
+      updateResolved();
+      isLoading = false;
+      renderToolbar();
       render();
       return;
     }
