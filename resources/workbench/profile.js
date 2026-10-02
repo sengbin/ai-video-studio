@@ -1,10 +1,10 @@
 // ------------------------------------------------------------------------
 // 名称：profile.js
-// 说明：生成参数（F8）：按“本集 → 作品 → 项目默认”算出生效的模型、画幅、分辨率与声音模式，并检查是否落在所选模型的能力范围内；提供编辑作品默认与本集覆盖的弹出页。
+// 说明：生成参数（F8）：按“本集 → 作品 → 项目默认”算出生效的模型、画幅、分辨率与声音模式，并检查是否落在所选模型的能力范围内；提供检查器“参数”页签的内容，编辑作品默认与本集覆盖。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
-// 备注：不发请求，保存由 workbench.js 注入；必须先于 workbench.js 加载；对外是 window.aiProfile 的 resolve、open、refresh。
+// 备注：不发请求，保存由 workbench.js 注入；必须先于 workbench.js 加载；对外是 window.aiProfile 的 resolve、summarize、create。
 // ------------------------------------------------------------------------
 
 'use strict';
@@ -23,8 +23,8 @@
   };
   const EMPTY_OPTION_TEXT = '沿用上一级';
 
-  /** 当前打开的参数页；没有打开时为 null。 */
-  let dialog = null;
+  /** 当前的参数面板；只有一个。 */
+  let panel = null;
 
   /** 在选项里找与值相同的一项（忽略大小写，兼容旧版本保存的小写分辨率），返回选项里的写法；没有则返回 undefined。 */
   function matchOption(options, value) {
@@ -105,15 +105,19 @@
     return value === '' || options.some((option) => option.value === value) ? options : [...options, { value, label: `${value}${note}` }];
   }
 
-  /** 重新渲染弹出页里的字段。 */
+  /** 重新渲染面板里的字段；还没有加载到集的参数时只显示提示。 */
   function renderFields() {
-    const { host, fieldsElement, scopeControl } = dialog;
+    const { host, fieldsElement, scopeControl } = panel;
     const { catalog, profile } = host.getState();
+    fieldsElement.textContent = '';
+    if (!catalog || !profile) {
+      panel.hintElement.textContent = '请先选择一个有分镜脚本的集。';
+      return;
+    }
     const resolved = resolve(catalog, profile);
     const scope = scopeControl.getValue();
     const values = scope === 'work' ? profile.work : profile.episode;
-    dialog.hintElement.textContent = SCOPE_HINTS[scope];
-    fieldsElement.textContent = '';
+    panel.hintElement.textContent = SCOPE_HINTS[scope];
 
     const addField = (field, label, options, note) => {
       const stored = storedValue(values, field);
@@ -149,11 +153,11 @@
 
   /** 修改一个字段并保存；空串表示恢复继承。 */
   async function change(field, value) {
-    if (!dialog) return;
-    const current = dialog;
+    if (!panel) return;
+    const current = panel;
     const payload = value === '' ? null : field === 'modelId' ? Number(value) : value;
     const result = await current.host.save(current.scopeControl.getValue(), { [field]: payload });
-    if (dialog !== current) return;
+    if (panel !== current) return;
     current.messageElement.textContent = result.ok ? '已保存' : `保存失败：${result.message}`;
     current.messageElement.className = result.ok ? 'wb-message status-success' : 'wb-message status-error';
     current.messageElement.hidden = false;
@@ -161,33 +165,30 @@
   }
 
   /**
-   * 打开生成参数页；已打开时不重复打开。
-   * @param {{ getState: () => { catalog: object, profile: object }, save: (scope: string, changes: object) => Promise<{ ok: boolean, message?: string }> }} host 宿主页面提供的状态与保存函数。
+   * 创建生成参数面板（检查器的“参数”页签）：编辑作品默认与本集覆盖，选择后即时保存。只创建一个实例。
+   * @param {{ getState: () => { catalog: object|null, profile: object|null }, save: (scope: string, changes: object) => Promise<{ ok: boolean, message?: string }> }} host 宿主页面提供的状态与保存函数。
+   * @returns {{ element: HTMLElement, refresh: () => void }}
    */
-  function open(host) {
-    if (dialog) return;
-    const scopeControl = aiUi.radioGroup({ options: SCOPE_OPTIONS, value: 'work', direction: 'horizontal', ariaLabel: '参数范围', onChange: () => dialog && renderFields() });
+  function create(host) {
+    const scopeControl = aiUi.radioGroup({ options: SCOPE_OPTIONS, value: 'work', direction: 'vertical', ariaLabel: '参数范围', onChange: () => renderFields() });
     const hintElement = aiUi.h('p', { class: 'description' });
     const messageElement = aiUi.h('p', { class: 'wb-message', hidden: true, attrs: { role: 'status' } });
     const fieldsElement = aiUi.h('div', { class: 'wb-profile__fields' });
-    const content = aiUi.h('div', { class: 'wb-profile' }, scopeControl.element, hintElement, messageElement, fieldsElement);
-    dialog = { host, scopeControl, hintElement, messageElement, fieldsElement, key: '' };
-    const page = aiUi.openPage({ title: '生成参数', content, width: 520, height: 540, minWidth: 360, minHeight: 280, buttons: [{ id: 'close', text: '关闭', isCancel: true }] });
-    void page.closed.then(() => {
-      dialog = null;
-    });
+    const element = aiUi.h('div', { class: 'wb-profile' }, scopeControl.element, hintElement, messageElement, fieldsElement);
+    panel = { host, scopeControl, hintElement, messageElement, fieldsElement, key: '' };
     renderFields();
+    return { element, refresh };
   }
 
-  /** 页面数据变化后刷新弹出页；内容没有变化时不重绘，避免打断正在打开的下拉。 */
+  /** 页面数据变化后刷新面板；内容没有变化时不重绘，避免打断正在打开的下拉。 */
   function refresh() {
-    if (!dialog) return;
-    const { catalog, profile } = dialog.host.getState();
-    const key = JSON.stringify([catalog.models, profile]);
-    if (key === dialog.key) return;
-    dialog.key = key;
+    if (!panel) return;
+    const { catalog, profile } = panel.host.getState();
+    const key = JSON.stringify([catalog && catalog.models, profile]);
+    if (key === panel.key) return;
+    panel.key = key;
     renderFields();
   }
 
-  window.aiProfile = { resolve, summarize, open, refresh };
+  window.aiProfile = { resolve, summarize, create };
 })();

@@ -1,7 +1,7 @@
 /*
  * ------------------------------------------------------------------------
  * 名称：workbench.css
- * 说明：生成工作台页样式：工具栏的选择器宽度、操作结果与提示、批量操作行、左栏镜头组列表与分隔条、选中镜头组的详情、底部可折叠的队列与结果、镜头内容、任务状态、失败原因和历史记录，以及实体绑定弹出页。
+ * 说明：生成工作台页样式：工具栏的选择器宽度、操作结果与提示、批量操作行、左栏镜头组列表与分隔条、选中镜头组的详情、右栏检查器（页签、绑定面板、参数面板）、底部可折叠的队列与结果、镜头内容、任务状态、失败原因和历史记录，以及选择资产的弹出页。
  * 作者：Lion
  * 邮箱：chengbin@3578.cn
  * 日期：2026-10-02
@@ -513,5 +513,127 @@
 
   .wb-group-select {
     display: block;
+  }
+}
+/* 右栏检查器：页签栏（绑定、参数）加可滚动的面板；折叠时只剩一个窄条 */
+.wb-inspector {
+  position: sticky;
+  top: 8px;
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  max-height: calc(100vh - 32px);
+  min-width: 0;
+  border: 1px solid var(--table-border);
+  border-radius: 6px;
+  background: var(--table-surface);
+}
+
+.wb-inspector__bar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 4px 4px 0;
+  border-bottom: 1px solid var(--table-row-divider);
+}
+
+.wb-inspector__tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  min-width: 0;
+}
+
+.wb-inspector__tab {
+  padding: 5px 8px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+.wb-inspector__tab:hover {
+  background: var(--table-row-hover);
+  color: var(--text);
+}
+
+.wb-inspector__tab--active {
+  border-bottom-color: var(--vscode-button-background);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.wb-inspector__tab--warning {
+  color: var(--status-warning);
+}
+
+.wb-inspector__tab:focus-visible,
+.wb-inspector__panel:focus-visible {
+  outline: 1px solid var(--focus-border);
+  outline-offset: -1px;
+}
+
+.wb-inspector__actions .ui-button {
+  min-width: 24px;
+}
+
+.wb-inspector__panel {
+  min-height: 0;
+  padding: 8px;
+  overflow-y: auto;
+}
+
+.wb-rail {
+  position: sticky;
+  top: 8px;
+  flex: 0 0 auto;
+  margin-left: 8px;
+}
+
+.wb-rail .ui-button {
+  min-width: 24px;
+}
+
+/* 绑定面板：按类型分组，每个实体一块（名称与类型、形象资产、角色的音色参考） */
+.wb-bind-group__title {
+  margin: 10px 0 2px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.wb-bind-group:first-of-type .wb-bind-group__title {
+  margin-top: 6px;
+}
+
+.wb-bind-entity {
+  padding: 6px 0;
+  border-top: 1px solid var(--divider);
+}
+
+.wb-bind-entity__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  margin: 0 0 4px;
+}
+
+.wb-bind-entity__voice {
+  margin: 6px 0 0;
+}
+
+@media (max-width: 899px) {
+  .wb-inspector {
+    position: static;
+    width: auto !important;
+    max-height: none;
+    margin: 12px 0 0;
+  }
+
+  .wb-rail {
+    margin: 12px 0 0;
   }
 }

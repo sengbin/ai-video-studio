@@ -4,7 +4,7 @@
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
-// 备注：请求与事件名称与 src/app/pages/workbench-handlers.ts 一致；“编辑镜头”“确认分镜脚本”复用 stage/stage.js 的产出层（aiStage）；“实体绑定”由 workbench/bindings.js（aiBindings）提供，“生成参数”的合并与编辑由 workbench/profile.js（aiProfile）提供，“结果版本”弹出页由 workbench/versions.js（aiVersions）提供，“上一组尾帧作首帧”的尾帧截取由 workbench/tail-frames.js（aiTailFrames）提供；依赖 shared/page-format.js（pageFormat）。
+// 备注：请求与事件名称与 src/app/pages/workbench-handlers.ts 一致；“编辑镜头”“确认分镜脚本”复用 stage/stage.js 的产出层（aiStage）；右栏检查器的页签容器由 workbench/inspector.js（aiInspector）提供，其中“绑定”面板由 workbench/bindings.js（aiBindings）提供，“参数”面板与生效参数的合并由 workbench/profile.js（aiProfile）提供，“结果版本”弹出页由 workbench/versions.js（aiVersions）提供，“上一组尾帧作首帧”的尾帧截取由 workbench/tail-frames.js（aiTailFrames）提供；依赖 shared/page-format.js（pageFormat）。
 // ------------------------------------------------------------------------
 
 'use strict';
@@ -48,6 +48,10 @@
   const TREE_MIN_WIDTH = 200;
   const TREE_MAX_WIDTH = 480;
   const TREE_KEY_STEP = 16;
+  /** 右栏检查器宽度的范围（像素）。 */
+  const INSPECTOR_DEFAULT_WIDTH = 340;
+  const INSPECTOR_MIN_WIDTH = 300;
+  const INSPECTOR_MAX_WIDTH = 560;
   /** 底部队列最多显示的任务数。 */
   const QUEUE_MAX_ROWS = 100;
   const MS_PER_SECOND = 1000;
@@ -85,7 +89,12 @@
   let treeCollapsed = false;
   let queueOpen = false;
   let treeElement = null;
-  let splitterElement = null;
+  /** 右栏检查器：宽度、是否折叠，以及页签容器和其中的两个面板（创建后一直保留）。 */
+  let inspectorWidth = INSPECTOR_DEFAULT_WIDTH;
+  let inspectorCollapsed = false;
+  let inspector = null;
+  let bindingsPanel = null;
+  let profilePanel = null;
 
   /** 取错误载荷中的说明文字：有字段错误时列出各项，否则用错误说明。 */
   function errorText(error) {
@@ -149,9 +158,14 @@
     if (!keys.includes(episodeKey)) episodeKey = keys[0] || '';
   }
 
-  /** 打开生成参数页：编辑作品默认与本集覆盖。 */
-  function openProfile() {
-    aiProfile.open({ getState: () => ({ catalog, profile }), save: saveProfile });
+  /** 展开检查器并切换到指定页签（绑定或参数）；窄屏时检查器在内容下方，滚动到可见位置。 */
+  function openInspector(tabId) {
+    if (inspectorCollapsed) {
+      inspectorCollapsed = false;
+      render();
+    }
+    inspector.show(tabId, true);
+    inspector.element.scrollIntoView({ block: 'nearest' });
   }
 
   /** 保存某一级的参数修改，成功后用返回的视图刷新工具栏、提交按钮和参数页。 */
@@ -165,7 +179,7 @@
     updateResolved();
     renderToolbar();
     render();
-    aiProfile.refresh();
+    profilePanel.refresh();
     return { ok: true };
   }
 
@@ -197,7 +211,7 @@
     if (!profile) return;
     toolbarElement.append(
       aiUi.h('span', { class: 'description wb-toolbar__summary', text: summary, attrs: { title: summary } }),
-      aiUi.button({ text: '生成参数', onClick: openProfile }).element
+      aiUi.button({ text: '生成参数', onClick: () => openInspector('profile') }).element
     );
   }
 
@@ -576,39 +590,44 @@
     render();
   }
 
-  /** 设置左栏宽度（限制在最小与最大宽度之间）并同步分隔条的取值。 */
+  /** 设置左栏宽度（限制在最小与最大宽度之间）。 */
   function setTreeWidth(width) {
     treeWidth = Math.min(TREE_MAX_WIDTH, Math.max(TREE_MIN_WIDTH, Math.round(width)));
     if (treeElement) treeElement.style.width = `${treeWidth}px`;
-    if (splitterElement) splitterElement.setAttribute('aria-valuenow', String(treeWidth));
+    return treeWidth;
   }
 
-  /** 左栏与中栏之间的分隔条：可拖动，也可用左右方向键调整宽度。 */
-  function renderSplitter() {
-    splitterElement = aiUi.h('div', {
+  /** 设置右栏检查器宽度（限制在最小与最大宽度之间）。 */
+  function setInspectorWidth(width) {
+    inspectorWidth = Math.min(INSPECTOR_MAX_WIDTH, Math.max(INSPECTOR_MIN_WIDTH, Math.round(width)));
+    if (inspector) inspector.element.style.width = `${inspectorWidth}px`;
+    return inspectorWidth;
+  }
+
+  /**
+   * 栏与相邻栏之间的分隔条：可拖动，也可用左右方向键调整宽度。
+   * @param {{ label: string, min: number, max: number, getWidth: () => number, setWidth: (width: number) => number, direction: 1 | -1 }} config
+   *   direction 为 1 表示栏在分隔条左侧（向右拖变宽），-1 表示栏在右侧（向左拖变宽）。
+   */
+  function createSplitter(config) {
+    const { label, min, max, getWidth, setWidth, direction } = config;
+    const element = aiUi.h('div', {
       class: 'wb-splitter',
-      attrs: {
-        role: 'separator',
-        'aria-orientation': 'vertical',
-        'aria-label': '调整镜头组栏宽度',
-        'aria-valuemin': TREE_MIN_WIDTH,
-        'aria-valuemax': TREE_MAX_WIDTH,
-        'aria-valuenow': treeWidth,
-        tabindex: 0
-      },
+      attrs: { role: 'separator', 'aria-orientation': 'vertical', 'aria-label': label, 'aria-valuemin': min, 'aria-valuemax': max, 'aria-valuenow': getWidth(), tabindex: 0 },
       on: {
         pointerdown: (event) => {
-          const start = treeWidth;
-          aiUi.trackPointer(splitterElement, event, (deltaX) => setTreeWidth(start + deltaX));
+          const start = getWidth();
+          aiUi.trackPointer(element, event, (deltaX) => element.setAttribute('aria-valuenow', String(setWidth(start + direction * deltaX))));
         },
         keydown: (event) => {
           if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
           event.preventDefault();
-          setTreeWidth(treeWidth + (event.key === 'ArrowRight' ? TREE_KEY_STEP : -TREE_KEY_STEP));
+          const step = (event.key === 'ArrowRight' ? 1 : -1) * direction * TREE_KEY_STEP;
+          element.setAttribute('aria-valuenow', String(setWidth(getWidth() + step)));
         }
       }
     });
-    return splitterElement;
+    return element;
   }
 
   /** 左栏：镜头组列表，选中的组展开列出组内镜头；可折叠为窄条。 */
@@ -796,7 +815,7 @@
           'div',
           { class: 'wb-notice' },
           aiUi.h('span', { class: 'status-warning', text: `生成参数需要调整：${Object.values(resolved.issues).join('')}` }),
-          aiUi.button({ text: '生成参数', compact: true, onClick: openProfile }).element
+          aiUi.button({ text: '生成参数', compact: true, onClick: () => openInspector('profile') }).element
         )
       );
     }
@@ -811,11 +830,6 @@
       );
     }
     return notices;
-  }
-
-  /** 打开本集的实体绑定页。 */
-  function openBindings() {
-    aiBindings.open(parseEpisodeKey(episodeKey).episodeId);
   }
 
   /** 批量操作与重新分组：提交还没有结果也没有进行中任务的组；按填写的时长重新分组。 */
@@ -839,7 +853,7 @@
         onClick: () => void submit(pending)
       }).element,
       aiUi.button({ text: '查看分镜脚本', onClick: openStoryboard }).element,
-      aiUi.button({ text: unboundCount > 0 ? `实体绑定（${unboundCount} 个未绑定）` : '实体绑定', onClick: openBindings }).element,
+      aiUi.button({ text: unboundCount > 0 ? `实体绑定（${unboundCount} 个未绑定）` : '实体绑定', onClick: () => openInspector('bindings') }).element,
       aiUi.h(
         'div',
         { class: 'wb-regroup' },
@@ -883,13 +897,45 @@
         'div',
         { class: 'wb-layout' },
         renderTree(group.id),
-        treeCollapsed ? null : renderSplitter(),
-        aiUi.h('div', { class: 'wb-main' }, renderGroupSelect(group.id), renderDetail(group, index))
+        treeCollapsed ? null : createSplitter({ label: '调整镜头组栏宽度', min: TREE_MIN_WIDTH, max: TREE_MAX_WIDTH, getWidth: () => treeWidth, setWidth: setTreeWidth, direction: 1 }),
+        aiUi.h('div', { class: 'wb-main' }, renderGroupSelect(group.id), renderDetail(group, index)),
+        inspectorCollapsed ? null : createSplitter({ label: '调整检查器宽度', min: INSPECTOR_MIN_WIDTH, max: INSPECTOR_MAX_WIDTH, getWidth: () => inspectorWidth, setWidth: setInspectorWidth, direction: -1 }),
+        renderInspectorColumn()
       ),
       renderQueue()
     );
     const list = treeElement && treeElement.querySelector('.wb-tree__list');
     if (list) list.scrollTop = treeScroll;
+    updateInspectorLabels();
+  }
+
+  /** 右栏：展开时是检查器（宽度可调），折叠时是一个窄条和展开按钮。检查器元素创建后一直保留，只是每次重新挂到新的布局里。 */
+  function renderInspectorColumn() {
+    if (inspectorCollapsed) {
+      return aiUi.h(
+        'div',
+        { class: 'wb-rail' },
+        aiUi.button({
+          text: '‹',
+          compact: true,
+          ariaLabel: '展开检查器',
+          onClick: () => {
+            inspectorCollapsed = false;
+            render();
+          }
+        }).element
+      );
+    }
+    inspector.element.style.width = `${inspectorWidth}px`;
+    return inspector.element;
+  }
+
+  /** 页签文字带上状态：有未绑定的实体、生成参数需要调整时直接写在文字里。 */
+  function updateInspectorLabels() {
+    const unbound = view ? new Set(view.groups.flatMap((group) => group.entities.filter((entity) => !entity.bound).map((entity) => entity.id))).size : 0;
+    inspector.setLabel('bindings', unbound > 0 ? `绑定（${unbound} 个未绑定）` : '绑定', unbound > 0);
+    const hasIssues = Boolean(resolved && Object.keys(resolved.issues).length > 0);
+    inspector.setLabel('profile', hasIssues ? '参数（需调整）' : '参数', hasIssues);
   }
 
   /** 加载当前集的视图。 */
@@ -901,6 +947,8 @@
       isLoading = false;
       renderToolbar();
       render();
+      bindingsPanel.setEpisode(null);
+      profilePanel.refresh();
       return;
     }
     if (showLoading) {
@@ -918,7 +966,8 @@
     isLoading = false;
     renderToolbar();
     render();
-    aiProfile.refresh();
+    bindingsPanel.setEpisode(episodeKey === '' ? null : parseEpisodeKey(episodeKey).episodeId);
+    profilePanel.refresh();
     aiVersions.refresh();
   }
 
@@ -948,7 +997,7 @@
   function scheduleRefresh() {
     window.clearTimeout(refreshTimer);
     refreshTimer = window.setTimeout(async () => {
-      await Promise.all([loadAll(false), aiBindings.refresh()]);
+      await Promise.all([loadAll(false), bindingsPanel.refresh()]);
       void aiTailFrames.sync();
     }, REFRESH_DELAY_MS);
   }
@@ -960,6 +1009,26 @@
     messageElement = aiUi.h('p', { class: 'wb-message', hidden: true, attrs: { role: 'status' } });
     contentElement = aiUi.h('div');
     root.append(messageElement, contentElement);
+    // 检查器的两个面板创建一次，之后只在页签之间切换显示。
+    bindingsPanel = aiBindings.create();
+    profilePanel = aiProfile.create({ getState: () => ({ catalog, profile }), save: saveProfile });
+    const collapseButton = aiUi.button({
+      text: '›',
+      compact: true,
+      ariaLabel: '折叠检查器',
+      onClick: () => {
+        inspectorCollapsed = true;
+        render();
+      }
+    });
+    inspector = aiInspector.create({
+      tabs: [
+        { id: 'bindings', label: '绑定', build: () => bindingsPanel },
+        { id: 'profile', label: '参数', build: () => profilePanel }
+      ],
+      initial: 'bindings',
+      actions: [collapseButton.element]
+    });
   }
 
   renderPage();

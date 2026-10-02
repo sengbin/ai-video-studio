@@ -1,10 +1,10 @@
 // ------------------------------------------------------------------------
 // 名称：bindings.js
-// 说明：实体绑定弹出页（F9）：按实体列出本集的形象与音色绑定，可选择资产、设为主资产、解除，角色实体可选择音色参考音频，并支持按名称自动匹配。
+// 说明：实体绑定面板（F9，检查器的“绑定”页签）：按类型分组列出本集的实体，可选择形象资产、设为主资产、解除，角色实体可选择音色参考音频，并支持按名称自动匹配；选择资产仍用弹出页。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
-// 备注：请求名称与 src/app/pages/binding-handlers.ts 一致；必须先于 workbench.js 加载；对外只有 window.aiBindings.open(episodeId) 与 refresh()。
+// 备注：请求名称与 src/app/pages/binding-handlers.ts 一致；必须先于 workbench.js 加载；对外只有 window.aiBindings.create()，返回面板元素与 setEpisode、refresh。
 // ------------------------------------------------------------------------
 
 'use strict';
@@ -22,7 +22,7 @@
   const PURPOSE_VOICE = 'voice';
   const KIND_LABELS = { character: '角色', scene: '场景', prop: '道具', effect: '特效' };
 
-  /** 当前打开的绑定页会话；没有打开时为 null。 */
+  /** 当前的绑定面板会话；只有一个。 */
   let session = null;
 
   /** 取错误载荷中的说明文字：有字段错误时列出各项，否则用错误说明。 */
@@ -141,11 +141,33 @@
     );
   }
 
-  const ENTITY_COLUMNS = [
-    { title: '实体', width: '20%', minWidth: 110, render: (entity) => aiUi.tableMainCell({ text: entity.name, description: entity.kindLabel }) },
-    { title: '形象资产', minWidth: 260, render: renderVisualCell },
-    { title: '音色参考', width: '30%', minWidth: 190, emptyText: '不适用', render: renderVoiceCell }
-  ];
+  /** 一个实体：名称与类型、形象资产、角色的音色参考。 */
+  function renderEntity(entity) {
+    return aiUi.h(
+      'div',
+      { class: 'wb-bind-entity' },
+      aiUi.h('div', { class: 'wb-bind-entity__head' }, aiUi.h('strong', { text: entity.name }), aiUi.chip({ text: entity.kindLabel })),
+      renderVisualCell(entity),
+      entity.kind === 'character'
+        ? aiUi.h('div', { class: 'wb-bind-entity__voice' }, aiUi.h('div', { class: 'description', text: '音色参考' }), renderVoiceCell(entity))
+        : null
+    );
+  }
+
+  /** 按类型分组（角色、场景、道具、特效）列出实体，组标题带数量。 */
+  function renderEntities(entities) {
+    return Object.keys(KIND_LABELS)
+      .map((kind) => ({ kind, items: entities.filter((entity) => entity.kind === kind) }))
+      .filter((group) => group.items.length > 0)
+      .map((group) =>
+        aiUi.h(
+          'section',
+          { class: 'wb-bind-group', attrs: { 'aria-label': KIND_LABELS[group.kind] } },
+          aiUi.h('h3', { class: 'wb-bind-group__title', text: `${KIND_LABELS[group.kind]}（${group.items.length}）` }),
+          group.items.map(renderEntity)
+        )
+      );
+  }
 
   /** 解除、设为主资产这类单次请求，完成后重新读取。 */
   async function changeBinding(name, payload) {
@@ -226,17 +248,24 @@
     session.summary.className = total > 0 && bound < total ? 'status-warning' : 'description';
   }
 
-  /** 重新读取并刷新页面；集已不存在时关闭。 */
+  /** 重新读取并刷新面板；还没有选择集时只显示提示。 */
   async function refresh() {
     if (!session) return;
     const current = session;
+    if (current.episodeId === null) {
+      current.summary.textContent = '请先选择一个有分镜脚本的集。';
+      current.summary.className = 'description';
+      current.listElement.textContent = '';
+      current.matchButton.setDisabled(true);
+      return;
+    }
     try {
       const view = await window.hostBridge.request(REQUEST_VIEW, { episodeId: current.episodeId });
       if (session !== current) return;
       current.view = view;
       renderSummary(view);
-      current.table.setRows(view.entities);
-      current.tableHost.hidden = view.entities.length === 0;
+      current.listElement.textContent = '';
+      current.listElement.append(...renderEntities(view.entities));
       current.matchButton.setDisabled(view.entities.length === 0);
     } catch (error) {
       if (session !== current) return;
@@ -244,27 +273,27 @@
     }
   }
 
-  /**
-   * 打开某一集的实体绑定页；已打开时不重复打开。
-   * @param {number} episodeId 集标识。
-   * @param {() => void} [onClosed] 关闭后的回调（页面据此刷新“未绑定”提示）。
-   */
-  function open(episodeId, onClosed) {
-    if (session) return;
-    const message = aiUi.h('p', { class: 'wb-message', hidden: true, attrs: { role: 'status' } });
-    const summary = aiUi.h('span', { class: 'description', text: '加载中…' });
-    const matchButton = aiUi.button({ text: '按名称自动匹配', disabled: true, onClick: () => void autoMatch() });
-    const table = aiUi.table({ columns: ENTITY_COLUMNS, rows: [], ariaLabel: '实体绑定' });
-    const tableHost = aiUi.h('div', { hidden: true }, table.element);
-    const content = aiUi.h('div', { class: 'wb-bind' }, aiUi.h('div', { class: 'wb-bind__bar' }, summary, matchButton.element), message, tableHost);
-    session = { episodeId, view: null, message, summary, table, tableHost, matchButton };
-    const page = aiUi.openPage({ title: '实体绑定', content, width: 900, height: 560, minWidth: 560, minHeight: 320, buttons: [{ id: 'close', text: '关闭', isCancel: true }] });
-    void page.closed.then(() => {
-      session = null;
-      if (onClosed) onClosed();
-    });
+  /** 切换到另一集；集没有变化时不重复读取。 */
+  function setEpisode(episodeId) {
+    if (!session || session.episodeId === episodeId) return;
+    session.episodeId = episodeId;
+    session.view = null;
     void refresh();
   }
 
-  window.aiBindings = { open, refresh };
+  /**
+   * 创建实体绑定面板（检查器的“绑定”页签）；只创建一个实例，用 setEpisode 指定集。
+   * @returns {{ element: HTMLElement, setEpisode: (episodeId: number|null) => void, refresh: () => Promise<void> }}
+   */
+  function create() {
+    const message = aiUi.h('p', { class: 'wb-message', hidden: true, attrs: { role: 'status' } });
+    const summary = aiUi.h('span', { class: 'description', text: '请先选择一个有分镜脚本的集。' });
+    const matchButton = aiUi.button({ text: '按名称自动匹配', disabled: true, onClick: () => void autoMatch() });
+    const listElement = aiUi.h('div', { class: 'wb-bind-list' });
+    const element = aiUi.h('div', { class: 'wb-bind' }, aiUi.h('div', { class: 'wb-bind__bar' }, summary, matchButton.element), message, listElement);
+    session = { episodeId: null, view: null, message, summary, listElement, matchButton };
+    return { element, setEpisode, refresh };
+  }
+
+  window.aiBindings = { create };
 })();
