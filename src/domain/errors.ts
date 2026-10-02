@@ -51,6 +51,25 @@ export class TextGenerationError extends Error {
   }
 }
 
+/** 调用图像、音频、视频模型服务失败的分类：鉴权、限流、参数、内容审核、服务端、网络。 */
+export type ProviderFailure = 'auth' | 'rate_limited' | 'invalid_request' | 'content_rejected' | 'server' | 'network';
+
+/** 值得稍后重试的失败分类；鉴权、参数和内容审核类失败重试不会成功。 */
+const RETRYABLE_PROVIDER_FAILURES: readonly ProviderFailure[] = ['rate_limited', 'server', 'network'];
+
+/** 调用模型服务失败；category 决定生成队列是否重试以及界面如何提示。 */
+export class ProviderError extends Error {
+  constructor(readonly category: ProviderFailure, message: string, options?: { readonly cause?: unknown }) {
+    super(message, options);
+    this.name = 'ProviderError';
+  }
+
+  /** 是否值得稍后重试。 */
+  get retryable(): boolean {
+    return RETRYABLE_PROVIDER_FAILURES.includes(this.category);
+  }
+}
+
 /** 模型返回的内容不符合约定的格式或规则；issues 逐条说明问题，可原样反馈给模型让它修正。 */
 export class GeneratedOutputError extends Error {
   constructor(readonly issues: readonly string[]) {

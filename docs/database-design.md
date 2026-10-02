@@ -449,15 +449,15 @@ erDiagram
 |---|---|
 | `aspect_ratios` | 支持的画幅列表 |
 | `resolutions` | 支持的分辨率列表 |
-| `duration` | 时长范围或可选值：`min`、`max`、`step`，或 `options` |
+| `duration` | 时长范围或可选值：`min`、`max`、`step`，或 `options`；`allow_auto` 为真表示支持由模型自动决定时长（请求中用 -1 表示） |
 | `fps` | 支持的帧率列表 |
 | `audio_modes` | 支持的声音模式：`none`、`native`（模型原生生成） |
 | `audio_elements` | 原生支持的声音内容：`dialogue`、`narration`、`sfx`、`music` |
 | `voice_reference` | 是否支持音色参考音频输入 |
-| `audio_input_max` | 参考音频数量上限与单个时长上限 |
+| `audio_input_max` | 参考音频限制：`count` 数量上限、`max_seconds` 时长上限；不支持参考音频时为 null |
 | `first_frame` | 是否支持首帧输入 |
 | `last_frame` | 是否支持尾帧输入 |
-| `reference_images_max` | 参考图数量上限 |
+| `reference_images_max` | 参考图数量上限；0 表示不支持参考图 |
 | `seed` | 是否支持随机种子 |
 | `prompt_languages` | 提示词语言：`zh`、`en` |
 | `prompt_max_length` | 提示词长度上限 |
@@ -485,7 +485,7 @@ erDiagram
 | `reference_audio` | 是否支持参考音频输入 |
 | `prompt_languages`、`prompt_max_length` | 同上 |
 
-本阶段不接入具体模型，以上只是能力描述的格式约定。
+能力描述由适配器（代码）声明，扩展激活时同步到本表；入库的 JSON 使用 snake_case 键，领域对象中为 camelCase，由仓库转换（`domain/rules/model-capability-rules.ts`）。服务商的非机密设置（如接口地址）保存在 `providers.settings_json`，键由适配器声明的设置项决定。
 
 #### `generation_profiles` 生成参数
 

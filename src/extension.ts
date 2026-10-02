@@ -18,6 +18,7 @@ import { PanelManager } from './app/panels/panel-manager';
 import { AssetService } from './app/services/asset-service';
 import { ChangeNotifier } from './app/services/change-notifier';
 import { ProjectService } from './app/services/project-service';
+import { ProviderService } from './app/services/provider-service';
 import { ScreenplayService } from './app/services/screenplay-service';
 import { StageChange, StageService } from './app/services/stage-service';
 import { StoryboardService } from './app/services/storyboard-service';
@@ -35,12 +36,15 @@ import { VsCodeTextGenerationSettings } from './infra/copilot/vscode-text-genera
 import { openDatabase } from './infra/database/database-connection';
 import { SqliteAssetRepository } from './infra/database/sqlite-asset-repository';
 import { SqliteProjectRepository } from './infra/database/sqlite-project-repository';
+import { SqliteProviderRepository } from './infra/database/sqlite-provider-repository';
 import { SqliteScreenplayRepository } from './infra/database/sqlite-screenplay-repository';
 import { SqliteChapterRepository, SqliteStageRunRepository } from './infra/database/sqlite-stage-run-repository';
 import { SqliteStoryboardRepository } from './infra/database/sqlite-storyboard-repository';
 import { SqliteWorkRepository } from './infra/database/sqlite-work-repository';
 import { SqliteWorkSourceReader } from './infra/database/sqlite-work-source-reader';
 import { FilePromptTemplates } from './infra/prompts/file-prompt-templates';
+import { createBuiltinProviderRegistry } from './infra/providers/builtin-providers';
+import { VsCodeSecretStore } from './infra/secrets/vscode-secret-store';
 import { SidebarActionRegistry } from './sidebar/sidebar-actions';
 import { registerSidebarHandlers } from './sidebar/sidebar-handlers';
 import { SIDEBAR_SECTIONS } from './sidebar/sidebar-menu-config';
@@ -109,6 +113,13 @@ export function activate(context: vscode.ExtensionContext): void {
   });
   const textSettingsService = new TextSettingsService(settingsStore, new CopilotModelCatalog());
   const assetService = new AssetService(new SqliteAssetRepository(database), projectService);
+  const providerService = new ProviderService({
+    repository: new SqliteProviderRepository(database),
+    registry: createBuiltinProviderRegistry(),
+    secrets: new VsCodeSecretStore(context.secrets)
+  });
+  // 把适配器声明的服务商和模型同步到数据库，设置页和后续的参数选择都从数据库读取。
+  providerService.syncCatalog();
 
   // 页面。
   const panels = new PanelManager(context.extensionUri);
@@ -122,7 +133,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const projectPages = new ProjectPages(projectService, panels);
   const workListPages = new WorkListPages(services, panels);
   const assetListPages = new AssetListPages({ projects: projectService, assets: assetService }, panels);
-  const settingsPages = new SettingsPages(textSettingsService, panels);
+  const settingsPages = new SettingsPages({ text: textSettingsService, providers: providerService }, panels);
 
   // 侧栏：尚未实现的入口不注册动作，点击时由侧栏提示“该功能尚未开放”。
   const actionRegistry = new SidebarActionRegistry(SIDEBAR_SECTIONS)

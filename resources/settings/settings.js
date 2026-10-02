@@ -1,10 +1,10 @@
 // ------------------------------------------------------------------------
 // 名称：settings.js
-// 说明：模型设置页脚本：文本生成设置（Copilot 模型、小说分段方式、每段字数上限）即时保存，并说明图像、音频、视频模型尚未接入。
+// 说明：模型设置页脚本：文本生成设置（Copilot 模型、小说分段方式、每段字数上限）与各服务商（启用、访问密钥、设置项、模型开关与能力）即时保存。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
-// 日期：2026-09-30
-// 备注：请求名称与 src/app/pages/settings-handlers.ts 一致；每个字段旁显示“保存中…”“已保存”“保存失败”。
+// 日期：2026-10-02
+// 备注：请求名称与 src/app/pages/settings-handlers.ts 一致；每个字段旁显示“保存中…”“已保存”“保存失败”；访问密钥只发送给宿主，不回显。
 // ------------------------------------------------------------------------
 
 'use strict';
@@ -12,6 +12,10 @@
 (function () {
   const REQUEST_LOAD = 'settings.load';
   const REQUEST_UPDATE = 'settings.update';
+  const REQUEST_PROVIDER_UPDATE = 'settings.providerUpdate';
+  const REQUEST_PROVIDER_SET_KEY = 'settings.providerSetKey';
+  const REQUEST_PROVIDER_CLEAR_KEY = 'settings.providerClearKey';
+  const REQUEST_MODEL_SET_ENABLED = 'settings.modelSetEnabled';
 
   const AUTO_MODEL_LABEL = '自动';
   /** 下拉中“自动”选项的值：空串在下拉里表示“未选择”，所以用单独的值，保存时再转为空串。 */
@@ -19,12 +23,27 @@
   const SAVING_TEXT = '保存中…';
   const SAVED_TEXT = '已保存';
   const GENERIC_ERROR_TEXT = '操作失败，请重试。';
+  const API_KEY_FIELD = 'apiKey';
+  const KEY_CONFIGURED_TEXT = '已配置';
+  const KEY_MISSING_TEXT = '未配置';
+  const KEY_PLACEHOLDER_NEW = '粘贴访问密钥';
+  const KEY_PLACEHOLDER_REPLACE = '已配置，输入新密钥可更换';
   const SPLIT_MODE_OPTIONS = [
     { value: 'chapter', label: '按章节' },
     { value: 'length', label: '按字数' }
   ];
 
   const root = document.getElementById('app');
+
+  /** 取错误载荷中的说明文字。 */
+  function errorText(error) {
+    return (error && error.message) || GENERIC_ERROR_TEXT;
+  }
+
+  /** 取错误载荷中某个字段的错误提示；没有则返回空串。 */
+  function fieldErrorOf(error, key) {
+    return (error && error.fieldErrors && error.fieldErrors[key]) || '';
+  }
 
   /**
    * 创建保存状态文字：显示在字段下方，随保存过程更新。
@@ -42,14 +61,14 @@
     };
   }
 
-  /** 保存一项设置，并在状态文字中反馈结果。 */
+  /** 保存一项文本生成设置，并在状态文字中反馈结果。 */
   async function saveSetting(patch, status) {
     status.show(SAVING_TEXT, false);
     try {
       await window.hostBridge.request(REQUEST_UPDATE, patch);
       status.show(SAVED_TEXT, false);
     } catch (error) {
-      status.show(`保存失败：${(error && error.message) || GENERIC_ERROR_TEXT}`, true);
+      status.show(`保存失败：${errorText(error)}`, true);
     }
   }
 
@@ -130,14 +149,228 @@
     );
   }
 
-  /** 其他模型区：本阶段只有接口，没有接入具体模型。 */
-  function renderOtherModels() {
+  /**
+   * 让开关的无障碍名称带上所属对象：表格行里的“启用”开关文字相同，读屏时无法区分。
+   * @param {object} control 开关控件。
+   * @param {string} name 无障碍名称。
+   */
+  function nameSwitch(control, name) {
+    control.focusTarget.removeAttribute('aria-labelledby');
+    control.focusTarget.setAttribute('aria-label', name);
+  }
+
+  /** 访问密钥区：输入框、保存与清除按钮、配置状态；保存后在原位更新，不重绘整个分区。 */
+  function renderApiKey(provider) {
+    let configured = provider.apiKeyConfigured;
+    const status = createSaveStatus();
+    const keyState = aiUi.h('span', { class: 'provider-key-state' });
+    const keyInput = aiUi.textInput({ type: 'password', ariaLabel: `${provider.displayName}访问密钥`, onEnter: () => void saveKey() });
+    const keyField = aiUi.field({
+      label: '访问密钥',
+      description: '密钥保存在 VS Code 的密钥存储中，不会写入数据库，也不会在页面上显示。',
+      control: keyInput
+    });
+    const saveButton = aiUi.button({ text: '保存密钥', variant: 'primary', onClick: () => void saveKey() });
+    const clearButton = aiUi.button({ text: '清除密钥', variant: 'danger', onClick: () => void clearKey() });
+
+    /** 按是否已配置刷新状态文字、占位文字和按钮。 */
+    function refresh() {
+      keyState.textContent = configured ? KEY_CONFIGURED_TEXT : KEY_MISSING_TEXT;
+      keyState.className = `provider-key-state ${configured ? 'status-success' : 'status-warning'}`;
+      keyInput.focusTarget.placeholder = configured ? KEY_PLACEHOLDER_REPLACE : KEY_PLACEHOLDER_NEW;
+      saveButton.setText(configured ? '更换密钥' : '保存密钥');
+      clearButton.element.hidden = !configured;
+    }
+
+    async function saveKey() {
+      const apiKey = keyInput.getValue().trim();
+      if (apiKey === '') {
+        keyField.setError('访问密钥不能为空。');
+        return;
+      }
+      keyField.setError('');
+      saveButton.setDisabled(true);
+      status.show(SAVING_TEXT, false);
+      try {
+        const result = await window.hostBridge.request(REQUEST_PROVIDER_SET_KEY, { providerId: provider.id, apiKey });
+        keyInput.setValue('');
+        configured = result.provider.apiKeyConfigured;
+        refresh();
+        status.show(SAVED_TEXT, false);
+      } catch (error) {
+        const message = fieldErrorOf(error, API_KEY_FIELD);
+        if (message) {
+          keyField.setError(message);
+          status.show('', false);
+        } else {
+          status.show(`保存失败：${errorText(error)}`, true);
+        }
+      } finally {
+        saveButton.setDisabled(false);
+      }
+    }
+
+    async function clearKey() {
+      const confirmed = await aiUi.confirm({
+        title: '清除访问密钥',
+        message: `清除后将无法使用“${provider.displayName}”的模型，需要重新填写密钥。`,
+        confirmText: '清除',
+        cancelText: '取消',
+        variant: 'danger'
+      });
+      if (!confirmed) return;
+      clearButton.setDisabled(true);
+      status.show(SAVING_TEXT, false);
+      try {
+        const result = await window.hostBridge.request(REQUEST_PROVIDER_CLEAR_KEY, { providerId: provider.id });
+        configured = result.provider.apiKeyConfigured;
+        refresh();
+        status.show(SAVED_TEXT, false);
+      } catch (error) {
+        status.show(`清除失败：${errorText(error)}`, true);
+      } finally {
+        clearButton.setDisabled(false);
+      }
+    }
+
+    refresh();
+    return aiUi.h(
+      'div',
+      { class: 'provider-key' },
+      keyField.element,
+      aiUi.h('div', { class: 'provider-key-actions' }, saveButton.element, clearButton.element, keyState),
+      status.element
+    );
+  }
+
+  /** 服务商的一个设置项：下拉选择后立即保存，文本在失去焦点且有变化时保存；校验错误显示在字段下方。 */
+  function renderProviderSetting(provider, setting) {
+    const status = createSaveStatus();
+    let saved = setting.value;
+    let field;
+
+    async function save(value) {
+      status.show(SAVING_TEXT, false);
+      try {
+        const result = await window.hostBridge.request(REQUEST_PROVIDER_UPDATE, { providerId: provider.id, settings: { [setting.key]: value } });
+        const current = result.provider.settings.find((item) => item.key === setting.key);
+        saved = current ? current.value : value;
+        field.setError('');
+        status.show(SAVED_TEXT, false);
+        return saved;
+      } catch (error) {
+        const message = fieldErrorOf(error, setting.key);
+        if (message) {
+          field.setError(message);
+          status.show('', false);
+        } else {
+          status.show(`保存失败：${errorText(error)}`, true);
+        }
+        return null;
+      }
+    }
+
+    let control;
+    if (setting.control === 'select') {
+      control = aiUi.select({
+        options: setting.options.map((option) => ({ value: option.value, label: option.label })),
+        value: setting.value,
+        allowEmpty: false,
+        ariaLabel: setting.label,
+        onChange: (value) => void save(value)
+      });
+    } else {
+      control = aiUi.textInput({ value: setting.value, ariaLabel: setting.label });
+      control.focusTarget.addEventListener('change', () => {
+        const text = control.getValue().trim();
+        if (text === saved) {
+          field.setError('');
+          return;
+        }
+        void save(text).then((normalized) => {
+          if (normalized !== null) control.setValue(normalized);
+        });
+      });
+    }
+    field = aiUi.field({ label: setting.label, description: setting.description, control });
+    return aiUi.h('div', { class: 'provider-setting' }, field.element, status.element);
+  }
+
+  /** 服务商的模型表：名称与代码、类型、启用开关、能力摘要。 */
+  function renderModelTable(provider, status) {
+    const columns = [
+      { title: '模型', minWidth: 180, render: (model) => aiUi.tableMainCell({ text: model.displayName, description: model.code }) },
+      { title: '类型', width: 72, nowrap: true, render: (model) => aiUi.chip({ text: model.kindLabel }) },
+      {
+        title: '启用',
+        width: 120,
+        nowrap: true,
+        render: (model) => {
+          const control = aiUi.switchControl({ label: '启用', checked: model.isEnabled });
+          nameSwitch(control, `启用模型 ${model.displayName}`);
+          control.onChange(async (checked) => {
+            status.show(SAVING_TEXT, false);
+            try {
+              await window.hostBridge.request(REQUEST_MODEL_SET_ENABLED, { modelId: model.id, isEnabled: checked });
+              status.show(SAVED_TEXT, false);
+            } catch (error) {
+              control.setValue(!checked);
+              status.show(`保存失败：${errorText(error)}`, true);
+            }
+          });
+          return control.element;
+        }
+      },
+      {
+        title: '能力',
+        minWidth: 220,
+        render: (model) => aiUi.h('div', { class: 'provider-capability' }, model.capabilitySummary.map((line) => aiUi.h('div', { text: line })))
+      }
+    ];
+    return aiUi.table({ columns, rows: provider.models, ariaLabel: `${provider.displayName}的模型` }).element;
+  }
+
+  /** 一个服务商的设置区：标题与启用开关、访问密钥、设置项、模型表。 */
+  function renderProvider(provider) {
+    const status = createSaveStatus();
+    const enabledSwitch = aiUi.switchControl({ label: '启用', checked: provider.isEnabled });
+    nameSwitch(enabledSwitch, `启用服务商 ${provider.displayName}`);
+    enabledSwitch.onChange(async (checked) => {
+      status.show(SAVING_TEXT, false);
+      try {
+        await window.hostBridge.request(REQUEST_PROVIDER_UPDATE, { providerId: provider.id, isEnabled: checked });
+        status.show(SAVED_TEXT, false);
+      } catch (error) {
+        enabledSwitch.setValue(!checked);
+        status.show(`保存失败：${errorText(error)}`, true);
+      }
+    });
+
     return aiUi.h(
       'section',
-      { class: 'settings-section' },
-      aiUi.h('h2', { text: '图像、音频、视频模型' }),
-      aiUi.h('p', { class: 'description', text: '尚未接入模型。' })
+      { class: 'settings-section settings-section--wide' },
+      aiUi.h('div', { class: 'provider-header' }, aiUi.h('h2', { text: provider.displayName }), enabledSwitch.element),
+      status.element,
+      renderApiKey(provider),
+      provider.settings.map((setting) => renderProviderSetting(provider, setting)),
+      aiUi.h('h3', { class: 'provider-models-title', text: '模型' }),
+      provider.models.length === 0 ? aiUi.h('p', { class: 'description', text: '该服务商没有提供模型。' }) : renderModelTable(provider, status)
     );
+  }
+
+  /** 服务商区（节点数组）：没有任何适配器时说明尚未接入。 */
+  function renderProviders(providers) {
+    if (providers.length === 0) {
+      return [
+        aiUi.h(
+          'section',
+          { class: 'settings-section' },
+          aiUi.h('h2', { text: '图像、音频、视频模型' }),
+          aiUi.h('p', { class: 'description', text: '尚未接入模型。' })
+        )
+      ];
+    }
+    return providers.map(renderProvider);
   }
 
   /** 加载设置并渲染页面；失败时显示原因和“重试”。 */
@@ -145,13 +378,13 @@
     root.textContent = '';
     root.append(aiUi.h('p', { class: 'description', text: '加载中…' }));
     try {
-      const view = await window.hostBridge.request(REQUEST_LOAD);
+      const data = await window.hostBridge.request(REQUEST_LOAD);
       root.textContent = '';
-      root.append(renderTextSettings(view), renderOtherModels());
+      root.append(renderTextSettings(data.text), ...renderProviders(data.providers));
     } catch (error) {
       root.textContent = '';
       root.append(
-        aiUi.h('p', { class: 'status-error', text: (error && error.message) || '设置加载失败。' }),
+        aiUi.h('p', { class: 'status-error', text: errorText(error) }),
         aiUi.button({ text: '重试', onClick: () => void load() }).element
       );
     }

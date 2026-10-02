@@ -27,7 +27,7 @@ Module._load = function load(request, parent, isMain) {
   return request === 'vscode' ? fakeVscode : originalLoad.call(this, request, parent, isMain);
 };
 
-const { state, createMemento } = fakeVscode.__harness;
+const { state, createMemento, createSecretStorage } = fakeVscode.__harness;
 state.port = port;
 state.extensionRoot = extensionRoot;
 
@@ -290,6 +290,7 @@ const context = {
   extensionUri: fakeVscode.Uri.file(extensionRoot),
   globalStorageUri: fakeVscode.Uri.file(path.join(dataDirectory, 'storage')),
   globalState: createMemento(),
+  secrets: createSecretStorage(),
   subscriptions: []
 };
 Promise.resolve(extension.activate(context)).then(

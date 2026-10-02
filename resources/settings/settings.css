@@ -1,10 +1,10 @@
 /*
  * ------------------------------------------------------------------------
  * 名称：settings.css
- * 说明：模型设置页样式：分组标题与字段间距、保存状态文字。
+ * 说明：模型设置页样式：分组标题与字段间距、保存状态文字、服务商标题行、访问密钥操作行和模型表。
  * 作者：Lion
  * 邮箱：chengbin@3578.cn
- * 日期：2026-09-30
+ * 日期：2026-10-02
  * 备注：颜色统一使用主题变量；字段控件样式见 ui-kit/src/ui-controls.css。
  * ------------------------------------------------------------------------
  */
@@ -12,6 +12,11 @@
 .settings-section {
   max-width: 560px;
   margin: 0 0 24px;
+}
+
+/* 服务商区包含模型表，比普通分组更宽 */
+.settings-section--wide {
+  max-width: 880px;
 }
 
 .settings-section h2 {
@@ -35,4 +40,56 @@
   min-height: 16px;
   margin: 0 0 12px;
   font-size: 11px;
+}
+
+/* 服务商标题行：名称在左，启用开关在右，分隔线在整行下方 */
+.provider-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0 0 12px;
+  padding: 0 0 6px;
+  border-bottom: 1px solid var(--divider);
+}
+
+.settings-section .provider-header h2 {
+  margin: 0;
+  padding: 0;
+  border-bottom: 0;
+}
+
+.provider-header .ui-switch-row {
+  padding: 0;
+}
+
+/* 访问密钥：输入框下方一行操作按钮与配置状态 */
+.provider-key {
+  margin: 0 0 12px;
+}
+
+.provider-key-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0 0;
+}
+
+.provider-key-state {
+  margin-left: 4px;
+  font-size: 11px;
+}
+
+.provider-models-title {
+  margin: 8px 0 8px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* 模型表里的能力摘要：每项一行，弱化颜色 */
+.ui-table .provider-capability {
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.5;
 }

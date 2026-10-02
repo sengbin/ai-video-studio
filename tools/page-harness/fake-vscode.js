@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：fake-vscode.js
-// 说明：页面测试工具用的假 vscode 模块：模拟 Webview 视图与面板、设置、全局状态和语言模型，让编译后的扩展代码可以脱离 VS Code 运行。
+// 说明：页面测试工具用的假 vscode 模块：模拟 Webview 视图与面板、设置、全局状态、密钥存储和语言模型，让编译后的扩展代码可以脱离 VS Code 运行。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-09-30
@@ -253,6 +253,20 @@ function createMemento() {
   };
 }
 
+/** 假的密钥存储（SecretStorage）：只保存在内存中，工具重启后丢失。 */
+function createSecretStorage() {
+  const store = new Map();
+  return {
+    get: async (key) => store.get(key),
+    store: async (key, value) => {
+      store.set(key, value);
+    },
+    delete: async (key) => {
+      store.delete(key);
+    }
+  };
+}
+
 module.exports = {
   Uri,
   ViewColumn: { Active: -1 },
@@ -266,5 +280,5 @@ module.exports = {
   LanguageModelToolCallPart,
   LanguageModelChatToolMode: { Auto: 1, Required: 2 },
   LanguageModelChatMessage,
-  __harness: { state, createMemento }
+  __harness: { state, createMemento, createSecretStorage }
 };
