@@ -103,7 +103,10 @@
       value: view.splitMode,
       direction: 'horizontal',
       ariaLabel: '小说分段方式',
-      onChange: (value) => void saveSetting({ splitMode: value }, splitStatus)
+      onChange: (value) => {
+        updateCharsDescription(value);
+        void saveSetting({ splitMode: value }, splitStatus);
+      }
     });
     const splitField = aiUi.field({
       label: '小说分段方式',
@@ -116,9 +119,17 @@
     const charsInput = aiUi.textInput({ value: String(view.maxSegmentChars), ariaLabel: '每段字数上限' });
     const charsField = aiUi.field({
       label: '每段字数上限',
-      description: `${min} 至 ${max} 的整数；按章节时，单章超过此值会在段落处再切分。`,
+      description: charsDescription(view.splitMode),
       control: charsInput
     });
+    /** 说明文字随分段方式切换：两种方式下这个值都会用，作用不同。 */
+    function charsDescription(mode) {
+      const effect = mode === 'chapter' ? '按章节时，单章超过此值会在段落处再切分。' : '按字数时，每段按此字数切分。';
+      return `${min} 至 ${max} 的整数；${effect}`;
+    }
+    function updateCharsDescription(mode) {
+      charsField.element.querySelector('.ui-field__description').textContent = charsDescription(mode);
+    }
     // 输入框失去焦点且内容有变化时才保存；格式不对时不请求宿主，直接在字段下方提示。
     let savedChars = String(view.maxSegmentChars);
     charsInput.focusTarget.addEventListener('change', () => {

@@ -650,7 +650,7 @@ F7 不是单独弹出的表单，而是 P6 服务商详情视图里的设置区�
 |---|---|---|---|---|---|---|
 | `copilotModelFamily` | Copilot 模型 | 下拉：自动 + 当前可用模型列表 | 否 | 自动 | 列表来自 Copilot 当前可用模型；未安装或未登录 Copilot 时列表为空，提示原因；已保存的模型不可用时显示“所选模型不可用，将使用自动” | `aiVideoStudio.copilot.modelFamily` |
 | `novelSplitMode` | 小说分段方式 | 单选：按章节 / 按字数 | 是 | 按章节 | 描述文字“按章节时识别不到章节标题，会自动改为按字数” | `aiVideoStudio.novel.splitMode` |
-| `novelMaxSegmentChars` | 每段字数上限 | 数字 | 是 | 20000 | 整数，2000 至 100000（建议值）；描述文字“按章节时，单章超过此值会在段落处再切分” | `aiVideoStudio.novel.maxSegmentChars` |
+| `novelMaxSegmentChars` | 每段字数上限 | 数字 | 是 | 20000 | 整数，2000 至 100000（建议值）；描述文字随分段方式切换：按章节为“单章超过此值会在段落处再切分”，按字数为“每段按此字数切分”（两种方式下都显示） | `aiVideoStudio.novel.maxSegmentChars` |
 
 ### F8 生成参数（工作台参数页签）
 
