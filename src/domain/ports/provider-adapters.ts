@@ -167,3 +167,10 @@ export interface ProviderAdapterByKind {
 
 /** 任一类型的适配器。 */
 export type AnyModelProvider = ProviderAdapterByKind[ModelKind];
+
+/** 调用一个视频模型所需的内容：适配器、凭据与设置、服务商侧的模型代码。 */
+export interface ResolvedVideoCall {
+  readonly adapter: VideoModelProvider;
+  readonly context: ProviderCallContext;
+  readonly modelCode: string;
+}

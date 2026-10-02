@@ -57,11 +57,14 @@ export type ProviderFailure = 'auth' | 'rate_limited' | 'invalid_request' | 'con
 /** 值得稍后重试的失败分类；鉴权、参数和内容审核类失败重试不会成功。 */
 const RETRYABLE_PROVIDER_FAILURES: readonly ProviderFailure[] = ['rate_limited', 'server', 'network'];
 
-/** 调用模型服务失败；category 决定生成队列是否重试以及界面如何提示。 */
+/** 调用模型服务失败；category 决定生成队列是否重试以及界面如何提示，code 为服务商返回的错误码。 */
 export class ProviderError extends Error {
-  constructor(readonly category: ProviderFailure, message: string, options?: { readonly cause?: unknown }) {
-    super(message, options);
+  readonly code: string | null;
+
+  constructor(readonly category: ProviderFailure, message: string, options?: { readonly cause?: unknown; readonly code?: string | null }) {
+    super(message, options === undefined ? undefined : { cause: options.cause });
     this.name = 'ProviderError';
+    this.code = options?.code ?? null;
   }
 
   /** 是否值得稍后重试。 */

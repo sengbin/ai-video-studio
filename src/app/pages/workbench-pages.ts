@@ -1,0 +1,69 @@
+// ------------------------------------------------------------------------
+// 名称：workbench-pages.ts
+// 说明：生成工作台页（P5）的入口：打开或聚焦工作台，把任务与分镜脚本的变化推送给页面。
+// 作者：Lion
+// 邮箱：chengbin@3578.cn
+// 日期：2026-10-02
+// 备注：请求处理在 workbench-handlers.ts；页内“重新生成分镜脚本”表单复用分镜表单目录，开始后产出层自己刷新，不需要额外跳转。
+// ------------------------------------------------------------------------
+
+import { registerFormHandlers } from '../forms/form-handlers';
+import { createStoryboardFormCatalog } from '../forms/storyboard-form';
+import { MessageRouter } from '../messaging/message-router';
+import { WORKBENCH_PAGE_RESOURCES } from '../panels/page-resources';
+import { PanelManager } from '../panels/panel-manager';
+import { ProjectService } from '../services/project-service';
+import { STAGE_EVENTS } from './stage-handlers';
+import { WORKBENCH_EVENTS, WorkbenchHost, WorkbenchServices, registerWorkbenchHandlers } from './workbench-handlers';
+
+const WORKBENCH_PANEL_KEY = 'workbench';
+const WORKBENCH_VIEW_TYPE = 'aiVideoStudio.workbench';
+const WORKBENCH_TITLE = '生成工作台';
+const WORKBENCH_DESCRIPTION = '为已确认的分镜脚本逐个镜头生成视频；生成失败时显示平台返回的具体原因，修改镜头后可再次生成。';
+
+/** 工作台页依赖的服务。 */
+export interface WorkbenchPageServices extends WorkbenchServices {
+  readonly projects: ProjectService;
+}
+
+/** 工作台页的入口。 */
+export class WorkbenchPages {
+  constructor(
+    private readonly services: WorkbenchPageServices,
+    private readonly host: WorkbenchHost,
+    private readonly panels: PanelManager
+  ) {}
+
+  /** 打开工作台；已打开时聚焦。 */
+  show(): void {
+    if (this.panels.reveal(WORKBENCH_PANEL_KEY)) {
+      return;
+    }
+    const { generation, works, stages, projects, storyboards } = this.services;
+    const router = new MessageRouter();
+    registerWorkbenchHandlers(router, this.services, this.host);
+    // 产出层里的“重新生成”会弹出分镜表单；作品和集都已确定，开始后产出层随阶段事件自行刷新。
+    registerFormHandlers(router, createStoryboardFormCatalog({ projects, works, storyboards, onStarted: () => undefined, onPicked: () => undefined }));
+
+    const panel = this.panels.open({
+      key: WORKBENCH_PANEL_KEY,
+      viewType: WORKBENCH_VIEW_TYPE,
+      title: WORKBENCH_TITLE,
+      description: WORKBENCH_DESCRIPTION,
+      styles: WORKBENCH_PAGE_RESOURCES.styles,
+      scripts: WORKBENCH_PAGE_RESOURCES.scripts,
+      router
+    });
+
+    const unsubscribes = [
+      generation.onDidChangeJobs(() => panel.postEvent(WORKBENCH_EVENTS.changed)),
+      works.onDidChangeWorks(() => panel.postEvent(WORKBENCH_EVENTS.changed)),
+      projects.onDidChangeProjects(() => panel.postEvent(WORKBENCH_EVENTS.changed)),
+      stages.onDidChange((change) => {
+        panel.postEvent(WORKBENCH_EVENTS.changed);
+        panel.postEvent(STAGE_EVENTS.changed, { workId: change.workId, runId: change.runId });
+      })
+    ];
+    panel.onDidClose(() => unsubscribes.forEach((unsubscribe) => unsubscribe()));
+  }
+}

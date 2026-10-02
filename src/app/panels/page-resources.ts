@@ -86,6 +86,12 @@ export const ASSET_LIST_PAGE_RESOURCES: PageResources = createEditorPageResource
   ['form/form-runtime.js', 'shared/page-format.js', 'asset-list/asset-list.js']
 );
 
+/** 生成工作台页：镜头的编辑与分镜脚本确认复用阶段产出层，因此一并加载表单引擎与分镜脚本产出层。 */
+export const WORKBENCH_PAGE_RESOURCES: PageResources = createEditorPageResources(
+  ['form/form.css', 'stage/stage.css', 'workbench/workbench.css'],
+  ['form/form-runtime.js', 'shared/page-format.js', 'stage/stage.js', 'stage/stage-storyboard.js', 'workbench/workbench.js']
+);
+
 /** 模型设置页：设置即时保存，没有弹出表单。 */
 export const SETTINGS_PAGE_RESOURCES: PageResources = createEditorPageResources(['settings/settings.css'], ['settings/settings.js']);
 

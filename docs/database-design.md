@@ -530,8 +530,9 @@ erDiagram
 | `status` | 文本 | 是 | | `waiting`、`queued`、`running`、`succeeded`、`failed`、`canceled` |
 | `request_snapshot_json` | 文本（JSON） | 是 | | 提交时的完整请求快照，见下表 |
 | `remote_job_id` | 文本 | 否 | | 模型服务侧的任务标识 |
-| `error_category` | 文本 | 否 | | `auth`、`rate_limit`、`param`、`server`、`network` |
-| `error_message` | 文本 | 否 | | |
+| `error_category` | 文本 | 否 | | 仅 `failed` 时有值：`auth`（密钥或账号）、`rate_limited`（限流）、`invalid_request`（参数）、`content_rejected`（内容审核未通过）、`server`（服务端）、`network`（网络），与 `ProviderError` 的分类一致 |
+| `error_code` | 文本 | 否 | | 服务商返回的错误码，如 `DataInspectionFailed` |
+| `error_message` | 文本 | 否 | | 服务商返回的原始说明，原样保存并显示给用户，用于判断如何修改后再次生成 |
 | `attempt` | 整数 | 是 | 1 | 同一镜头的第几次提交 |
 | `prev_job_id` | 整数 | 否 | | 依赖的前序镜头任务，外键 `video_jobs.id`，删除时置空 |
 | `first_frame_id` | 整数 | 否 | | 作为首帧的尾帧，外键 `result_frames.id`，删除时置空 |
@@ -539,17 +540,17 @@ erDiagram
 | `submitted_at` | 文本 | 否 | | 实际提交给模型的时间 |
 | `finished_at` | 文本 | 否 | | |
 
-`request_snapshot_json` 的键：
+`request_snapshot_json` 的键（JSON 内使用 camelCase；当前实现，首帧衔接与独立音轨随步骤 9 再增加键）：
 
 | 键 | 含义 |
 |---|---|
-| `model` | 服务商与模型标识 |
-| `params` | 合并后的最终参数：画幅、分辨率、时长、声音模式与内容、种子、专有参数 |
-| `prompt` | 实际使用的提示词与语言 |
-| `reference_asset_file_ids` | 使用的资产图片 ID 列表 |
-| `first_frame` | 首帧来源：`none`、`prev_tail`（含尾帧 ID）、`asset`（含图片 ID） |
-| `audio` | 声音快照：启用的 `shot_sounds` 条目、编译后的声音提示词、使用的音频资产文件 ID（含角色音色参考） |
-| `storyboard_script_run_id` | 使用的分镜脚本版本 |
+| `providerCode`、`modelCode` | 服务商与模型标识 |
+| `params` | 合并后的最终参数：`aspectRatio`、`resolution`、`durationSeconds`、`audioMode`、`seed`、`extraParams` |
+| `prompt` | 编译后的提示词：镜头中文提示词、启用的声音条目、参考图编号说明 |
+| `referenceImageFileIds` | 使用的资产图片文件 ID 列表（只存引用，提交给服务商前才读取内容） |
+| `referenceAudioFileIds` | 使用的资产音频文件 ID 列表（含角色音色参考） |
+| `storyboardRunId` | 使用的分镜脚本版本 |
+| `warnings` | 提交时的提醒，如“尾帧衔接暂未支持，已忽略”“某实体没有绑定资产” |
 
 快照中不得出现密钥。
 
@@ -561,11 +562,11 @@ erDiagram
 | `job_id` | 整数 | 是 | | 外键 `video_jobs.id`，级联删除 |
 | `shot_id` | 整数 | 是 | | 冗余保存，便于按镜头查询，外键 `shots.id`，级联删除 |
 | `file_path` | 文本 | 是 | | 相对扩展存储目录的路径 |
-| `remote_url` | 文本 | 否 | | 服务商返回的临时地址 |
+| `remote_url` | 文本 | 否 | | 服务商返回的临时地址；地址带签名且约 24 小时失效，当前不保存，结果在完成时就下载到本地 |
 | `remote_expires_at` | 文本 | 否 | | 临时地址过期时间 |
-| `duration_seconds` | 实数 | 是 | | 实际时长 |
-| `width` | 整数 | 是 | | |
-| `height` | 整数 | 是 | | |
+| `duration_seconds` | 实数 | 否 | | 实际时长；服务商没有返回时为空 |
+| `width` | 整数 | 否 | | 服务商没有返回时为空 |
+| `height` | 整数 | 否 | | 服务商没有返回时为空 |
 | `size_bytes` | 整数 | 是 | | |
 | `has_audio` | 整数 | 是 | 0 | 结果视频是否带声音轨 |
 | `is_selected` | 整数 | 是 | 0 | 是否为该镜头采用的版本 |
@@ -590,7 +591,7 @@ erDiagram
 
 ### 4.8 独立音轨（预留）
 
-用于“声音与视频分开生成、再合成”的方式。**本阶段只设计结构，不开发功能，也不建表**；开发时新增迁移 `008-audio-tracks`。
+用于“声音与视频分开生成、再合成”的方式。**本阶段只设计结构，不开发功能，也不建表**；开发时新增迁移 `009-audio-tracks`。
 
 #### `episode_audio_tracks` 集的独立音轨
 
@@ -610,7 +611,7 @@ erDiagram
 
 ### 4.9 资产生成任务与候选（预留）
 
-用于“提示词发送给图像或音频模型生成资产文件”。**本阶段只设计结构，不建表**；接入图像、音频模型时新增迁移 `007-asset-generation`。
+用于“提示词发送给图像或音频模型生成资产文件”。**本阶段只设计结构，不建表**；接入图像、音频模型时新增迁移 `008-asset-generation`。
 
 #### `asset_jobs` 资产生成任务
 
@@ -718,8 +719,9 @@ erDiagram
 | 4 | `004-models` | `providers`、`models`、`model_capabilities`、`generation_profiles` | 已实现 |
 | 5 | `005-generation` | `video_jobs`、`video_results`、`result_frames` | 已实现 |
 | 6 | `006-text-generation` | `stage_runs` 增加“已取消”状态、确认状态、修订号、上游记录、模型、进度、原始输出（重建该表，允许丢弃现有数据）；`screenplays` 增加 `structure_json`；`models` 增加 `kind` | 已实现 |
-| 7 | `007-asset-generation` | `asset_jobs`、`asset_candidates`（预留） | 接入图像、音频模型时 |
-| 8 | `008-audio-tracks` | `episode_audio_tracks`（预留，开发独立音轨时再新增） | 后续 |
+| 7 | `007-job-failures` | 重建 `video_jobs`、`video_results`、`result_frames`：失败分类与服务商分类一致并增加 `error_code`，结果视频的时长、宽高允许为空（测试阶段丢弃旧数据） | 已实现（步骤 8） |
+| 8 | `008-asset-generation` | `asset_jobs`、`asset_candidates`（预留） | 接入图像、音频模型时 |
+| 9 | `009-audio-tracks` | `episode_audio_tracks`（预留，开发独立音轨时再新增） | 后续 |
 
 拆分说明：镜头引用资产文件，因此资产在分镜之前建立；全部 22 张表已在前五个迁移中创建，各功能的仓库随功能实现逐步补全。
 

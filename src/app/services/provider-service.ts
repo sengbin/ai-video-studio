@@ -7,7 +7,7 @@
 // 备注：不依赖 VS Code；密钥只经 SecretStore 保存和读取，不进入任何视图；时钟可注入以便测试。
 // ------------------------------------------------------------------------
 
-import { NotFoundError } from '../../domain/errors';
+import { NotFoundError, ProviderError } from '../../domain/errors';
 import { MODEL_KIND_LABELS, ModelKind } from '../../domain/models/model-capability';
 import {
   ModelDescriptor,
@@ -18,6 +18,7 @@ import {
   ProviderView,
   UsableModel
 } from '../../domain/models/model-provider';
+import { ResolvedVideoCall } from '../../domain/ports/provider-adapters';
 import { ProviderRegistry } from '../../domain/ports/provider-registry';
 import { ProviderRepository } from '../../domain/ports/provider-repository';
 import { SecretStore } from '../../domain/ports/secret-store';
@@ -180,6 +181,36 @@ export class ProviderService {
       }
     }
     return usable;
+  }
+
+  /**
+   * 取得调用某个视频模型所需的适配器、访问密钥和服务商设置，供生成队列在每次提交与查询前调用。
+   * @param modelId 模型标识。
+   * @throws ProviderError 模型不存在或不是视频模型、模型或服务商已停用、没有适配器，或没有配置访问密钥（分类均为鉴权或参数）。
+   */
+  async resolveVideoCall(modelId: number): Promise<ResolvedVideoCall> {
+    const model = this.repository.findModelById(modelId);
+    const provider = model === undefined ? undefined : this.repository.findProviderById(model.providerId);
+    if (model === undefined || provider === undefined || model.kind !== 'video') {
+      throw new ProviderError('invalid_request', '所选视频模型已不存在，请重新选择。');
+    }
+    const adapter = this.registry.find('video', provider.code);
+    const descriptor = this.registry.findProvider(provider.code);
+    if (adapter === undefined || descriptor === undefined) {
+      throw new ProviderError('invalid_request', `服务商“${provider.displayName}”的视频适配器不可用。`);
+    }
+    if (!provider.isEnabled || !model.isEnabled) {
+      throw new ProviderError('invalid_request', `模型“${model.displayName}”或服务商“${provider.displayName}”已被停用，请到“设置 > 模型”启用。`);
+    }
+    const apiKey = await this.secrets.get(providerApiKeySecretKey(provider.code));
+    if (apiKey === undefined || apiKey === '') {
+      throw new ProviderError('auth', `尚未配置“${provider.displayName}”的访问密钥，请到“设置 > 模型”填写。`);
+    }
+    return {
+      adapter,
+      context: { apiKey, settings: resolveProviderSettings(descriptor.settingFields, provider.settings) },
+      modelCode: model.code
+    };
   }
 
   /** 取得服务商记录及其声明；服务商不存在或没有适配器时抛出 NotFoundError。 */

@@ -267,10 +267,19 @@ function createSecretStorage() {
   };
 }
 
+/** 假的 env：记录被要求打开的文件，不真正打开。 */
+const env = {
+  openExternal: async (uri) => {
+    console.log(`[假 openExternal] ${uri.fsPath}`);
+    return true;
+  }
+};
+
 module.exports = {
   Uri,
   ViewColumn: { Active: -1 },
   ConfigurationTarget: { Global: 1 },
+  env,
   window,
   workspace,
   lm,

@@ -111,7 +111,7 @@ export class QianwenApiClient {
       const errorCode = typeof code === 'string' ? code : null;
       const category = classifyErrorCode(errorCode) ?? classifyStatus(response.status);
       const detail = typeof message === 'string' && message !== '' ? message : `HTTP ${response.status}`;
-      throw new ProviderError(category, `千问AI平台返回错误${errorCode === null ? '' : `（${errorCode}）`}：${detail}`);
+      throw new ProviderError(category, `千问AI平台返回错误${errorCode === null ? '' : `（${errorCode}）`}：${detail}`, { code: errorCode });
     }
     return payload;
   }

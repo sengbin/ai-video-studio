@@ -14,9 +14,12 @@ import { AssetListPages } from './app/pages/asset-list-pages';
 import { ProjectPages } from './app/pages/project-pages';
 import { SettingsPages } from './app/pages/settings-pages';
 import { WorkListPages } from './app/pages/work-list-pages';
+import { WorkbenchPages } from './app/pages/workbench-pages';
 import { PanelManager } from './app/panels/panel-manager';
+import { JobChange, JobQueue } from './app/queue/job-queue';
 import { AssetService } from './app/services/asset-service';
 import { ChangeNotifier } from './app/services/change-notifier';
+import { GenerationService } from './app/services/generation-service';
 import { ProjectService } from './app/services/project-service';
 import { ProviderService } from './app/services/provider-service';
 import { ScreenplayService } from './app/services/screenplay-service';
@@ -35,6 +38,8 @@ import { CopilotTextGeneration } from './infra/copilot/copilot-text-generation';
 import { VsCodeTextGenerationSettings } from './infra/copilot/vscode-text-generation-settings';
 import { openDatabase } from './infra/database/database-connection';
 import { SqliteAssetRepository } from './infra/database/sqlite-asset-repository';
+import { SqliteBindingRepository } from './infra/database/sqlite-binding-repository';
+import { SqliteGenerationRepository } from './infra/database/sqlite-generation-repository';
 import { SqliteProjectRepository } from './infra/database/sqlite-project-repository';
 import { SqliteProviderRepository } from './infra/database/sqlite-provider-repository';
 import { SqliteScreenplayRepository } from './infra/database/sqlite-screenplay-repository';
@@ -45,6 +50,7 @@ import { SqliteWorkSourceReader } from './infra/database/sqlite-work-source-read
 import { FilePromptTemplates } from './infra/prompts/file-prompt-templates';
 import { createBuiltinProviderRegistry } from './infra/providers/builtin-providers';
 import { VsCodeSecretStore } from './infra/secrets/vscode-secret-store';
+import { LocalResultStore } from './infra/storage/local-result-store';
 import { SidebarActionRegistry } from './sidebar/sidebar-actions';
 import { registerSidebarHandlers } from './sidebar/sidebar-handlers';
 import { SIDEBAR_SECTIONS } from './sidebar/sidebar-menu-config';
@@ -52,6 +58,9 @@ import { SIDEBAR_VIEW_ID, SidebarViewProvider } from './sidebar/sidebar-view-pro
 
 /** 数据库文件名，位于扩展的全局存储目录。 */
 const DATABASE_FILE_NAME = 'ai-video-studio.sqlite';
+
+/** 生成队列的处理间隔：平台生成通常需要一到几分钟，每几秒查询一次足够及时。 */
+const JOB_QUEUE_INTERVAL_MS = 5000;
 
 /** 侧栏创作入口与素材来源的对应关系。 */
 const CREATION_ENTRIES: ReadonlyArray<readonly [string, WorkSourceType]> = [
@@ -113,13 +122,45 @@ export function activate(context: vscode.ExtensionContext): void {
   });
   const textSettingsService = new TextSettingsService(settingsStore, new CopilotModelCatalog());
   const assetService = new AssetService(new SqliteAssetRepository(database), projectService);
+  const providerRepository = new SqliteProviderRepository(database);
   const providerService = new ProviderService({
-    repository: new SqliteProviderRepository(database),
+    repository: providerRepository,
     registry: createBuiltinProviderRegistry(),
     secrets: new VsCodeSecretStore(context.secrets)
   });
   // 把适配器声明的服务商和模型同步到数据库，设置页和后续的参数选择都从数据库读取。
   providerService.syncCatalog();
+
+  // 视频生成：结果视频保存在全局存储目录；队列启动时先处理上次退出时遗留的任务。
+  const generationRepository = new SqliteGenerationRepository(database);
+  const resultStore = new LocalResultStore(context.globalStorageUri.fsPath);
+  const jobChanges = new ChangeNotifier<JobChange>();
+  const jobQueue = new JobQueue({
+    jobs: generationRepository,
+    media: generationRepository,
+    calls: providerService,
+    results: resultStore,
+    notify: (change) => jobChanges.notify(change)
+  });
+  jobQueue.recover();
+  context.subscriptions.push({ dispose: jobQueue.start(JOB_QUEUE_INTERVAL_MS) });
+  const generationService = new GenerationService({
+    works: workService,
+    projects: projectService,
+    storyboardService,
+    runs,
+    screenplays,
+    storyboards,
+    bindings: new SqliteBindingRepository(database),
+    assets: new SqliteAssetRepository(database),
+    jobs: generationRepository,
+    media: generationRepository,
+    results: resultStore,
+    models: providerRepository,
+    providers: providerService,
+    scheduler: jobQueue,
+    changes: jobChanges
+  });
 
   // 页面。
   const panels = new PanelManager(context.extensionUri);
@@ -134,12 +175,19 @@ export function activate(context: vscode.ExtensionContext): void {
   const workListPages = new WorkListPages(services, panels);
   const assetListPages = new AssetListPages({ projects: projectService, assets: assetService }, panels);
   const settingsPages = new SettingsPages({ text: textSettingsService, providers: providerService }, panels);
+  const workbenchPages = new WorkbenchPages(
+    { generation: generationService, ...services },
+    // 结果视频用系统默认的视频播放器打开。
+    { openFile: async (absolutePath) => void (await vscode.env.openExternal(vscode.Uri.file(absolutePath))) },
+    panels
+  );
 
   // 侧栏：尚未实现的入口不注册动作，点击时由侧栏提示“该功能尚未开放”。
   const actionRegistry = new SidebarActionRegistry(SIDEBAR_SECTIONS)
     .register('project-list', 'main', () => projectPages.showProjectList())
     .register('project-list', 'action', () => projectPages.showCreateForm())
-    .register('model-settings', 'main', () => settingsPages.show());
+    .register('model-settings', 'main', () => settingsPages.show())
+    .register('video-workbench', 'main', () => workbenchPages.show());
   for (const [itemId, sourceType] of CREATION_ENTRIES) {
     // 主入口：打开该素材来源的作品列表页；尾部操作：打开列表页并弹出新建作品表单。
     actionRegistry

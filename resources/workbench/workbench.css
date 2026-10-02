@@ -1,0 +1,140 @@
+/*
+ * ------------------------------------------------------------------------
+ * 名称：workbench.css
+ * 说明：生成工作台页样式：工具栏的选择器宽度、操作结果与提示、批量操作行、镜头内容、任务状态、失败原因和历史记录。
+ * 作者：Lion
+ * 邮箱：chengbin@3578.cn
+ * 日期：2026-10-02
+ * 备注：颜色统一使用主题变量；表格样式见 ui-kit/src/ui-table.css。
+ * ------------------------------------------------------------------------
+ */
+
+/* 工具栏放在标题栏的第二行，选择器按内容分配宽度，窄屏换行 */
+.wb-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.wb-filter {
+  flex: 0 0 auto;
+}
+
+.wb-filter--episode {
+  width: 300px;
+}
+
+.wb-filter--model {
+  width: 220px;
+}
+
+.wb-filter--param {
+  width: 96px;
+}
+
+.wb-filter--audio {
+  width: 140px;
+}
+
+/* 操作结果可能有多行（逐个镜头的提醒与未提交原因） */
+.wb-message {
+  margin: 8px 0;
+  white-space: pre-line;
+}
+
+.wb-state {
+  padding: 16px 0;
+}
+
+.wb-state .ui-button {
+  margin-top: 8px;
+}
+
+.wb-notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 8px;
+}
+
+.wb-batch {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 8px;
+}
+
+/* 镜头内容：动作最多显示三行，完整内容在悬停提示里 */
+.wb-shot__action {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  margin: 0 0 2px;
+  overflow-wrap: anywhere;
+}
+
+.wb-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 4px 0 0;
+}
+
+.wb-job + .wb-job {
+  margin-top: 8px;
+}
+
+.wb-job__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+}
+
+/* 失败原因：平台返回的原文完整显示并保留换行，方便复制和判断如何修改 */
+.wb-failure {
+  margin: 4px 0 0;
+  padding: 4px 0 4px 8px;
+  border-left: 3px solid var(--status-error);
+}
+
+.wb-failure__label {
+  font-weight: 600;
+}
+
+.wb-failure__message {
+  margin: 2px 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.wb-result {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0 0;
+}
+
+.wb-history {
+  margin: 8px 0 0;
+}
+
+.wb-history > summary {
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.wb-history > summary:focus-visible {
+  outline: 1px solid var(--focus-border);
+  outline-offset: 1px;
+}
+
+.wb-history[open] > summary {
+  margin: 0 0 6px;
+}

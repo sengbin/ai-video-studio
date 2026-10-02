@@ -14,6 +14,7 @@ import { storyboardMigration } from './003-storyboard';
 import { modelsMigration } from './004-models';
 import { generationMigration } from './005-generation';
 import { textGenerationMigration } from './006-text-generation';
+import { jobFailuresMigration } from './007-job-failures';
 
 /** 全部数据库迁移，版本号从 1 开始连续递增。 */
 export const MIGRATIONS: readonly Migration[] = [
@@ -22,5 +23,6 @@ export const MIGRATIONS: readonly Migration[] = [
   storyboardMigration,
   modelsMigration,
   generationMigration,
-  textGenerationMigration
+  textGenerationMigration,
+  jobFailuresMigration
 ];

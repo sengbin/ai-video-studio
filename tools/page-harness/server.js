@@ -31,6 +31,9 @@ const { state, createMemento, createSecretStorage } = fakeVscode.__harness;
 state.port = port;
 state.extensionRoot = extensionRoot;
 
+// 视频生成接口用假实现：不访问网络，也不花费额度。
+require('./fake-qianwen').installFakeQianwen();
+
 /** 允许浏览器读取的目录，与扩展的 Webview 资源目录一致。 */
 const SERVED_ROOTS = ['resources', 'ui-kit/src'];
 const MIME_TYPES = { '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png' };
