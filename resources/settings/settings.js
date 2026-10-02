@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：settings.js
-// 说明：模型设置页脚本：文本生成设置（Copilot 模型、小说分段方式、每段字数上限）与各服务商（启用、访问密钥、设置项、模型开关与能力）即时保存。
+// 说明：模型设置页脚本：顶部是文本生成设置（Copilot 模型、小说分段方式、每段字数上限），下面是服务商列表，点“设置”在同一页内进入服务商详情（启用、访问密钥、设置项、模型开关与能力），全部即时保存。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
@@ -358,19 +358,95 @@
     );
   }
 
-  /** 服务商区（节点数组）：没有任何适配器时说明尚未接入。 */
-  function renderProviders(providers) {
+  /** 服务商列表中的状态文字：已启用/已停用、密钥是否已配置。 */
+  function renderProviderStatus(provider) {
+    return aiUi.h(
+      'div',
+      { class: 'provider-status' },
+      aiUi.h('span', { class: provider.isEnabled ? 'status-success' : 'description', text: provider.isEnabled ? '已启用' : '已停用' }),
+      aiUi.h('span', { class: provider.apiKeyConfigured ? 'status-success' : 'status-warning', text: provider.apiKeyConfigured ? '密钥已配置' : '密钥未配置' })
+    );
+  }
+
+  /** 服务商列表：每个服务商一行，点“设置”进入它的详情。 */
+  function renderProviderList(providers) {
     if (providers.length === 0) {
-      return [
-        aiUi.h(
-          'section',
-          { class: 'settings-section' },
-          aiUi.h('h2', { text: '图像、音频、视频模型' }),
-          aiUi.h('p', { class: 'description', text: '尚未接入模型。' })
-        )
-      ];
+      return aiUi.h(
+        'section',
+        { class: 'settings-section' },
+        aiUi.h('h2', { text: '图像、音频、视频模型' }),
+        aiUi.h('p', { class: 'description', text: '尚未接入模型。' })
+      );
     }
-    return providers.map(renderProvider);
+    const columns = [
+      { title: '服务商', minWidth: 160, render: (provider) => aiUi.tableMainCell({ text: provider.displayName, description: provider.code || '' }) },
+      {
+        title: '模型类型',
+        width: 160,
+        render: (provider) => aiUi.h('div', { class: 'provider-chips' }, [...new Set(provider.models.map((model) => model.kindLabel))].map((text) => aiUi.chip({ text })))
+      },
+      { title: '状态', width: 180, render: renderProviderStatus },
+      {
+        title: '模型',
+        width: 110,
+        nowrap: true,
+        render: (provider) => `启用 ${provider.models.filter((model) => model.isEnabled).length} / ${provider.models.length}`
+      },
+      {
+        title: '操作',
+        type: 'actions',
+        render: (provider) => aiUi.button({ text: '设置', compact: true, ariaLabel: `设置：${provider.displayName}`, onClick: () => openProvider(provider.id) }).element
+      }
+    ];
+    return aiUi.h(
+      'section',
+      { class: 'settings-section settings-section--wide' },
+      aiUi.h('h2', { text: '图像、音频、视频模型' }),
+      aiUi.table({ columns, rows: providers, ariaLabel: '模型服务商' }).element
+    );
+  }
+
+  /** 服务商详情：“返回列表”加该服务商的设置区。 */
+  function renderProviderDetail(provider) {
+    return [
+      aiUi.h('div', { class: 'settings-back' }, aiUi.button({ text: '返回列表', onClick: () => void backToList() }).element),
+      renderProvider(provider)
+    ];
+  }
+
+  /** 当前加载的设置数据；尚未加载成功时为 null。 */
+  let data = null;
+  /** 正在查看详情的服务商标识；在列表视图时为 null。 */
+  let openProviderId = null;
+
+  /** 按当前视图（列表或详情）渲染页面。 */
+  function renderPage() {
+    root.textContent = '';
+    const provider = data.providers.find((item) => item.id === openProviderId);
+    if (provider) {
+      root.append(...renderProviderDetail(provider));
+      return;
+    }
+    openProviderId = null;
+    root.append(renderTextSettings(data.text), renderProviderList(data.providers));
+  }
+
+  /** 进入服务商详情。 */
+  function openProvider(providerId) {
+    openProviderId = providerId;
+    renderPage();
+    window.scrollTo(0, 0);
+  }
+
+  /** 回到列表：重新读取，让列表里的启用、密钥、模型数量等状态是最新的；读取失败时用之前的数据。 */
+  async function backToList() {
+    try {
+      data = await window.hostBridge.request(REQUEST_LOAD);
+    } catch {
+      // 保留旧数据即可，列表状态可能稍有滞后。
+    }
+    openProviderId = null;
+    renderPage();
   }
 
   /** 加载设置并渲染页面；失败时显示原因和“重试”。 */
@@ -378,9 +454,8 @@
     root.textContent = '';
     root.append(aiUi.h('p', { class: 'description', text: '加载中…' }));
     try {
-      const data = await window.hostBridge.request(REQUEST_LOAD);
-      root.textContent = '';
-      root.append(renderTextSettings(data.text), ...renderProviders(data.providers));
+      data = await window.hostBridge.request(REQUEST_LOAD);
+      renderPage();
     } catch (error) {
       root.textContent = '';
       root.append(
