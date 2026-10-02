@@ -144,6 +144,12 @@ test('提交：音乐接口——prompt 与专有参数写入 input，时长取�
   assert.deepEqual((await provider.query(ref)).result, { audioUrl: 'https://oss.test/m.mp3', durationSeconds: 200 });
 });
 
+test('提交：平台返回 http 开头的音频地址时升级为 https', async () => {
+  const { provider } = createProvider([{ body: { output: { audio: { url: 'http://oss.test/a.wav' }, finish_reason: 'stop' } } }]);
+  const ref = await provider.submit(speech({}), CONTEXT);
+  assert.equal((await provider.query(ref)).result?.audioUrl, 'https://oss.test/a.wav');
+});
+
 test('提交：校验不通过时不发请求，没有音频地址时报服务端错误', async () => {
   const invalid = createProvider();
   const error = await rejectedWith(invalid.provider.submit(speech({ prompt: '' }), CONTEXT));

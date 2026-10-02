@@ -71,7 +71,7 @@ export class QianwenAudioProvider implements AudioModelProvider {
     if (typeof audio.url !== 'string' || audio.url === '') {
       throw new ProviderError('server', '千问AI平台没有返回音频地址。');
     }
-    const result: AudioJobResult = { audioUrl: audio.url, durationSeconds: readDuration(audio, readObject(response.usage)) };
+    const result: AudioJobResult = { audioUrl: toHttpsUrl(audio.url), durationSeconds: readDuration(audio, readObject(response.usage)) };
     return { modelCode: request.modelCode, remoteJobId: JSON.stringify(result) };
   }
 
@@ -132,6 +132,11 @@ function buildRequestBody(request: AudioGenerationRequest, model: QianwenAudioMo
   }
   Object.assign(input, mapExtraParams(request.extraParams, model.extraParams));
   return { model: request.modelCode, input };
+}
+
+/** 平台可能返回 http 开头的临时地址，而下载只接受 https；对象存储同时支持 https，所以统一升级。 */
+function toHttpsUrl(url: string): string {
+  return url.replace(/^http:\/\//i, 'https://');
 }
 
 /** 读取音频时长：语音接口在 output.audio.duration，音乐接口在 usage.duration；都没有时为 null。 */
