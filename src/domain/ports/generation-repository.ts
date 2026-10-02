@@ -63,6 +63,9 @@ export interface GenerationRepository {
   /** 按标识读取结果视频；不存在返回 undefined。 */
   findResult(id: number): VideoResultRecord | undefined;
 
+  /** 把结果视频设为所在镜头组采用的版本（原采用的取消）；结果不存在返回 false。 */
+  selectResult(id: number): boolean;
+
   /** 读取镜头组所在的项目、作品和集；镜头组不存在返回 undefined。 */
   getGroupLocation(groupId: number): GroupLocation | undefined;
 }

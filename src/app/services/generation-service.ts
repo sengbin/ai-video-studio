@@ -1,10 +1,10 @@
 // ------------------------------------------------------------------------
 // 名称：generation-service.ts
-// 说明：视频生成应用服务：提供工作台的作品、集、模型与镜头组任务视图；按镜头组编译请求并校验后提交；重新分组、拆分与合并镜头组；取消任务；定位结果文件。
+// 说明：视频生成应用服务：提供工作台的作品、集、模型与镜头组任务视图；按镜头组编译请求并校验后提交；重新分组、拆分与合并镜头组；取消任务；切换镜头组采用的结果版本；定位结果文件。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
-// 备注：不依赖 VS Code；一个镜头组一次生成一个多镜头视频；只有已确认采用的分镜脚本才能生成；每次提交产生新任务，失败原因与历史都保留；已有生成记录的组不能拆分或合并；组的第一个镜头设为“上一镜头尾帧作首帧”时，任务等待上一组，尾帧由工作台截取后入库。
+// 备注：不依赖 VS Code；一个镜头组一次生成一个多镜头视频；只有已确认采用的分镜脚本才能生成；每次提交产生新任务，失败原因与历史都保留；已有生成记录的组不能拆分或合并；组的第一个镜头设为“上一镜头尾帧作首帧”时，任务等待上一组，尾帧由工作台截取后入库；上一组改用其他版本后，接在旧尾帧之后采用的组只提示、不自动重做。
 // ------------------------------------------------------------------------
 
 import { FORM_LEVEL_ERROR_KEY, NotFoundError, ProviderError, ValidationError } from '../../domain/errors';
@@ -176,6 +176,10 @@ export interface GroupView {
   /** 组内出场的实体（去重）。 */
   readonly entities: readonly ShotEntityView[];
   readonly jobs: readonly JobView[];
+  /** 采用的结果视频；还没有成功的结果时为 null。 */
+  readonly selectedResultId: number | null;
+  /** 采用的视频接在上一组的旧尾帧之后（上一组后来改用了其他版本）时的说明；否则为 null。 */
+  readonly staleNote: string | null;
 }
 
 /** 一集的工作台视图。 */
@@ -309,7 +313,9 @@ export class GenerationService {
     const shots = new Map(storyboards.listShots(run.id).map((shot) => [shot.id, shot]));
     const groups = storyboards.listGroups(run.id);
     const groupIds = groups.map((group) => group.id);
-    const results = new Map<number, VideoResultRecord>(jobs.listResultsByGroups(groupIds).map((result) => [result.jobId, result]));
+    const resultList = jobs.listResultsByGroups(groupIds);
+    const results = new Map<number, VideoResultRecord>(resultList.map((result) => [result.jobId, result]));
+    const selectedByGroup = new Map<number, VideoResultRecord>(resultList.filter((result) => result.isSelected).map((result) => [result.groupId, result]));
     const jobsByGroup = new Map<number, VideoJobRecord[]>();
     for (const job of jobs.listJobsByGroups(groupIds)) {
       jobsByGroup.set(job.groupId, [...(jobsByGroup.get(job.groupId) ?? []), job]);
@@ -322,8 +328,10 @@ export class GenerationService {
       canGenerate: isCurrent,
       blockReason: isCurrent ? null : describeBlockReason(run.status, run.reviewStatus),
       groupMaxSeconds: groupMax,
-      groups: groups.map((group) => {
+      groups: groups.map((group, index) => {
         const members = group.shotIds.flatMap((id) => shots.get(id) ?? []);
+        const groupJobs = jobsByGroup.get(group.id) ?? [];
+        const selected = selectedByGroup.get(group.id);
         const entityIds = [...new Set(members.flatMap((shot) => shot.entityIds))];
         return {
           id: group.id,
@@ -342,7 +350,9 @@ export class GenerationService {
             const entity = entities.get(id);
             return entity === undefined ? [] : [{ id, name: entity.name, kindLabel: ENTITY_KIND_LABELS[entity.kind], bound: visualBound.has(id) }];
           }),
-          jobs: (jobsByGroup.get(group.id) ?? []).slice(0, MAX_JOBS_PER_GROUP).map((job) => this.toJobView(job, results.get(job.id)))
+          jobs: pickVisibleJobs(groupJobs, selected?.jobId).map((job) => this.toJobView(job, results.get(job.id))),
+          selectedResultId: selected?.id ?? null,
+          staleNote: describeStaleTail(groupJobs, selected, groups[index - 1] === undefined ? undefined : selectedByGroup.get(groups[index - 1].id))
         };
       })
     };
@@ -535,6 +545,24 @@ export class GenerationService {
    */
   cancel(rawInput: unknown): Promise<{ readonly remoteCanceled: boolean }> {
     return this.dependencies.scheduler.cancel(readEntityId({ id: readRecord(rawInput).jobId }, '任务'));
+  }
+
+  /**
+   * 把某个结果视频设为所在镜头组采用的版本，原来采用的取消。
+   * @param rawInput { resultId }。
+   * @throws NotFoundError 结果不存在。
+   */
+  selectResult(rawInput: unknown): { readonly selected: true } {
+    const { jobs, changes } = this.dependencies;
+    const result = jobs.findResult(readEntityId({ id: readRecord(rawInput).resultId }, '结果'));
+    if (result === undefined) {
+      throw new NotFoundError('结果视频不存在。');
+    }
+    if (!result.isSelected) {
+      jobs.selectResult(result.id);
+      changes.notify({ jobId: result.jobId, groupId: result.groupId, quiet: true });
+    }
+    return { selected: true };
   }
 
   /**
@@ -766,6 +794,27 @@ export class GenerationService {
   private timestamp(): string {
     return (this.dependencies.now?.() ?? new Date()).toISOString();
   }
+}
+
+/** 一个镜头组显示的任务：最新的若干条，并始终包含采用的结果所属的任务（较早的采用版本不能被截断掉）。 */
+function pickVisibleJobs(groupJobs: readonly VideoJobRecord[], selectedJobId: number | undefined): VideoJobRecord[] {
+  const visible = groupJobs.slice(0, MAX_JOBS_PER_GROUP);
+  const selectedJob = groupJobs.find((job) => job.id === selectedJobId);
+  return selectedJob === undefined || visible.includes(selectedJob) ? visible : [...visible, selectedJob];
+}
+
+/**
+ * 采用的视频是用上一组尾帧作首帧生成的，而上一组现在采用的是另一个版本时，返回说明。
+ * @param groupJobs 这一组的全部任务。
+ * @param selected 这一组采用的结果。
+ * @param previousSelected 上一组采用的结果。
+ */
+function describeStaleTail(groupJobs: readonly VideoJobRecord[], selected: VideoResultRecord | undefined, previousSelected: VideoResultRecord | undefined): string | null {
+  const usedJobId = groupJobs.find((job) => job.id === selected?.jobId)?.prevJobId ?? null;
+  if (usedJobId === null || previousSelected === undefined || previousSelected.jobId === usedJobId) {
+    return null;
+  }
+  return '上一组后来改用了其他版本，本组采用的视频是接在上一组旧版本的尾帧之后生成的，画面可能不连贯，建议重新生成。';
 }
 
 /** 没有已确认的分镜脚本时，说明为什么不能生成。 */

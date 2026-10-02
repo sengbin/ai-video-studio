@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：sqlite-generation-repository.test.ts
-// 说明：生成任务仓库的自动化测试：新增与尝试次数、状态变更只作用于进行中的任务、成功写结果并自动采用、失败原因往返、素材读取、镜头组删除的连带清除、迁移 8 的升级。
+// 说明：生成任务仓库的自动化测试：新增与尝试次数、状态变更只作用于进行中的任务、成功写结果并自动采用、采用其他结果、失败原因往返、素材读取、镜头组删除的连带清除、迁移 8 的升级。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
@@ -92,6 +92,25 @@ test('同一镜头组的第二个成功结果不抢占已采用的版本', () =>
     const first = repository.markSucceeded(a.id, RESULT, T2);
     const second = repository.markSucceeded(b.id, { ...RESULT, filePath: 'videos/1/1/1/1-2.mp4' }, T2);
     assert.deepEqual([first?.isSelected, second?.isSelected], [true, false]);
+  } finally {
+    database.close();
+  }
+});
+
+test('采用结果：同一镜头组只保留一个采用的版本，不影响其他组；结果不存在返回 false', () => {
+  const { database, seed, repository, insert } = createFixture();
+  try {
+    const [a, b, other] = [insert(), insert(), insert(seed.groupIds[1])];
+    for (const job of [a, b, other]) repository.markSubmitted(job.id, `r${job.id}`, T2);
+    const first = repository.markSucceeded(a.id, RESULT, T2);
+    const second = repository.markSucceeded(b.id, { ...RESULT, filePath: 'videos/1/1/1/1-2.mp4' }, T2);
+    const unrelated = repository.markSucceeded(other.id, { ...RESULT, filePath: 'videos/1/1/1/2-3.mp4' }, T2);
+    assert.ok(first && second && unrelated);
+
+    assert.equal(repository.selectResult(second.id), true);
+    assert.deepEqual([first.id, second.id, unrelated.id].map((id) => repository.findResult(id)?.isSelected), [false, true, true]);
+    assert.equal(repository.selectResult(second.id), true, '重复采用同一个结果不报错');
+    assert.equal(repository.selectResult(999), false);
   } finally {
     database.close();
   }

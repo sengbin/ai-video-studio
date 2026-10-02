@@ -600,7 +600,7 @@ erDiagram
 | `is_selected` | 整数 | 是 | 0 | 是否为该镜头采用的版本 |
 | `created_at` | 文本 | 是 | | |
 
-约束：同一 `group_id` 下最多一条 `is_selected = 1`（部分唯一索引）。
+约束：同一 `group_id` 下最多一条 `is_selected = 1`（部分唯一索引）。第一个成功的结果自动采用，切换采用版本时在一个事务里先取消原来的、再设置新的。
 
 视频文件路径规则：`videos/{project_id}/{work_id}/{episode_id}/{group_id}-{job_id}.mp4`。
 

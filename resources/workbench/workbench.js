@@ -1,10 +1,10 @@
 // ------------------------------------------------------------------------
 // 名称：workbench.js
-// 说明：生成工作台页脚本：选择作品的一集，按“本集 → 作品 → 项目默认”的生成参数按镜头组提交生成（一组一次生成一个多镜头视频）；显示每组的镜头、总时长、任务状态与历史，失败时显示平台返回的具体原因；支持重新分组、拆分与合并镜头组、取消、编辑镜头后再次生成、打开结果视频。
+// 说明：生成工作台页脚本：选择作品的一集，按“本集 → 作品 → 项目默认”的生成参数按镜头组提交生成（一组一次生成一个多镜头视频）；显示每组的镜头、总时长、任务状态与历史，失败时显示平台返回的具体原因；支持重新分组、拆分与合并镜头组、取消、编辑镜头后再次生成、打开结果视频、在结果版本之间切换采用和对比。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
-// 备注：请求与事件名称与 src/app/pages/workbench-handlers.ts 一致；“编辑镜头”“确认分镜脚本”复用 stage/stage.js 的产出层（aiStage）；“实体绑定”由 workbench/bindings.js（aiBindings）提供，“生成参数”的合并与编辑由 workbench/profile.js（aiProfile）提供，“上一组尾帧作首帧”的尾帧截取由 workbench/tail-frames.js（aiTailFrames）提供；依赖 shared/page-format.js（pageFormat）。
+// 备注：请求与事件名称与 src/app/pages/workbench-handlers.ts 一致；“编辑镜头”“确认分镜脚本”复用 stage/stage.js 的产出层（aiStage）；“实体绑定”由 workbench/bindings.js（aiBindings）提供，“生成参数”的合并与编辑由 workbench/profile.js（aiProfile）提供，“结果版本”弹出页由 workbench/versions.js（aiVersions）提供，“上一组尾帧作首帧”的尾帧截取由 workbench/tail-frames.js（aiTailFrames）提供；依赖 shared/page-format.js（pageFormat）。
 // ------------------------------------------------------------------------
 
 'use strict';
@@ -19,6 +19,7 @@
   const REQUEST_SPLIT_GROUP = 'workbench.splitGroup';
   const REQUEST_MERGE_GROUP = 'workbench.mergeGroup';
   const REQUEST_CANCEL = 'workbench.cancel';
+  const REQUEST_SELECT_RESULT = 'workbench.selectResult';
   const REQUEST_OPEN_RESULT = 'workbench.openResult';
   const REQUEST_EXPORT_RESULT = 'workbench.exportResult';
   const REQUEST_REVEAL_RESULT = 'workbench.revealResult';
@@ -203,6 +204,11 @@
     return group.jobs.some((job) => ACTIVE_STATUSES.includes(job.status));
   }
 
+  /** 这一组有结果视频的任务数。 */
+  function resultCount(group) {
+    return group.jobs.filter((job) => job.result).length;
+  }
+
   /** 所选模型单次最长时长；没有上限信息时为 null。 */
   function modelMaxSeconds() {
     const model = selectedModel();
@@ -268,6 +274,49 @@
 
   async function revealResult(result) {
     await runAction(REQUEST_REVEAL_RESULT, { resultId: result.id });
+  }
+
+  /** 采用一个结果版本；下一组采用的视频是接在这一组尾帧之后生成的，先征求确认。 */
+  async function selectResult(result, groupId) {
+    const index = view.groups.findIndex((group) => group.id === groupId);
+    const next = view.groups[index + 1];
+    const dependsOnTail = next && next.jobs.some((job) => job.result && job.result.isSelected && job.usesPreviousTail);
+    if (dependsOnTail) {
+      const confirmed = await aiUi.confirm({
+        title: '采用此版本',
+        message: `第 ${next.seq} 组采用的视频是接在这一组当前采用版本的尾帧之后生成的。改用其他版本后这两组的画面可能不连贯，需要重新生成第 ${next.seq} 组（不会自动重做）。确认采用？`,
+        confirmText: '采用',
+        cancelText: '取消'
+      });
+      if (!confirmed) return { ok: false, cancelled: true };
+    }
+    try {
+      await window.hostBridge.request(REQUEST_SELECT_RESULT, { resultId: result.id });
+    } catch (error) {
+      return { ok: false, message: errorText(error) };
+    }
+    await loadEpisode(false);
+    return { ok: true };
+  }
+
+  /** 结果视频的信息一行：时长、大小、是否有声。 */
+  function describeResult(result) {
+    const { durationSeconds, sizeBytes, hasAudio } = result;
+    return [durationSeconds === null ? '' : `${durationSeconds} 秒`, formatSize(sizeBytes), hasAudio ? '有声' : '无声'].filter(Boolean).join(' · ');
+  }
+
+  /** 弹出这一组的结果版本页：采用、打开、导出、对比。 */
+  function openVersions(group) {
+    aiVersions.open(group.id, {
+      getState: () => ({ view }),
+      select: selectResult,
+      describeParams: describeJobParams,
+      describeResult,
+      describeFields: describeJobFields,
+      openResult,
+      exportResult,
+      revealResult
+    });
   }
 
   /** 在某个镜头之前拆开所在的组。 */
@@ -340,8 +389,26 @@
       .join(' · ');
   }
 
-  /** 一次任务的状态：状态文字、生成参数、时间、失败原因或结果信息、提醒与提交的提示词。 */
-  function renderJob(job) {
+  /** 任务的对比条目：提交时的参数、结果信息和提示词，两个任务的条目顺序一致。 */
+  function describeJobFields(job) {
+    const { params } = job;
+    const orNone = (value) => (value === null || value === undefined || value === '' ? '（未指定）' : String(value));
+    return [
+      { label: '模型', value: orNone(job.modelName) },
+      { label: '画幅', value: orNone(params.aspectRatio) },
+      { label: '分辨率', value: orNone(params.resolution) },
+      { label: '整组时长', value: params.durationSeconds === null ? '（未指定）' : `${params.durationSeconds} 秒` },
+      { label: '镜头数', value: String(job.shotCount) },
+      { label: '首帧', value: job.usesPreviousTail ? '上一组尾帧' : '无' },
+      { label: '声音', value: AUDIO_MODE_LABELS[params.audioMode] || orNone(params.audioMode) },
+      { label: '种子', value: orNone(params.seed) },
+      { label: '结果', value: describeResult(job.result) },
+      { label: '提示词', value: job.prompt, long: true }
+    ];
+  }
+
+  /** 一次任务的状态：状态文字、生成参数、时间、失败原因或结果信息、提醒与提交的提示词；showAdopted 为 true（这一组有多个版本）时标出采用的那个。 */
+  function renderJob(job, showAdopted) {
     const elapsed = formatElapsed(job);
     const parts = [
       aiUi.h(
@@ -359,13 +426,12 @@
     if (job.waitNote) parts.push(aiUi.h('div', { class: 'status-warning', text: job.waitNote }));
     if (job.failure) parts.push(renderFailure(job.failure));
     if (job.result) {
-      const { durationSeconds, sizeBytes, hasAudio } = job.result;
-      const info = [durationSeconds === null ? '' : `${durationSeconds} 秒`, formatSize(sizeBytes), hasAudio ? '有声' : '无声'].filter(Boolean);
       parts.push(
         aiUi.h(
           'div',
           { class: 'wb-result' },
-          aiUi.h('span', { class: 'description', text: `结果：${info.join(' · ')}` }),
+          aiUi.h('span', { class: 'description', text: `结果：${describeResult(job.result)}` }),
+          showAdopted && job.result.isSelected ? aiUi.chip({ text: '已采用' }) : null,
           aiUi.button({ text: '打开视频', compact: true, onClick: () => void openResult(job.result) }).element,
           aiUi.button({ text: '导出…', compact: true, ariaLabel: '导出视频到指定位置', onClick: () => void exportResult(job.result) }).element,
           aiUi.button({ text: '在文件夹中显示', compact: true, onClick: () => void revealResult(job.result) }).element
@@ -383,16 +449,18 @@
   function renderGroupStatus(group) {
     if (group.jobs.length === 0) return aiUi.h('span', { class: 'description', text: '尚未生成' });
     const [latest, ...older] = group.jobs;
+    const showAdopted = resultCount(group) > 1;
     return aiUi.h(
       'div',
       {},
-      renderJob(latest),
+      group.staleNote ? aiUi.h('div', { class: 'status-warning wb-stale', text: group.staleNote }) : null,
+      renderJob(latest, showAdopted),
       older.length > 0
         ? aiUi.h(
             'details',
             { class: 'wb-history' },
             aiUi.h('summary', { text: `历史记录（${older.length} 次）` }),
-            older.map((job) => renderJob(job))
+            older.map((job) => renderJob(job, showAdopted))
           )
         : null
     );
@@ -463,6 +531,9 @@
       buttons.push(aiUi.button({ text: '并入上一组', compact: true, ariaLabel: `把第 ${group.seq} 组并入上一组`, onClick: () => void mergeIntoPrevious(group) }));
     }
     buttons.push(aiUi.button({ text: '编辑镜头', compact: true, ariaLabel: `编辑第 ${group.seq} 组的镜头`, onClick: openStoryboard }));
+    if (resultCount(group) > 1) {
+      buttons.push(aiUi.button({ text: `结果版本（${resultCount(group)}）`, compact: true, ariaLabel: `查看第 ${group.seq} 组的结果版本`, onClick: () => openVersions(group) }));
+    }
     return buttons.map((button) => button.element);
   }
 
@@ -594,6 +665,7 @@
     renderToolbar();
     render();
     aiProfile.refresh();
+    aiVersions.refresh();
   }
 
   /** 加载清单与当前集；showLoading 为 false 时保留现有内容（后台刷新）。 */

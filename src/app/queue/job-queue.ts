@@ -32,6 +32,8 @@ const INTERRUPTED_MESSAGE = '扩展重启，已中断。';
 export interface JobChange {
   readonly jobId: number;
   readonly groupId: number;
+  /** 为 true 时只要求界面刷新，不弹任务完成的通知（如切换采用的版本）。 */
+  readonly quiet?: boolean;
 }
 
 /** 解析视频模型的调用凭据。 */

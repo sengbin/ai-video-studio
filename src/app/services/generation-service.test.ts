@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：generation-service.test.ts
-// 说明：视频生成应用服务的自动化测试：工作台清单与镜头组视图、分镜脚本确认门槛、按组提交（编译、校验、入队、提醒）、重复提交、超过模型时长的组、失败原因展示与再次生成、参考图绑定、重新分组与拆分合并、取消与结果路径。
+// 说明：视频生成应用服务的自动化测试：工作台清单与镜头组视图、分镜脚本确认门槛、按组提交（编译、校验、入队、提醒）、重复提交、超过模型时长的组、失败原因展示与再次生成、参考图绑定、重新分组与拆分合并、取消与结果路径、尾帧衔接、采用结果版本及后续组的过期提示。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
@@ -610,6 +610,76 @@ test('尾帧衔接：上一组的尾帧已就绪时，这一组直接排队并�
     const view = fixture.episode().groups[1].jobs[0];
     assert.deepEqual([view.usesPreviousTail, view.waitNote], [true, null]);
     assert.match(queued.snapshot.warnings.join(), /尾帧作首帧.*不传参考素材/);
+  } finally {
+    fixture.database.close();
+  }
+});
+
+test('采用结果版本：同一组只有一个采用的版本，切换后视图与通知同步更新；不存在的结果或不合法的标识报错', async () => {
+  const fixture = await createFixture();
+  try {
+    fixture.approve();
+    const [groupId] = fixture.groupIds();
+    const first = await finishGroup(fixture, groupId);
+    const second = await finishGroup(fixture, groupId);
+    assert.deepEqual([first.result.isSelected, second.result.isSelected], [true, false], '第一个成功的结果自动采用');
+    assert.equal(fixture.episode().groups[0].selectedResultId, first.result.id);
+
+    const changesBefore = fixture.changed.length;
+    assert.deepEqual(fixture.generation.selectResult({ resultId: second.result.id }), { selected: true });
+    const [group] = fixture.episode().groups;
+    assert.equal(group.selectedResultId, second.result.id);
+    assert.deepEqual(group.jobs.map((job) => [job.id, job.result?.isSelected]), [[second.job.id, true], [first.job.id, false]]);
+    assert.deepEqual(fixture.changed.slice(changesBefore), [{ jobId: second.job.id, groupId, quiet: true }], '只刷新界面，不弹任务完成的通知');
+
+    fixture.generation.selectResult({ resultId: second.result.id });
+    assert.equal(fixture.changed.length, changesBefore + 1, '重复采用同一个结果不再通知');
+    assert.throws(() => fixture.generation.selectResult({ resultId: 999 }), NotFoundError);
+    assert.throws(() => fixture.generation.selectResult({ resultId: 'x' }), ValidationError);
+  } finally {
+    fixture.database.close();
+  }
+});
+
+test('采用结果版本：任务很多时，被采用的较早任务仍留在视图里', async () => {
+  const fixture = await createFixture();
+  try {
+    fixture.approve();
+    const [groupId] = fixture.groupIds();
+    const first = await finishGroup(fixture, groupId);
+    for (let index = 0; index < 11; index += 1) {
+      await finishGroup(fixture, groupId);
+    }
+    const jobIds = fixture.episode().groups[0].jobs.map((job) => job.id);
+    assert.equal(jobIds.length, 11, '最新的 10 条加上被采用的那一条');
+    assert.equal(jobIds[jobIds.length - 1], first.job.id);
+  } finally {
+    fixture.database.close();
+  }
+});
+
+test('采用结果版本：上一组改用其他版本后，接在旧尾帧之后采用的这一组提示画面可能不连贯，改回后提示消失', async () => {
+  const fixture = await createFixture({ groupMaxSeconds: '4' });
+  try {
+    fixture.approve();
+    const [first, second] = fixture.groupIds();
+    const firstDone = await finishGroup(fixture, first);
+    fixture.generation.saveTailFrame({ resultId: firstDone.result.id, mimeType: 'image/png', width: 64, height: 36, data: FRAME_BASE64 });
+    await submitGroups(fixture, [second]);
+    const [secondJob] = fixture.jobs.listJobsByGroups([second]);
+    fixture.jobs.markSubmitted(secondJob.id, 'r2', 't');
+    fixture.jobs.markSucceeded(secondJob.id, { filePath: 'videos/second.mp4', remoteUrl: null, durationSeconds: 4, width: null, height: null, sizeBytes: 10, hasAudio: true }, 't');
+
+    const again = await finishGroup(fixture, first);
+    assert.deepEqual(fixture.episode().groups.map((group) => group.staleNote), [null, null], '重新生成上一组但没有改用，不算过期');
+
+    fixture.generation.selectResult({ resultId: again.result.id });
+    const [, stale] = fixture.episode().groups;
+    assert.match(stale.staleNote ?? '', /上一组后来改用了其他版本.*建议重新生成/);
+    assert.equal(fixture.episode().groups[0].staleNote, null, '第一组没有上一组');
+
+    fixture.generation.selectResult({ resultId: firstDone.result.id });
+    assert.equal(fixture.episode().groups[1].staleNote, null);
   } finally {
     fixture.database.close();
   }

@@ -309,6 +309,9 @@ function createWorkbenchHost(): WorkbenchHost {
 function notifyFinishedJobs(context: vscode.ExtensionContext, generation: GenerationService, openWorkbench: () => void): void {
   const notified = new Set<string>();
   const unsubscribe = generation.onDidChangeJobs((change) => {
+    if (change.quiet === true) {
+      return;
+    }
     const outcome = generation.describeFinishedJob(change.jobId);
     if (outcome === undefined) {
       return;

@@ -246,3 +246,38 @@
 .wb-profile > * + * {
   margin-top: 6px;
 }
+
+/* 后续组采用的视频基于上一组旧版本尾帧时的提示 */
+.wb-stale {
+  margin: 0 0 6px;
+}
+
+/* 结果版本弹出页与版本对比弹出页：顶部对比操作、版本表、对比表的取值列 */
+.wb-versions > * + * {
+  margin-top: 8px;
+}
+
+.wb-versions__bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+}
+
+.wb-versions__bar > .description {
+  flex: 1 1 240px;
+  margin: 0;
+}
+
+.wb-versions__title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+}
+
+.wb-diff__value {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}

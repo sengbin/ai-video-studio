@@ -239,6 +239,17 @@ export class SqliteGenerationRepository implements GenerationRepository, JobMedi
     return row === undefined ? undefined : toResult(row);
   }
 
+  selectResult(id: number): boolean {
+    return runInTransaction(this.database, () => {
+      const result = this.findResult(id);
+      if (result === undefined) return false;
+      // 部分唯一索引限制每组最多一个采用版本，先取消原来的再设置新的。
+      this.database.prepare('UPDATE video_results SET is_selected = 0 WHERE group_id = ? AND is_selected = 1').run(result.groupId);
+      this.database.prepare('UPDATE video_results SET is_selected = 1 WHERE id = ?').run(id);
+      return true;
+    });
+  }
+
   getGroupLocation(groupId: number): GroupLocation | undefined {
     const row = this.database
       .prepare(

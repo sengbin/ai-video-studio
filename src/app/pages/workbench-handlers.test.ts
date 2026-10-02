@@ -45,6 +45,10 @@ function createFixture() {
       return { remoteCanceled: false };
     },
     regroup: (payload: unknown) => void calls.push(['regroup', payload]),
+    selectResult: (payload: unknown) => {
+      calls.push(['selectResult', payload]);
+      return { selected: true };
+    },
     splitGroup: (payload: unknown) => void calls.push(['splitGroup', payload]),
     mergeGroup: (payload: unknown) => void calls.push(['mergeGroup', payload]),
     getResultPath: (payload: unknown) => {
@@ -145,6 +149,12 @@ test('读取集视图时作品或集标识不合法会报错', async () => {
     const response = await send(WORKBENCH_REQUESTS.episode, payload);
     assert.ok(response !== undefined && !response.ok, JSON.stringify(payload));
   }
+});
+
+test('采用结果版本：转发给生成服务', async () => {
+  const { calls, callOk } = createFixture();
+  assert.deepEqual(await callOk(WORKBENCH_REQUESTS.selectResult, { resultId: 9 }), { selected: true });
+  assert.deepEqual(calls, [['selectResult', { resultId: 9 }]]);
 });
 
 test('打开结果视频：取得本机路径后交给宿主打开', async () => {
