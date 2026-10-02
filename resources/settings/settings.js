@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：settings.js
-// 说明：模型设置页脚本：顶部是文本生成设置（Copilot 模型、小说分段方式、每段字数上限），下面是服务商列表，点“设置”在同一页内进入服务商详情（启用、访问密钥、设置项、模型开关与能力），全部即时保存。
+// 说明：模型设置页脚本：顶部是文本生成设置（Copilot 模型、小说分段方式、每段字数上限），下面是服务商列表，点“设置”弹出该服务商的设置页（启用、访问密钥、设置项、模型开关与能力），全部即时保存。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
@@ -417,47 +417,36 @@
     );
   }
 
-  /** 服务商详情：“返回列表”加该服务商的设置区。 */
-  function renderProviderDetail(provider) {
-    return [
-      aiUi.h('div', { class: 'settings-back' }, aiUi.button({ text: '返回列表', onClick: () => void backToList() }).element),
-      renderProvider(provider)
-    ];
-  }
-
   /** 当前加载的设置数据；尚未加载成功时为 null。 */
   let data = null;
-  /** 正在查看详情的服务商标识；在列表视图时为 null。 */
-  let openProviderId = null;
 
-  /** 按当前视图（列表或详情）渲染页面。 */
+  /** 渲染页面：文本生成设置与服务商列表。 */
   function renderPage() {
     root.textContent = '';
-    const provider = data.providers.find((item) => item.id === openProviderId);
-    if (provider) {
-      root.append(...renderProviderDetail(provider));
-      return;
-    }
-    openProviderId = null;
     root.append(renderTextSettings(data.text), renderProviderList(data.providers));
   }
 
-  /** 进入服务商详情。 */
+  /** 弹出服务商的设置页；关闭后重新读取，让列表里的启用、密钥、模型数量等状态是最新的（读取失败时沿用之前的数据）。 */
   function openProvider(providerId) {
-    openProviderId = providerId;
-    renderPage();
-    window.scrollTo(0, 0);
-  }
-
-  /** 回到列表：重新读取，让列表里的启用、密钥、模型数量等状态是最新的；读取失败时用之前的数据。 */
-  async function backToList() {
-    try {
-      data = await window.hostBridge.request(REQUEST_LOAD);
-    } catch {
-      // 保留旧数据即可，列表状态可能稍有滞后。
-    }
-    openProviderId = null;
-    renderPage();
+    const provider = data.providers.find((item) => item.id === providerId);
+    if (!provider) return;
+    const page = aiUi.openPage({
+      title: `${provider.displayName}设置`,
+      content: renderProvider(provider),
+      width: 900,
+      height: 640,
+      minWidth: 480,
+      minHeight: 320,
+      buttons: [{ id: 'close', text: '关闭', isCancel: true }]
+    });
+    void page.closed.then(async () => {
+      try {
+        data = await window.hostBridge.request(REQUEST_LOAD);
+      } catch {
+        // 沿用旧数据，列表状态可能稍有滞后。
+      }
+      renderPage();
+    });
   }
 
   /** 加载设置并渲染页面；失败时显示原因和“重试”。 */
