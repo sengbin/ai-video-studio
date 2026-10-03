@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：profile.js
-// 说明：生成参数（F8）：按“本集 → 作品 → 项目默认”算出生效的模型、画幅、分辨率、声音模式、声音内容、随机种子、负向清单与提示词改写（镜头组再叠加本组覆盖与本组生成时长），并检查是否落在所选模型的能力范围内；提供检查器“参数”页签的内容，编辑作品默认、本集覆盖与本组覆盖。
+// 说明：生成参数（F8）：按“本集 → 作品 → 项目默认”算出生效的模型、画幅、分辨率、声音模式、声音内容、随机种子、负向清单与提示词改写（镜头组再叠加本组覆盖与本组生成时长），并检查是否落在所选模型的能力范围内；提供“配置参数”步骤的面板内容（声音内容用四个开关），编辑作品默认、本集覆盖与本组覆盖。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-03
@@ -17,12 +17,12 @@
   const AUDIO_ELEMENT_LABELS = { dialogue: '对白', narration: '旁白', sfx: '音效', music: '配乐' };
   const SOURCE_LABELS = { group: '本组覆盖', episode: '本集覆盖', work: '作品默认', project: '项目默认', default: '未设置，使用默认值', none: '未设置' };
   const SCOPE_OPTIONS = [
-    { value: 'work', label: '本作品默认（所有集）' },
-    { value: 'episode', label: '仅本集' },
-    { value: 'group', label: '仅选中的镜头组' }
+    { value: 'work', label: '作品默认' },
+    { value: 'episode', label: '本集' },
+    { value: 'group', label: '本镜头组' }
   ];
   const SCOPE_HINTS = {
-    work: '作品默认适用于这个作品的所有集；某一集需要不同取值时，在“仅本集”里覆盖。',
+    work: '作品默认适用于这个作品的所有集；某一集需要不同取值时，在“本集”里覆盖。',
     episode: '本集覆盖只对当前这一集生效，留空表示沿用作品默认。',
     group: '本组覆盖只对左栏选中的镜头组生效，留空表示沿用本集、作品或项目默认。'
   };
@@ -224,7 +224,7 @@
     panel.fieldsElement.append(wrapper.element);
   }
 
-  /** 声音内容：复选框，模型不支持的内容置灰；声音模式不是“模型生成声音”时整体置灰。 */
+  /** 声音内容：对白、旁白、音效、配乐四个开关，每个一行；模型不支持的内容置灰；声音模式不是“模型生成声音”时整体置灰。 */
   function addAudioElementsField(resolved, values) {
     const { model } = resolved;
     const nativeOff = resolved.values.audioMode !== 'native';
@@ -234,10 +234,10 @@
     const boxes = Object.keys(AUDIO_ELEMENT_LABELS).map((element) => {
       const supported = model.audioElements.includes(element);
       const text = supported ? AUDIO_ELEMENT_LABELS[element] : `${AUDIO_ELEMENT_LABELS[element]}${UNSUPPORTED_NOTE}`;
-      const box = aiUi.checkbox({ label: text, checked: selected.has(element), disabled: nativeOff || !supported, onChange: () => void changeElements(boxes) });
+      const box = aiUi.switchControl({ label: text, checked: selected.has(element), disabled: nativeOff || !supported, onChange: () => void changeElements(boxes) });
       return { element, box };
     });
-    const group = aiUi.h('div', { class: 'ui-choice-group', attrs: { role: 'group', 'aria-label': '声音内容' } }, boxes.map((item) => item.box.element));
+    const group = aiUi.h('div', { class: 'wb-switch-list', attrs: { role: 'group', 'aria-label': '声音内容' } }, boxes.map((item) => item.box.element));
     let description;
     if (model.audioElements.length === 0) description = '所选模型不支持原生生成声音内容。';
     else if (nativeOff) description = '声音设为“模型生成声音”时才传声音内容。';
@@ -246,11 +246,11 @@
     appendField('声音内容', description, control, '', stored === null ? null : () => void change('audioElements', null));
   }
 
-  /** 保存声音内容：至少选一项；复选框里置灰的项保持原来的选中状态一并提交。 */
+  /** 保存声音内容：至少开启一项；置灰的开关保持原来的状态一并提交。 */
   async function changeElements(boxes) {
     const chosen = boxes.filter((item) => item.box.getValue()).map((item) => item.element);
     if (chosen.length === 0) {
-      showMessage(false, '声音内容至少选择一项；不需要声音时请把声音设为“无声”。');
+      showMessage(false, '声音内容至少开启一项；不需要声音时请把声音设为“无声”。');
       renderFields();
       return;
     }
@@ -377,25 +377,21 @@
   }
 
   /**
-   * 创建参数面板（检查器的“参数”页签）：编辑作品默认、本集覆盖与本组覆盖，选择后即时保存。只创建一个实例。
+   * 创建参数面板（“配置参数”步骤）：编辑作品默认、本集覆盖与本组覆盖，选择后即时保存。只创建一个实例。
    * @param {{ getState: () => { catalog: object|null, profile: object|null, group: object|null }, save: (scope: string, changes: object) => Promise<{ ok: boolean, message?: string }> }} host 宿主页面提供的状态与保存函数；group 为左栏选中的镜头组（id、seq、overrides、totalSeconds），没有为 null。
-   * @returns {{ element: HTMLElement, refresh: () => void, setScope: (scope: string) => void }}
+   * @returns {{ element: HTMLElement, refresh: () => void }}
    */
-  function create(host) {    const scopeControl = aiUi.radioGroup({ options: SCOPE_OPTIONS, value: 'work', direction: 'vertical', ariaLabel: '参数范围', onChange: () => renderFields() });
+  function create(host) {
+    const scopeControl = aiUi.radioGroup({ options: SCOPE_OPTIONS, value: 'work', direction: 'horizontal', ariaLabel: '参数范围', onChange: () => renderFields() });
+    const scopeField = aiUi.field({ label: '应用范围', control: scopeControl });
+    scopeField.element.classList.add('wb-profile__scope');
     const hintElement = aiUi.h('p', { class: 'description' });
     const messageElement = aiUi.h('p', { class: 'wb-message', hidden: true, attrs: { role: 'status' } });
     const fieldsElement = aiUi.h('div', { class: 'wb-profile__fields' });
-    const element = aiUi.h('div', { class: 'wb-profile' }, scopeControl.element, hintElement, messageElement, fieldsElement);
+    const element = aiUi.h('div', { class: 'wb-profile' }, scopeField.element, hintElement, messageElement, fieldsElement);
     panel = { host, scopeControl, hintElement, messageElement, fieldsElement, key: '' };
     renderFields();
-    return { element, refresh, setScope };
-  }
-
-  /** 切换编辑范围（如从镜头组详情跳到“仅选中的镜头组”）。 */
-  function setScope(scope) {
-    if (!panel) return;
-    panel.scopeControl.setValue(scope);
-    renderFields();
+    return { element, refresh };
   }
 
   /** 页面数据变化后刷新面板；内容没有变化时不重绘，避免打断正在打开的下拉。 */

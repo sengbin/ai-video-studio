@@ -1,10 +1,10 @@
 // ------------------------------------------------------------------------
 // 名称：workbench.js
-// 说明：生成工作台页脚本：选择作品的一集，按“本集 → 作品 → 项目默认”的生成参数按镜头组提交生成（一组一次生成一个多镜头视频）；左栏列出镜头组（状态徽标，选中组展开镜头），中栏显示选中组的镜头、总时长、任务状态与历史，底部可折叠的队列列出全部任务，失败时显示平台返回的具体原因；支持重新分组、拆分与合并镜头组、取消、编辑镜头后再次生成、打开结果视频、在结果版本之间切换采用和对比。
+// 说明：生成工作台页脚本：顶部选择项目、作品与分集并显示当前生成配置；下面三栏——左栏镜头组列表（状态、镜头数与时长、重新分组），中栏选中镜头组的详情（镜头、出场实体概览、生成状态与结果），右栏三步流程（绑定素材、配置参数、检查并提交）；底部可折叠的队列列出全部任务，失败时显示平台返回的具体原因。页面不出现整页滚动条，各区域在内部滚动。支持重新分组、拆分与合并镜头组、取消、编辑镜头后再次生成、打开结果视频、在结果版本之间切换采用和对比。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
-// 备注：请求与事件名称与 src/app/pages/workbench-handlers.ts 一致；“编辑镜头”“确认分镜脚本”复用 stage/stage.js 的产出层（aiStage）；右栏检查器的页签容器由 workbench/inspector.js（aiInspector）提供，其中“绑定”面板由 workbench/bindings.js（aiBindings）提供，“参数”面板与生效参数的合并由 workbench/profile.js（aiProfile）提供，“提交”面板由 workbench/submit-panel.js（aiSubmit）提供，“结果版本”弹出页由 workbench/versions.js（aiVersions）提供（打开时另行请求该组全部历史成功版本），“上一组尾帧作首帧”的尾帧截取由 workbench/tail-frames.js（aiTailFrames）提供；依赖 shared/page-format.js（pageFormat）。
+// 备注：请求与事件名称与 src/app/pages/workbench-handlers.ts 一致；“编辑镜头”“确认分镜脚本”复用 stage/stage.js 的产出层（aiStage）；右栏步骤页签由 workbench/step-tabs.js（aiStepTabs）提供，其中“绑定素材”面板由 workbench/bindings.js（aiBindings）提供，“配置参数”面板与生效参数的合并由 workbench/profile.js（aiProfile）提供，“检查并提交”面板由 workbench/submit-panel.js（aiSubmit）提供，“结果版本”弹出页由 workbench/versions.js（aiVersions）提供（打开时另行请求该组全部历史成功版本），“上一组尾帧作首帧”的尾帧截取由 workbench/tail-frames.js（aiTailFrames）提供；依赖 shared/page-format.js（pageFormat）。
 // ------------------------------------------------------------------------
 
 'use strict';
@@ -22,7 +22,7 @@
   const REQUEST_MERGE_GROUP = 'workbench.mergeGroup';
   const REQUEST_CANCEL = 'workbench.cancel';
   const REQUEST_SELECT_RESULT = 'workbench.selectResult';
-const REQUEST_GROUP_VERSIONS = 'workbench.groupVersions';
+  const REQUEST_GROUP_VERSIONS = 'workbench.groupVersions';
   const REQUEST_OPEN_RESULT = 'workbench.openResult';
   const REQUEST_EXPORT_RESULT = 'workbench.exportResult';
   const REQUEST_REVEAL_RESULT = 'workbench.revealResult';
@@ -42,19 +42,11 @@ const REQUEST_GROUP_VERSIONS = 'workbench.groupVersions';
   };
   const KILOBYTE = 1024;
   const MEGABYTE = 1024 * KILOBYTE;
-  const ACTION_PREVIEW_LENGTH = 40;
   const AUDIO_MODE_LABELS = { native: '模型生成声音', none: '无声' };
   /** 状态前的图标，让状态不只靠颜色区分。 */
   const STATUS_ICONS = { waiting: '…', queued: '…', running: '●', succeeded: '✓', failed: '✕', canceled: '–' };
-  /** 左栏宽度的范围与键盘调整的步长（像素）。 */
-  const TREE_DEFAULT_WIDTH = 240;
-  const TREE_MIN_WIDTH = 200;
-  const TREE_MAX_WIDTH = 480;
-  const TREE_KEY_STEP = 16;
-  /** 右栏检查器宽度的范围（像素）。 */
-  const INSPECTOR_DEFAULT_WIDTH = 340;
-  const INSPECTOR_MIN_WIDTH = 300;
-  const INSPECTOR_MAX_WIDTH = 560;
+  /** 重绘前后需要保持滚动位置的区域：镜头组列表、详情、镜头列表、各步骤面板、队列。 */
+  const SCROLL_SELECTORS = ['.wb-groups__list', '.wb-detail__body', '.wb-shots', '.wb-steps__panel', '.wb-queue__body'];
   /** 底部队列最多显示的任务数。 */
   const QUEUE_MAX_ROWS = 100;
   const MS_PER_SECOND = 1000;
@@ -80,22 +72,17 @@ const REQUEST_GROUP_VERSIONS = 'workbench.groupVersions';
   const submitting = new Set();
   /** 重新分组时填写的单组最长时长；用户没改过时跟随当前模型与分镜脚本设定。 */
   let regroupSeconds = '';
-  /** 工具栏当前对应的选项标记，选项变化时才重建，避免后台刷新关闭用户打开的下拉。 */
-  let toolbarKey = null;
-  let toolbarElement = null;
+  /** 顶部上下文栏当前对应的选项标记，选项变化时才重建，避免后台刷新关闭用户打开的下拉。 */
+  let contextKey = null;
+  let contextElement = null;
   let messageElement = null;
   let contentElement = null;
   /** 当前选中的镜头组标识；没有选中或已不存在时按第一组显示。 */
   let selectedGroupId = null;
-  /** 左栏宽度与是否折叠；队列区是否展开。 */
-  let treeWidth = TREE_DEFAULT_WIDTH;
-  let treeCollapsed = false;
-  let queueOpen = false;
-  let treeElement = null;
-  /** 右栏检查器：宽度、是否折叠，以及页签容器和其中的两个面板（创建后一直保留）。 */
-  let inspectorWidth = INSPECTOR_DEFAULT_WIDTH;
-  let inspectorCollapsed = false;
-  let inspector = null;
+  /** 底部队列是否展开。 */
+  let queueOpen = true;
+  /** 右栏的步骤页签，以及其中三个步骤的面板（创建后一直保留）。 */
+  let stepTabs = null;
   let bindingsPanel = null;
   let profilePanel = null;
   let submitPanel = null;
@@ -131,14 +118,129 @@ const REQUEST_GROUP_VERSIONS = 'workbench.groupVersions';
     return { workId, episodeId };
   }
 
-  /** 全部可选的集，作为下拉选项。 */
-  function episodeOptions() {
-    return catalog.works.flatMap((work) =>
-      work.episodes.map((episode) => ({
-        value: `${work.id}:${episode.episodeId}`,
-        label: `${work.name} › 第 ${episode.seq} 集${episode.title ? ` ${episode.title}` : ''}（${stageStatusLabel(episode.display)}）`
-      }))
+  /** 可选的作品：只列有集的作品。 */
+  function selectableWorks() {
+    return catalog.works.filter((work) => work.episodes.length > 0);
+  }
+
+  /** 一集在下拉里的取值：“作品标识:集标识”。 */
+  function episodeKeyOf(work, episode) {
+    return `${work.id}:${episode.episodeId}`;
+  }
+
+  /** 一集在下拉里的文字：序号、标题与分镜脚本状态。 */
+  function episodeLabel(episode) {
+    return `第 ${episode.seq} 集${episode.title ? ` ${episode.title}` : ''}（${stageStatusLabel(episode.display)}）`;
+  }
+
+  /** 已选择的集不在清单里时（如被删除），改选第一个。 */
+  function normalizeEpisodeKey() {
+    if (!catalog) return;
+    const keys = selectableWorks().flatMap((work) => work.episodes.map((episode) => episodeKeyOf(work, episode)));
+    if (!keys.includes(episodeKey)) episodeKey = keys[0] || '';
+  }
+
+  /** 当前所选集所在的作品；没有选中任何集时为 undefined。 */
+  function selectedWork() {
+    if (!catalog || episodeKey === '') return undefined;
+    const { workId } = parseEpisodeKey(episodeKey);
+    return catalog.works.find((work) => work.id === workId);
+  }
+
+  /** 切换到另一集：先清空当前集的数据，再重新读取。 */
+  function selectEpisode(key) {
+    if (key === episodeKey) return;
+    episodeKey = key;
+    view = null;
+    profile = null;
+    updateResolved();
+    isLoading = true;
+    renderContext();
+    render();
+    void loadEpisode(false);
+  }
+
+  /** 切换项目或作品后，落到所选作品的第一集。 */
+  function selectWork(work) {
+    selectEpisode(episodeKeyOf(work, work.episodes[0]));
+  }
+
+  /** 顶部上下文栏里的一项：标签加内容。 */
+  function renderContextItem(label, content) {
+    return aiUi.h('div', { class: 'wb-context__item' }, aiUi.h('span', { class: 'wb-context__label', text: label }), content);
+  }
+
+  /** 顶部上下文栏：项目、作品、分集三个下拉和当前生效的生成配置；内容没有变化时保持原样，避免后台刷新关闭用户打开的下拉。 */
+  function renderContext() {
+    const work = selectedWork();
+    const summary = resolved ? aiProfile.summarize(resolved) : '';
+    const key = JSON.stringify([
+      catalog && catalog.works.map((item) => [item.id, item.name, item.projectName, item.episodes.map((episode) => [episode.episodeId, episode.seq, episode.title, episode.display])]),
+      episodeKey,
+      summary
+    ]);
+    if (key === contextKey) return;
+    contextKey = key;
+    contextElement.textContent = '';
+    contextElement.hidden = !work;
+    if (!work) return;
+
+    const works = selectableWorks();
+    const projectNames = [...new Set(works.map((item) => item.projectName))];
+    const projectSelect = aiUi.select({
+      options: projectNames.map((name) => ({ value: name, label: name })),
+      value: work.projectName,
+      allowEmpty: false,
+      ariaLabel: '选择项目',
+      onChange: (name) => selectWork(works.find((item) => item.projectName === name))
+    });
+    const workSelect = aiUi.select({
+      options: works.filter((item) => item.projectName === work.projectName).map((item) => ({ value: String(item.id), label: item.name })),
+      value: String(work.id),
+      allowEmpty: false,
+      ariaLabel: '选择作品',
+      onChange: (id) => selectWork(works.find((item) => String(item.id) === id))
+    });
+    const episodeSelect = aiUi.select({
+      options: work.episodes.map((episode) => ({ value: episodeKeyOf(work, episode), label: episodeLabel(episode) })),
+      value: episodeKey,
+      allowEmpty: false,
+      ariaLabel: '选择分集',
+      onChange: selectEpisode
+    });
+    contextElement.append(
+      renderContextItem('项目', projectSelect.element),
+      renderContextItem('作品', workSelect.element),
+      renderContextItem('分集', episodeSelect.element),
+      renderContextItem('当前生成配置（在“配置参数”步骤中修改）', aiUi.h('div', { class: 'wb-context__summary', text: summary || '—', attrs: { title: summary } }))
     );
+  }
+
+  /** 步骤页签的副文字与状态：绑定步骤看所选镜头组未绑定的实体数，参数步骤看生效参数是否可用，提交步骤看待提交的镜头组数。 */
+  function updateStepTabs() {
+    if (!view || view.groups.length === 0) {
+      for (const id of ['bindings', 'profile', 'submit']) stepTabs.setStatus(id, { note: '' });
+      return;
+    }
+    const selected = view.groups[selectedGroupIndex()];
+    stepTabs.setContext(`第 ${selected.seq} 组`);
+    bindingsPanel.setEntities(selected.entities.map((entity) => entity.id));
+    const unbound = selected.entities.filter((entity) => !entity.bound).length;
+    stepTabs.setStatus('bindings', unbound > 0 ? { note: `${unbound} 项未绑定` } : { note: '全部已绑定', state: 'done' });
+
+    if (!resolved || !resolved.model) {
+      stepTabs.setStatus('profile', { note: '无可用模型' });
+    } else if (Object.keys(resolved.issues).length > 0) {
+      stepTabs.setStatus('profile', { note: '需调整' });
+    } else {
+      const { aspectRatio, resolution } = resolved.values;
+      stepTabs.setStatus('profile', { note: [aspectRatio, resolution].filter(Boolean).join(' · ') || resolved.model.displayName, state: 'done' });
+    }
+
+    const pending = view.groups.filter(isPendingGroup).length;
+    if (view.blockReason) stepTabs.setStatus('submit', { note: '分镜脚本未确认' });
+    else if (pending > 0) stepTabs.setStatus('submit', { note: `${pending} 组待提交` });
+    else stepTabs.setStatus('submit', { note: '没有待提交', state: 'done' });
   }
 
   function selectedModel() {
@@ -155,24 +257,7 @@ const REQUEST_GROUP_VERSIONS = 'workbench.groupVersions';
     resolved = catalog && profile ? aiProfile.resolve(catalog, profile) : null;
   }
 
-  /** 已选择的集不在清单里时（如被删除），改选第一个。 */
-  function normalizeEpisodeKey() {
-    if (!catalog) return;
-    const keys = episodeOptions().map((option) => option.value);
-    if (!keys.includes(episodeKey)) episodeKey = keys[0] || '';
-  }
-
-  /** 展开检查器并切换到指定页签（绑定或参数）；窄屏时检查器在内容下方，滚动到可见位置。 */
-  function openInspector(tabId) {
-    if (inspectorCollapsed) {
-      inspectorCollapsed = false;
-      render();
-    }
-    inspector.show(tabId, true);
-    inspector.element.scrollIntoView({ block: 'nearest' });
-  }
-
-  /** 参数面板里“仅选中的镜头组”对应的镜头组及其覆盖；没有选中时为 null。 */
+  /** 参数面板里“本镜头组”对应的镜头组及其覆盖；没有选中时为 null。 */
   function profileGroup() {
     if (!view || view.groups.length === 0) return null;
     const group = view.groups[selectedGroupIndex()];
@@ -204,52 +289,15 @@ const REQUEST_GROUP_VERSIONS = 'workbench.groupVersions';
       return { ok: false, message: errorText(error) };
     }
     updateResolved();
-    renderToolbar();
+    renderContext();
     render();
     profilePanel.refresh();
     return { ok: true };
   }
 
-  /** 工具栏：集、当前生效参数的摘要与“生成参数”；内容没有变化时保持原样。 */
-  function renderToolbar() {
-    const summary = resolved ? aiProfile.summarize(resolved) : '';
-    const key = JSON.stringify([episodeOptions(), episodeKey, summary, Boolean(profile)]);
-    if (key === toolbarKey) return;
-    toolbarKey = key;
-    toolbarElement.textContent = '';
-    if (episodeKey === '') return;
-
-    const episodeSelect = aiUi.select({
-      options: episodeOptions(),
-      value: episodeKey,
-      allowEmpty: false,
-      ariaLabel: '选择集',
-      onChange: (value) => {
-        episodeKey = value;
-        view = null;
-        profile = null;
-        updateResolved();
-        isLoading = true;
-        render();
-        void loadEpisode(false);
-      }
-    });
-    toolbarElement.append(aiUi.h('div', { class: 'wb-filter wb-filter--episode' }, episodeSelect.element));
-    if (!profile) return;
-    toolbarElement.append(
-      aiUi.h('span', { class: 'description wb-toolbar__summary', text: summary, attrs: { title: summary } }),
-      aiUi.button({ text: '生成参数', onClick: () => openInspector('profile') }).element
-    );
-  }
-
   /** 字节数显示为 KB 或 MB。 */
   function formatSize(bytes) {
     return bytes >= MEGABYTE ? `${(bytes / MEGABYTE).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / KILOBYTE))} KB`;
-  }
-
-  /** 截取动作文字用于列表显示。 */
-  function preview(text) {
-    return text.length > ACTION_PREVIEW_LENGTH ? `${text.slice(0, ACTION_PREVIEW_LENGTH)}…` : text;
   }
 
   /** 弹出分镜脚本产出层，用来编辑镜头或确认采用。 */
@@ -297,27 +345,6 @@ const REQUEST_GROUP_VERSIONS = 'workbench.groupVersions';
     return Boolean(resolvedGroup && resolvedGroup.model) && Object.keys(resolvedGroup.issues).length === 0;
   }
 
-  /** 本组覆盖了哪些参数，一行文字；没有覆盖为空串。 */
-  function describeOverrides(group) {
-    const { overrides } = group;
-    const labels = { modelId: '模型', aspectRatio: '画幅', resolution: '分辨率', audioMode: '声音', audioElements: '声音内容', seed: '种子', durationSeconds: '生成时长', negativeList: '负向清单', promptExtend: '提示词改写' };
-    const parts = Object.keys(labels)
-      .filter((field) => overrides[field] !== null)
-      .map((field) => {
-        const value = overrides[field];
-        if (field === 'modelId') {
-          const model = catalog && catalog.models.find((item) => item.id === value);
-          return `${labels[field]}：${model ? model.displayName : '（不可用）'}`;
-        }
-        if (field === 'audioElements') return `${labels[field]}：${aiProfile.describeElements(value)}`;
-        if (field === 'durationSeconds') return `${labels[field]}：${value} 秒`;
-        if (field === 'promptExtend') return `${labels[field]}：${value ? '开' : '关'}`;
-        if (field === 'negativeList') return `${labels[field]}：${value === '' ? '无' : value}`;
-        return `${labels[field]}：${field === 'audioMode' ? AUDIO_MODE_LABELS[value] || value : value}`;
-      });
-    return parts.join(' · ');
-  }
-
   /** 提交与预览共用的请求内容：作品、集、镜头组与生效的生成参数。 */
   function submitPayload(groupIds) {
     const { workId, episodeId } = parseEpisodeKey(episodeKey);
@@ -350,8 +377,8 @@ const REQUEST_GROUP_VERSIONS = 'workbench.groupVersions';
     return result;
   }
 
-  /** 从检查器的“提交”页签提交：成功后展开底部队列并定位到第一个新任务所在的组；返回是否至少有一组已提交（宿主返回错误或所选组都被拒绝时为 false）。 */
-  async function submitFromInspector(groupIds) {
+  /** 从“检查并提交”步骤提交所选的镜头组；至少有一组已入队时展开队列并定位到第一个已提交的组，返回 true。 */
+  async function submitSelected(groupIds) {
     const result = await submit(view.groups.filter((group) => groupIds.includes(group.id)));
     if (result && result.submitted.length > 0) {
       queueOpen = true;
@@ -590,7 +617,6 @@ const REQUEST_GROUP_VERSIONS = 'workbench.groupVersions';
         )
       );
     }
-    for (const warning of job.warnings) parts.push(aiUi.h('div', { class: 'description', text: `提醒：${warning}` }));
     parts.push(
       aiUi.h('details', { class: 'wb-history' }, aiUi.h('summary', { text: '提交的提示词' }), aiUi.h('div', { class: 'wb-prompt', text: job.prompt }))
     );
@@ -618,77 +644,6 @@ const REQUEST_GROUP_VERSIONS = 'workbench.groupVersions';
     );
   }
 
-  /** 镜头组内容：标题（镜头数与总时长、超出模型上限的警告）、组内镜头列表、出场实体。 */
-  function renderGroupContent(group) {
-    const max = groupModelMaxSeconds(group);
-    const lines = [
-      aiUi.h(
-        'div',
-        { class: 'wb-group__title' },
-        aiUi.h('strong', { text: `第 ${group.seq} 组` }),
-        aiUi.h('span', { class: 'description', text: `${group.shots.length} 个镜头 · 共 ${group.totalSeconds} 秒` })
-      )
-    ];
-    if (exceedsModel(group)) {
-      lines.push(aiUi.h('div', { class: 'status-warning', text: `超过所选模型单次最长 ${max} 秒，请拆分这一组或换一个模型。` }));
-    }
-    const canSplit = group.jobs.length === 0;
-    lines.push(
-      aiUi.h(
-        'ol',
-        { class: 'wb-shots' },
-        group.shots.map((shot, index) =>
-          aiUi.h(
-            'li',
-            { class: 'wb-shot' },
-            aiUi.h(
-              'span',
-              { class: 'wb-shot__text', attrs: { title: shot.action } },
-              `${[`镜头 ${shot.seq}`, shot.shotSize, shot.sceneLabel, `${shot.durationSeconds} 秒`].filter(Boolean).join(' · ')}　${preview(shot.action)}`
-            ),
-            index > 0 && canSplit && !submitting.has(group.id)
-              ? aiUi.button({ text: '从这里拆开', compact: true, ariaLabel: `在镜头 ${shot.seq} 之前拆开这一组`, onClick: () => void splitBefore(shot) }).element
-              : null
-          )
-        )
-      )
-    );
-    if (group.entities.length > 0) {
-      lines.push(
-        aiUi.h(
-          'div',
-          { class: 'wb-chips' },
-          group.entities.map((entity) => aiUi.chip({ text: entity.bound ? entity.name : `${entity.name} · 未绑定资产` }))
-        )
-      );
-    }
-    return aiUi.h('div', { class: 'wb-group' }, lines);
-  }
-
-  /** 镜头组的操作：任务进行中显示“取消”，否则显示“生成”或“重新生成”；可并入上一组；始终可以编辑镜头。 */
-  function renderGroupActions(group, index) {
-    const active = group.jobs.find((job) => ACTIVE_STATUSES.includes(job.status));
-    const canSubmit = view.canGenerate && paramsReady() && groupParamsReady(group) && !submitting.has(group.id) && !exceedsModel(group);
-    const buttons = [];
-    if (active) {
-      buttons.push(aiUi.button({ text: '取消', compact: true, variant: 'danger', ariaLabel: `取消第 ${group.seq} 组的任务`, onClick: () => void cancelJob(active) }));
-    } else {
-      const text = group.jobs.length === 0 ? '生成' : '重新生成';
-      buttons.push(
-        aiUi.button({ text, compact: true, variant: 'primary', disabled: !canSubmit, ariaLabel: `${text}第 ${group.seq} 组`, onClick: () => void submit([group]) })
-      );
-    }
-    const previous = view.groups[index - 1];
-    if (previous && group.jobs.length === 0 && previous.jobs.length === 0 && !submitting.has(group.id)) {
-      buttons.push(aiUi.button({ text: '并入上一组', compact: true, ariaLabel: `把第 ${group.seq} 组并入上一组`, onClick: () => void mergeIntoPrevious(group) }));
-    }
-    buttons.push(aiUi.button({ text: '编辑镜头', compact: true, ariaLabel: `编辑第 ${group.seq} 组的镜头`, onClick: () => editGroupShots(group) }));
-    if (resultCount(group) > 1) {
-      buttons.push(aiUi.button({ text: `结果版本（${resultCount(group)}）`, compact: true, ariaLabel: `查看第 ${group.seq} 组的结果版本`, onClick: () => openVersions(group) }));
-    }
-    return buttons.map((button) => button.element);
-  }
-
   /** 镜头组状态：最新一次任务的状态；还没有任务时，有未绑定资产的实体为“待绑定”，否则为“可生成”。图标让状态不只靠颜色区分。 */
   function groupStatus(group) {
     const [latest] = group.jobs;
@@ -711,146 +666,183 @@ const REQUEST_GROUP_VERSIONS = 'workbench.groupVersions';
     render();
   }
 
-  /** 设置左栏宽度（限制在最小与最大宽度之间）。 */
-  function setTreeWidth(width) {
-    treeWidth = Math.min(TREE_MAX_WIDTH, Math.max(TREE_MIN_WIDTH, Math.round(width)));
-    if (treeElement) treeElement.style.width = `${treeWidth}px`;
-    return treeWidth;
-  }
-
-  /** 设置右栏检查器宽度（限制在最小与最大宽度之间）。 */
-  function setInspectorWidth(width) {
-    inspectorWidth = Math.min(INSPECTOR_MAX_WIDTH, Math.max(INSPECTOR_MIN_WIDTH, Math.round(width)));
-    if (inspector) inspector.element.style.width = `${inspectorWidth}px`;
-    return inspectorWidth;
-  }
-
-  /**
-   * 栏与相邻栏之间的分隔条：可拖动，也可用左右方向键调整宽度。
-   * @param {{ label: string, min: number, max: number, getWidth: () => number, setWidth: (width: number) => number, direction: 1 | -1 }} config
-   *   direction 为 1 表示栏在分隔条左侧（向右拖变宽），-1 表示栏在右侧（向左拖变宽）。
-   */
-  function createSplitter(config) {
-    const { label, min, max, getWidth, setWidth, direction } = config;
-    const element = aiUi.h('div', {
-      class: 'wb-splitter',
-      attrs: { role: 'separator', 'aria-orientation': 'vertical', 'aria-label': label, 'aria-valuemin': min, 'aria-valuemax': max, 'aria-valuenow': getWidth(), tabindex: 0 },
-      on: {
-        pointerdown: (event) => {
-          const start = getWidth();
-          aiUi.trackPointer(element, event, (deltaX) => element.setAttribute('aria-valuenow', String(setWidth(start + direction * deltaX))));
-        },
-        keydown: (event) => {
-          if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
-          event.preventDefault();
-          const step = (event.key === 'ArrowRight' ? 1 : -1) * direction * TREE_KEY_STEP;
-          element.setAttribute('aria-valuenow', String(setWidth(getWidth() + step)));
-        }
-      }
-    });
-    return element;
-  }
-
-  /** 左栏：镜头组列表，选中的组展开列出组内镜头；可折叠为窄条。 */
-  function renderTree(selectedId) {
-    const collapseButton = aiUi.button({
-      text: treeCollapsed ? '›' : '‹',
-      compact: true,
-      ariaLabel: treeCollapsed ? '展开镜头组栏' : '折叠镜头组栏',
-      onClick: () => {
-        treeCollapsed = !treeCollapsed;
-        render();
-      }
-    });
-    if (treeCollapsed) {
-      treeElement = aiUi.h('nav', { class: 'wb-tree wb-tree--collapsed', attrs: { 'aria-label': '镜头组' } }, collapseButton.element);
-      return treeElement;
-    }
+  /** 左栏：镜头组列表（序号、状态、镜头数与总时长），底部是镜头总数与重新分组。 */
+  function renderGroupsPanel(selectedId) {
     const items = view.groups.map((group) => {
       const isSelected = group.id === selectedId;
       const status = groupStatus(group);
-      const shotsId = `wb-tree-shots-${group.id}`;
       return aiUi.h(
         'li',
-        { class: 'wb-tree__group' },
+        {},
         aiUi.h(
           'button',
           {
-            class: `wb-tree__item${isSelected ? ' wb-tree__item--selected' : ''}`,
-            attrs: { type: 'button', 'aria-current': isSelected ? 'true' : undefined, 'aria-expanded': String(isSelected), 'aria-controls': shotsId },
+            class: `wb-group-item${isSelected ? ' wb-group-item--selected' : ''}`,
+            attrs: { type: 'button', 'aria-current': isSelected ? 'true' : undefined },
             on: { click: () => selectGroup(group) }
           },
-          aiUi.h('span', { class: 'wb-tree__title' }, aiUi.h('strong', { text: `第 ${group.seq} 组` }), aiUi.h('span', { class: 'description', text: `${group.totalSeconds} 秒` })),
-          aiUi.h('span', { class: `wb-tree__status ${status.className}`, text: status.text })
-        ),
-        isSelected
-          ? aiUi.h(
-              'ul',
-              { class: 'wb-tree__shots', attrs: { id: shotsId } },
-              group.shots.map((shot) =>
-                aiUi.h('li', { class: 'wb-tree__shot', attrs: { title: shot.action } }, [`镜头 ${shot.seq}`, shot.shotSize, `${shot.durationSeconds} 秒`].filter(Boolean).join(' · '))
-              )
-            )
-          : null
+          aiUi.h('span', { class: 'wb-group-item__name', text: `第 ${group.seq} 组` }),
+          aiUi.h('span', { class: `wb-group-item__status ${status.className}`, text: status.text }),
+          aiUi.h('span', { class: 'wb-group-item__meta description', text: `${group.shots.length} 个镜头 · ${group.totalSeconds} 秒` })
+        )
       );
     });
-    treeElement = aiUi.h(
+    return aiUi.h(
       'nav',
-      { class: 'wb-tree', attrs: { 'aria-label': '镜头组' } },
-      aiUi.h('div', { class: 'wb-tree__head' }, aiUi.h('strong', { text: `镜头组（${view.groups.length}）` }), collapseButton.element),
-      aiUi.h('ul', { class: 'wb-tree__list' }, items)
+      { class: 'wb-panel wb-groups', attrs: { 'aria-label': '镜头组' } },
+      aiUi.h(
+        'div',
+        { class: 'wb-panel__header' },
+        aiUi.h('div', {}, aiUi.h('h2', { class: 'wb-panel__title', text: '镜头组' }), aiUi.h('p', { class: 'wb-panel__subtitle', text: '选择一组查看内容与进度' })),
+        aiUi.h('span', { class: 'wb-count', text: `${view.groups.length} 组` })
+      ),
+      aiUi.h('ul', { class: 'wb-panel__body wb-groups__list' }, items),
+      renderRegroup()
     );
-    treeElement.style.width = `${treeWidth}px`;
-    return treeElement;
   }
 
-  /** 窄屏时代替左栏的镜头组下拉。 */
-  function renderGroupSelect(selectedId) {
-    const select = aiUi.select({
-      options: view.groups.map((group) => ({ value: String(group.id), label: `第 ${group.seq} 组 · ${group.totalSeconds} 秒 · ${groupStatus(group).text}` })),
-      value: String(selectedId),
-      allowEmpty: false,
-      ariaLabel: '选择镜头组',
-      onChange: (value) => {
-        selectedGroupId = Number(value);
-        render();
-      }
-    });
-    return aiUi.h('div', { class: 'wb-group-select' }, select.element);
-  }
-
-  /** 本组覆盖的参数与修改入口；参数不可用时给出警告。 */
-  function renderGroupParams(group) {
-    const overrides = describeOverrides(group);
-    const resolvedGroup = groupResolved(group);
-    const issues = resolvedGroup ? Object.values(resolvedGroup.issues) : [];
+  /** 左栏底部：镜头总数，以及按填写的单组最长时长重新分组（有进行中的任务时禁用）。 */
+  function renderRegroup() {
+    const shotTotal = view.groups.reduce((sum, group) => sum + group.shots.length, 0);
+    const max = modelMaxSeconds();
+    if (regroupSeconds === '') regroupSeconds = String(max !== null && max <= 120 ? max : view.groupMaxSeconds);
+    const secondsInput = aiUi.textInput({ value: regroupSeconds, ariaLabel: '重新分组时每组最长（秒）', onChange: (value) => (regroupSeconds = value) });
     return aiUi.h(
       'div',
-      { class: 'wb-group-params' },
-      aiUi.h('span', { class: 'description', text: overrides === '' ? '本组参数：沿用本集设置' : `本组参数覆盖：${overrides}` }),
-      issues.length === 0 ? null : aiUi.h('span', { class: 'status-warning', text: `本组参数需要调整：${issues.join('')}` }),
-      aiUi.button({
-        text: '修改本组参数',
-        compact: true,
-        onClick: () => {
-          profilePanel.setScope('group');
-          openInspector('profile');
-        }
-      }).element
+      { class: 'wb-panel__footer' },
+      aiUi.h('p', { class: 'description', text: `共 ${shotTotal} 个镜头` }),
+      aiUi.h(
+        'div',
+        { class: 'wb-regroup' },
+        aiUi.h('span', { class: 'description', text: '每组最长' }),
+        aiUi.h('div', { class: 'wb-regroup__input' }, secondsInput.element),
+        aiUi.h('span', { class: 'description', text: '秒' }),
+        aiUi.button({ text: '重新分组', compact: true, disabled: view.groups.some(hasActiveJob), onClick: () => void regroup(secondsInput.getValue()) }).element
+      )
     );
   }
 
-  /** 中栏：选中镜头组的内容、操作与生成状态。 */
-  function renderDetail(group, index) {
+  /** 中栏：选中镜头组的详情。头部是固定标题与“编辑镜头”；内容依次是组标题与摘要（含出场实体概览）、镜头列表、生成状态。 */
+  function renderDetailPanel(group, index) {
+    const status = groupStatus(group);
+    const groupValues = groupResolved(group) || resolved;
+    const aspectRatio = groupValues ? groupValues.values.aspectRatio : '';
+    const summary = [`${group.shots.length} 个镜头`, `总时长 ${group.totalSeconds} 秒`, aspectRatio, describeEntities(group)].filter(Boolean).join(' · ');
+    const max = groupModelMaxSeconds(group);
+    const body = aiUi.h(
+      'div',
+      { class: 'wb-panel__body wb-detail__body' },
+      aiUi.h(
+        'div',
+        { class: 'wb-detail-head' },
+        aiUi.h('div', {}, aiUi.h('h3', { class: 'wb-detail-title', text: `第 ${group.seq} 组` }), aiUi.h('p', { class: 'wb-detail-summary', text: summary })),
+        aiUi.h('span', { class: `wb-detail-status ${status.className}`, text: status.text })
+      ),
+      exceedsModel(group) ? aiUi.h('p', { class: 'status-warning', text: `超过所选模型单次最长 ${max} 秒，请拆分这一组或换一个模型。` }) : null,
+      renderShotList(group, index),
+      renderStatusSection(group)
+    );
+    keepShotListHeight(body);
     return aiUi.h(
       'section',
-      { class: 'wb-detail', attrs: { 'aria-label': `第 ${group.seq} 组` } },
-      renderGroupContent(group),
-      renderGroupParams(group),
-      aiUi.h('div', { class: 'wb-detail__actions' }, renderGroupActions(group, index)),
-      aiUi.h('h3', { class: 'wb-detail__title', text: '生成状态' }),
-      renderGroupStatus(group)
+      { class: 'wb-panel wb-detail', attrs: { 'aria-label': `第 ${group.seq} 组详情` } },
+      aiUi.h(
+        'div',
+        { class: 'wb-panel__header' },
+        aiUi.h('div', {}, aiUi.h('h2', { class: 'wb-panel__title', text: '镜头组详情' }), aiUi.h('p', { class: 'wb-panel__subtitle', text: '分镜内容与出场实体集中查看' })),
+        aiUi.button({ text: '编辑镜头', ariaLabel: `编辑第 ${group.seq} 组的镜头`, onClick: () => editGroupShots(group) }).element
+      ),
+      body
     );
+  }
+
+  /**
+   * 展开“提交的提示词”“历史记录”等折叠内容时，让镜头列表保持当前高度，多出来的内容靠整个详情区滚动；全部收起后列表恢复自然撑高。
+   * 点击摘要时（内容展开之前）记下列表高度并锁定，所有折叠内容收起后解除。
+   */
+  function keepShotListHeight(body) {
+    const list = body.querySelector('.wb-shot-list');
+    if (!list) return;
+    body.addEventListener(
+      'click',
+      (event) => {
+        if (!event.target.closest('summary') || list.style.flex !== '') return;
+        list.style.flex = `0 0 ${list.getBoundingClientRect().height}px`;
+      },
+      true
+    );
+    body.addEventListener(
+      'toggle',
+      () => {
+        if (body.querySelector('details[open]')) return;
+        list.style.flex = '';
+      },
+      true
+    );
+  }
+
+  /** 出场实体概览一句话：各类型的数量与未绑定的数量，放在组摘要里；具体的实体和绑定在右栏“绑定素材”步骤里。 */
+  function describeEntities(group) {
+    if (group.entities.length === 0) return '无出场实体';
+    const unbound = group.entities.filter((entity) => !entity.bound).length;
+    const counts = new Map();
+    for (const entity of group.entities) counts.set(entity.kindLabel, (counts.get(entity.kindLabel) || 0) + 1);
+    const typeText = [...counts].map(([label, count]) => `${label} ${count}`).join(' · ');
+    return `${typeText}，${unbound > 0 ? `其中 ${unbound} 项未绑定` : '已全部绑定'}`;
+  }
+
+  /** 详情里的一个区块：标题行（右侧可放操作）加内容。 */
+  function renderSection(label, title, actions, ...content) {
+    return aiUi.h(
+      'section',
+      { class: 'wb-section', attrs: { 'aria-label': label } },
+      aiUi.h('div', { class: 'wb-section__head' }, aiUi.h('h3', { class: 'wb-section__title', text: title }), aiUi.h('div', { class: 'wb-section__actions' }, actions)),
+      content
+    );
+  }
+
+  /** 镜头列表：每个镜头一行（序号、景别与画面动作加场次、时长）；没有生成记录的组可在某个镜头前拆开，也可并入上一组。 */
+  function renderShotList(group, index) {
+    const canEdit = group.jobs.length === 0 && !submitting.has(group.id);
+    const previous = view.groups[index - 1];
+    const canMerge = canEdit && Boolean(previous) && previous.jobs.length === 0;
+    const rows = group.shots.map((shot, shotIndex) =>
+      aiUi.h(
+        'li',
+        { class: 'wb-shot' },
+        aiUi.h('span', { class: 'wb-shot__seq', text: `镜头 ${shot.seq}` }),
+        aiUi.h(
+          'div',
+          { class: 'wb-shot__body' },
+          aiUi.h('p', { class: 'wb-shot__action', text: [shot.shotSize, shot.action].filter(Boolean).join(' · ') }),
+          shot.sceneLabel ? aiUi.h('span', { class: 'wb-shot__scene', text: shot.sceneLabel }) : null
+        ),
+        aiUi.h(
+          'div',
+          { class: 'wb-shot__side' },
+          aiUi.h('span', { class: 'wb-shot__duration', text: `${shot.durationSeconds} 秒` }),
+          shotIndex > 0 && canEdit
+            ? aiUi.button({ text: '从这里拆开', compact: true, ariaLabel: `在镜头 ${shot.seq} 之前拆开这一组`, onClick: () => void splitBefore(shot) }).element
+            : null
+        )
+      )
+    );
+    const merge = canMerge ? aiUi.button({ text: '并入上一组', ariaLabel: `把第 ${group.seq} 组并入上一组`, onClick: () => void mergeIntoPrevious(group) }) : null;
+    if (merge) merge.element.classList.add('wb-shots__more');
+    return aiUi.h('div', { class: 'wb-shot-list' }, aiUi.h('ol', { class: 'wb-shots', attrs: { 'aria-label': '镜头' } }, rows), merge && merge.element);
+  }
+
+  /** 生成状态区块：任务进行中时有“取消”；有多个结果时有“结果版本”；下面是最新任务与历史。提交统一在右栏“检查并提交”步骤里做。 */
+  function renderStatusSection(group) {
+    const active = group.jobs.find((job) => ACTIVE_STATUSES.includes(job.status));
+    const buttons = [];
+    if (active) {
+      buttons.push(aiUi.button({ text: '取消', compact: true, variant: 'danger', ariaLabel: `取消第 ${group.seq} 组的任务`, onClick: () => void cancelJob(active) }));
+    }
+    if (resultCount(group) > 1) {
+      buttons.push(aiUi.button({ text: `结果版本（${resultCount(group)}）`, compact: true, ariaLabel: `查看第 ${group.seq} 组的结果版本`, onClick: () => openVersions(group) }));
+    }
+    return renderSection('生成状态', '生成状态', buttons.map((button) => button.element), renderGroupStatus(group));
   }
 
   /** 队列里的全部任务，最新的在前，最多显示一定数量。 */
@@ -869,25 +861,19 @@ const REQUEST_GROUP_VERSIONS = 'workbench.groupVersions';
     return `生成中 ${active} · 失败 ${failed} · 已完成 ${done}（共 ${view.groups.length} 组）`;
   }
 
-  /** 底部队列与结果：默认折叠为一行摘要，展开后列出每个任务。 */
+  /** 底部队列与结果：标题行是摘要和展开、收起按钮，展开后列出每个任务（最新的在前），在表格内部滚动。 */
   function renderQueue() {
     const panelId = 'wb-queue-panel';
-    const header = aiUi.h(
-      'button',
-      {
-        class: 'wb-queue__toggle',
-        attrs: { type: 'button', 'aria-expanded': String(queueOpen), 'aria-controls': panelId },
-        on: {
-          click: () => {
-            queueOpen = !queueOpen;
-            render();
-          }
-        }
-      },
-      aiUi.h('span', { class: 'wb-queue__icon', text: queueOpen ? '▾' : '▸', attrs: { 'aria-hidden': 'true' } }),
-      aiUi.h('strong', { text: '队列与结果' }),
-      aiUi.h('span', { class: 'description', text: queueSummary() })
-    );
+    const toggle = aiUi.button({
+      text: queueOpen ? '收起队列' : '展开队列',
+      compact: true,
+      onClick: () => {
+        queueOpen = !queueOpen;
+        render();
+      }
+    });
+    toggle.element.setAttribute('aria-expanded', String(queueOpen));
+    toggle.element.setAttribute('aria-controls', panelId);
     const rows = queueRows();
     const columns = [
       {
@@ -923,8 +909,7 @@ const REQUEST_GROUP_VERSIONS = 'workbench.groupVersions';
             buttons.push(aiUi.button({ text: '重试', compact: true, disabled: !canRetry, ariaLabel: `重新生成第 ${group.seq} 组`, onClick: () => void submit([group]) }));
           }
           if (job.result) {
-            buttons.push(aiUi.button({ text: '播放', compact: true, variant: 'primary', ariaLabel: `播放第 ${group.seq} 组第 ${job.attempt} 次的视频`, onClick: () => playResult(job.result, `第 ${group.seq} 组 · 第 ${job.attempt} 次`) }));
-            buttons.push(aiUi.button({ text: '打开视频', compact: true, ariaLabel: `打开第 ${group.seq} 组第 ${job.attempt} 次的视频`, onClick: () => void openResult(job.result) }));
+            buttons.push(aiUi.button({ text: '查看结果', compact: true, ariaLabel: `播放第 ${group.seq} 组第 ${job.attempt} 次的视频`, onClick: () => playResult(job.result, `第 ${group.seq} 组 · 第 ${job.attempt} 次`) }));
           }
           return buttons.map((button) => button.element);
         }
@@ -932,12 +917,17 @@ const REQUEST_GROUP_VERSIONS = 'workbench.groupVersions';
     ];
     return aiUi.h(
       'section',
-      { class: 'wb-queue', attrs: { 'aria-label': '队列与结果' } },
-      header,
+      { class: `wb-queue${queueOpen ? ' wb-queue--open' : ''}`, attrs: { 'aria-label': '队列与结果' } },
       aiUi.h(
         'div',
-        { class: 'wb-queue__panel', hidden: !queueOpen, attrs: { id: panelId } },
-        rows.length === 0 ? aiUi.h('p', { class: 'description', text: '还没有提交过生成任务。' }) : aiUi.table({ columns, rows, ariaLabel: '生成任务' }).element
+        { class: 'wb-queue__header' },
+        aiUi.h('div', { class: 'wb-queue__title' }, aiUi.h('h2', { class: 'wb-panel__title', text: '队列与结果' }), aiUi.h('span', { class: 'description', text: queueSummary() })),
+        toggle.element
+      ),
+      aiUi.h(
+        'div',
+        { class: 'wb-queue__body', hidden: !queueOpen, attrs: { id: panelId } },
+        rows.length === 0 ? aiUi.h('p', { class: 'description wb-queue__empty', text: '还没有提交过生成任务。' }) : aiUi.table({ columns, rows, ariaLabel: '生成任务' }).element
       )
     );
   }
@@ -947,21 +937,14 @@ const REQUEST_GROUP_VERSIONS = 'workbench.groupVersions';
     return aiUi.h('div', { class: 'wb-state' }, aiUi.h('p', { class: 'description', text }), button && button.element);
   }
 
-  /** 内容区上方的提示：没有可用模型、分镜脚本未确认。 */
+  /** 内容区上方的提示：没有可用模型、生成参数需要调整、分镜脚本未确认。 */
   function renderNotices() {
     const notices = [];
     if (catalog.models.length === 0) {
       notices.push(aiUi.h('p', { class: 'status-warning wb-notice', text: '没有可用的视频模型。请在“模型设置”中启用服务商、填写访问密钥并启用视频模型。' }));
     }
     if (resolved && Object.keys(resolved.issues).length > 0) {
-      notices.push(
-        aiUi.h(
-          'div',
-          { class: 'wb-notice' },
-          aiUi.h('span', { class: 'status-warning', text: `生成参数需要调整：${Object.values(resolved.issues).join('')}` }),
-          aiUi.button({ text: '生成参数', compact: true, onClick: () => openInspector('profile') }).element
-        )
-      );
+      notices.push(aiUi.h('p', { class: 'status-warning wb-notice', text: `生成参数需要调整：${Object.values(resolved.issues).join('')}请在右侧“配置参数”步骤中修改。` }));
     }
     if (view && view.blockReason) {
       notices.push(
@@ -976,45 +959,26 @@ const REQUEST_GROUP_VERSIONS = 'workbench.groupVersions';
     return notices;
   }
 
-  /** 批量操作与重新分组：提交还没有结果也没有进行中任务的组；按填写的时长重新分组。 */
-  function renderBatchBar() {
-    const pending = view.groups.filter(isPendingGroup);
-    const enabled = view.canGenerate && paramsReady() && pending.length > 0;
-    const max = modelMaxSeconds();
-    if (regroupSeconds === '') regroupSeconds = String(max !== null && max <= 120 ? max : view.groupMaxSeconds);
-    const secondsInput = aiUi.textInput({ value: regroupSeconds, ariaLabel: '重新分组时每组最长（秒）', onChange: (value) => (regroupSeconds = value) });
-    const regroupDisabled = view.groups.some(hasActiveJob);
-    const unboundCount = new Set(view.groups.flatMap((group) => group.entities.filter((entity) => !entity.bound).map((entity) => entity.id))).size;
-    return aiUi.h(
-      'div',
-      { class: 'wb-batch' },
-      aiUi.button({
-        text: `提交未完成的镜头组（${pending.length}）…`,
-        variant: 'primary',
-        disabled: !enabled,
-        onClick: () => {
-          submitPanel.select(pending.map((group) => group.id));
-          openInspector('submit');
-        }
-      }).element,
-      aiUi.button({ text: '查看分镜脚本', onClick: openStoryboard }).element,
-      aiUi.button({ text: unboundCount > 0 ? `实体绑定（${unboundCount} 个未绑定）` : '实体绑定', onClick: () => openInspector('bindings') }).element,
-      aiUi.h(
-        'div',
-        { class: 'wb-regroup' },
-        aiUi.h('span', { class: 'description', text: '每组最长' }),
-        aiUi.h('div', { class: 'wb-regroup__input' }, secondsInput.element),
-        aiUi.h('span', { class: 'description', text: '秒' }),
-        aiUi.button({ text: '重新分组', disabled: regroupDisabled, onClick: () => void regroup(secondsInput.getValue()) }).element
-      )
-    );
+  /** 记下各滚动区域的位置；重绘会重建这些元素，位置会丢失。 */
+  function captureScroll() {
+    return SCROLL_SELECTORS.map((selector) => [...contentElement.querySelectorAll(selector)].map((element) => element.scrollTop));
+  }
+
+  /** 恢复滚动位置；切换到另一个镜头组时详情回到顶部。 */
+  function restoreScroll(saved, resetDetail) {
+    SCROLL_SELECTORS.forEach((selector, selectorIndex) => {
+      if (resetDetail && (selector === '.wb-detail__body' || selector === '.wb-shots')) return;
+      contentElement.querySelectorAll(selector).forEach((element, index) => {
+        element.scrollTop = saved[selectorIndex][index] || 0;
+      });
+    });
   }
 
   /** 按当前状态刷新内容区。 */
   function render() {
-    const treeScroll = treeElement && treeElement.querySelector('.wb-tree__list') ? treeElement.querySelector('.wb-tree__list').scrollTop : 0;
+    const scroll = captureScroll();
+    const previousGroupId = selectedGroupId;
     contentElement.textContent = '';
-    treeElement = null;
     if (isLoading) {
       contentElement.append(renderState('加载中…'));
       return;
@@ -1029,7 +993,6 @@ const REQUEST_GROUP_VERSIONS = 'workbench.groupVersions';
     }
     contentElement.append(...renderNotices());
     if (!view) return;
-    contentElement.append(renderBatchBar());
     if (view.groups.length === 0) {
       contentElement.append(renderState('这一集没有镜头。'));
       return;
@@ -1037,52 +1000,11 @@ const REQUEST_GROUP_VERSIONS = 'workbench.groupVersions';
     const index = selectedGroupIndex();
     const group = view.groups[index];
     selectedGroupId = group.id;
-    contentElement.append(
-      aiUi.h(
-        'div',
-        { class: 'wb-layout' },
-        renderTree(group.id),
-        treeCollapsed ? null : createSplitter({ label: '调整镜头组栏宽度', min: TREE_MIN_WIDTH, max: TREE_MAX_WIDTH, getWidth: () => treeWidth, setWidth: setTreeWidth, direction: 1 }),
-        aiUi.h('div', { class: 'wb-main' }, renderGroupSelect(group.id), renderDetail(group, index)),
-        inspectorCollapsed ? null : createSplitter({ label: '调整检查器宽度', min: INSPECTOR_MIN_WIDTH, max: INSPECTOR_MAX_WIDTH, getWidth: () => inspectorWidth, setWidth: setInspectorWidth, direction: -1 }),
-        renderInspectorColumn()
-      ),
-      renderQueue()
-    );
-    const list = treeElement && treeElement.querySelector('.wb-tree__list');
-    if (list) list.scrollTop = treeScroll;
-    updateInspectorLabels();
+    contentElement.append(aiUi.h('div', { class: 'wb-workspace' }, renderGroupsPanel(group.id), renderDetailPanel(group, index), stepTabs.element), renderQueue());
+    restoreScroll(scroll, previousGroupId !== group.id);
+    updateStepTabs();
     profilePanel.refresh();
     submitPanel.refresh();
-  }
-
-  /** 右栏：展开时是检查器（宽度可调），折叠时是一个窄条和展开按钮。检查器元素创建后一直保留，只是每次重新挂到新的布局里。 */
-  function renderInspectorColumn() {
-    if (inspectorCollapsed) {
-      return aiUi.h(
-        'div',
-        { class: 'wb-rail' },
-        aiUi.button({
-          text: '‹',
-          compact: true,
-          ariaLabel: '展开检查器',
-          onClick: () => {
-            inspectorCollapsed = false;
-            render();
-          }
-        }).element
-      );
-    }
-    inspector.element.style.width = `${inspectorWidth}px`;
-    return inspector.element;
-  }
-
-  /** 页签文字带上状态：有未绑定的实体、生成参数需要调整时直接写在文字里。 */
-  function updateInspectorLabels() {
-    const unbound = view ? new Set(view.groups.flatMap((group) => group.entities.filter((entity) => !entity.bound).map((entity) => entity.id))).size : 0;
-    inspector.setLabel('bindings', unbound > 0 ? `绑定（${unbound} 个未绑定）` : '绑定', unbound > 0);
-    const hasIssues = Boolean(resolved && Object.keys(resolved.issues).length > 0);
-    inspector.setLabel('profile', hasIssues ? '参数（需调整）' : '参数', hasIssues);
   }
 
   /** 加载当前集的视图。 */
@@ -1092,7 +1014,7 @@ const REQUEST_GROUP_VERSIONS = 'workbench.groupVersions';
       profile = null;
       updateResolved();
       isLoading = false;
-      renderToolbar();
+      renderContext();
       render();
       bindingsPanel.setEpisode(null);
       profilePanel.refresh();
@@ -1111,7 +1033,7 @@ const REQUEST_GROUP_VERSIONS = 'workbench.groupVersions';
       loadError = errorText(error);
     }
     isLoading = false;
-    renderToolbar();
+    renderContext();
     render();
     bindingsPanel.setEpisode(episodeKey === '' ? null : parseEpisodeKey(episodeKey).episodeId);
     profilePanel.refresh();
@@ -1129,7 +1051,7 @@ const REQUEST_GROUP_VERSIONS = 'workbench.groupVersions';
     try {
       catalog = await window.hostBridge.request(REQUEST_CATALOG);
       normalizeEpisodeKey();
-      renderToolbar();
+      renderContext();
       // 作品被删除后，它的分镜脚本产出层没有意义，自动关闭。
       aiStage.closeMissing(catalog.works.map((work) => work.id));
     } catch (error) {
@@ -1150,44 +1072,33 @@ const REQUEST_GROUP_VERSIONS = 'workbench.groupVersions';
     }, REFRESH_DELAY_MS);
   }
 
-  /** 渲染页面骨架：工具栏、操作结果、内容区。 */
+  /** 渲染页面骨架：顶部上下文栏、操作结果、内容区；创建右栏三个步骤的面板。 */
   function renderPage() {
-    toolbarElement = aiUi.h('div', { class: 'wb-toolbar' });
-    document.getElementById('page-toolbar').append(toolbarElement);
+    contextElement = aiUi.h('section', { class: 'wb-context', hidden: true, attrs: { 'aria-label': '当前集与生成配置' } });
     messageElement = aiUi.h('p', { class: 'wb-message', hidden: true, attrs: { role: 'status' } });
     contentElement = aiUi.h('div', { class: 'wb-content' });
-    root.append(messageElement, contentElement);
-    // 检查器的两个面板创建一次，之后只在页签之间切换显示。
+    root.append(contextElement, messageElement, contentElement);
+    // 三个步骤的面板创建一次，之后只在步骤之间切换显示。
     bindingsPanel = aiBindings.create();
     profilePanel = aiProfile.create({ getState: () => ({ catalog, profile, group: profileGroup() }), save: saveProfile });
-    const collapseButton = aiUi.button({
-      text: '›',
-      compact: true,
-      ariaLabel: '折叠检查器',
-      onClick: () => {
-        inspectorCollapsed = true;
-        render();
-      }
-    });
     submitPanel = aiSubmit.create({
       getState: () => ({ view, resolved, episodeKey, busyGroupIds: submitting }),
-      isVisible: () => Boolean(inspector) && inspector.getActive() === 'submit' && !inspectorCollapsed && inspector.element.isConnected,
+      isVisible: () => Boolean(stepTabs) && stepTabs.getActive() === 'submit' && stepTabs.element.isConnected,
       groupStatus,
       isSelectable: (group) => !hasActiveJob(group) && !submitting.has(group.id),
       isPending: isPendingGroup,
-      summarize: () => (resolved ? aiProfile.summarize(resolved) : ''),
-      openTab: openInspector,
+      openPrevious: () => stepTabs.showPrevious(),
       preview: (groupIds) => window.hostBridge.request(REQUEST_PREVIEW, submitPayload(groupIds)),
-      submit: submitFromInspector
+      submit: submitSelected
     });
-    inspector = aiInspector.create({
-      tabs: [
-        { id: 'bindings', label: '绑定', build: () => bindingsPanel },
-        { id: 'profile', label: '参数', build: () => profilePanel },
-        { id: 'submit', label: '提交', build: () => submitPanel }
-      ],
+    stepTabs = aiStepTabs.create({
+      ariaLabel: '生成步骤',
       initial: 'bindings',
-      actions: [collapseButton.element]
+      tabs: [
+        { id: 'bindings', label: '绑定素材', build: () => bindingsPanel },
+        { id: 'profile', label: '配置参数', build: () => profilePanel },
+        { id: 'submit', label: '检查并提交', build: () => submitPanel }
+      ]
     });
   }
 

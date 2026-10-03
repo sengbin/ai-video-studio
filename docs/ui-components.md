@@ -64,7 +64,7 @@ ui-kit/                        组件库（自绘控件、对话框及其测试�
 | `PROJECT_LIST_PAGE_RESOURCES` | 项目列表页（新建、编辑表单在页内弹出，因此一并加载表单引擎 `form/form-runtime.js`） |
 | `WORK_LIST_PAGE_RESOURCES` | 作品列表页（新建、编辑、重新生成、生成剧本表单和各阶段产出层都在页内弹出，因此一并加载 `form/form-runtime.js`、`stage/stage.js` 及各阶段内容脚本 `stage-creative.js`、`stage-screenplay.js`、`stage-storyboard.js`） |
 | `ASSET_LIST_PAGE_RESOURCES` | 资产列表页（新建、编辑表单在页内弹出，因此一并加载 `form/form-runtime.js`；生成图片（音频）对话框 `asset-generate.js`、版本层 `asset-versions.js`、分类管理页 `asset-categories.js` 在列表脚本 `asset-list.js` 之前加载） |
-| `WORKBENCH_PAGE_RESOURCES` | 生成工作台页（镜头编辑与分镜脚本确认复用阶段产出层，因此一并加载 `form/form-runtime.js`、`stage/stage.js`、`stage/stage-storyboard.js`；右栏检查器 `inspector.js`，其中实体绑定 `bindings.js`、生成参数 `profile.js`、提交 `submit-panel.js`，另有结果播放器 `player.js`、结果版本页 `versions.js`、尾帧截取 `tail-frames.js`） |
+| `WORKBENCH_PAGE_RESOURCES` | 生成工作台页（镜头编辑与分镜脚本确认复用阶段产出层，因此一并加载 `form/form-runtime.js`、`stage/stage.js`、`stage/stage-storyboard.js`；右栏步骤页签 `step-tabs.js`，其中实体绑定 `bindings.js`、生成参数 `profile.js`、提交 `submit-panel.js`，另有结果播放器 `player.js`、结果版本页 `versions.js`、尾帧截取 `tail-frames.js`） |
 | `SETTINGS_PAGE_RESOURCES` | 模型设置页（设置即时保存，没有弹出表单） |
 | `BACKUP_PAGE_RESOURCES` | 数据备份页（备份与恢复的确认都用组件库的对话框，没有表单） |
 | `SIDEBAR_PAGE_RESOURCES` | 侧栏页面（不加载 `theme.css`，避免影响自己的布局） |

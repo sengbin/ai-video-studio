@@ -1,10 +1,10 @@
 // ------------------------------------------------------------------------
 // 名称：bindings.js
-// 说明：实体绑定面板（F9，检查器的“绑定”页签）：按类型分组列出本集的实体，可选择形象资产、设为主资产、解除，角色实体可选择音色参考音频并试听，并支持按名称自动匹配；选择资产仍用弹出页。
+// 说明：实体绑定面板（F9，“绑定素材”步骤）：顶部是绑定进度和“按名称自动匹配”，下面每个实体一行（名称、类型、绑定状态和“选择资产”），点开弹出页选择形象资产、设为主资产、解除、新建资产，角色实体可选择音色参考音频并试听；列表只显示所选镜头组出场的实体，按名称自动匹配也只针对这些实体。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
-// 备注：请求名称与 src/app/pages/binding-handlers.ts 一致；必须先于 workbench.js 加载；对外只有 window.aiBindings.create()，返回面板元素与 setEpisode、refresh。
+// 备注：请求名称与 src/app/pages/binding-handlers.ts 一致；必须先于 workbench.js 加载；对外只有 window.aiBindings.create()，返回面板元素与 setEpisode、setEntities、refresh。
 // ------------------------------------------------------------------------
 
 'use strict';
@@ -133,7 +133,7 @@
     return aiUi.audioPreview({
       ariaLabel: `试听音色参考：${item.assetName}`,
       iconOnly: Boolean(item.message),
-      load: () => request(REQUEST_VOICE_AUDIO, { assetId: item.assetId }, item.message || session.message)
+      load: () => request(REQUEST_VOICE_AUDIO, { assetId: item.assetId }, item.message || messageTarget())
     }).element;
   }
 
@@ -174,36 +174,90 @@
     ]);
   }
 
-  /** 一个实体：名称与类型、形象资产、角色的音色参考。 */
-  function renderEntity(entity) {
+  /** 当前显示的实体：指定了实体范围（镜头组出场的实体）时只显示这些，否则是本集全部。 */
+  function visibleEntities() {
+    const entities = session.view ? session.view.entities : [];
+    return session.entityIds === null ? entities : entities.filter((entity) => session.entityIds.has(entity.entityId));
+  }
+
+  /** 一个实体一行：名称与类型，右侧是绑定状态（文字加图标）和“选择资产”（已绑定时为“管理”）；具体的绑定在弹出页里处理。 */
+  function renderRow(entity) {
+    const isBound = entity.visual.length > 0;
+    const stateText = !isBound ? '⚠ 未绑定' : entity.visual.length > 1 ? `✓ 已绑定 ${entity.visual.length} 个` : '✓ 已绑定';
     return aiUi.h(
       'div',
-      { class: 'wb-bind-entity' },
-      aiUi.h('div', { class: 'wb-bind-entity__head' }, aiUi.h('strong', { text: entity.name }), aiUi.chip({ text: entity.kindLabel })),
-      renderVisualCell(entity),
-      renderVoiceCell(entity)
+      { class: 'wb-entity-row' },
+      aiUi.h('span', {}, entity.name, aiUi.h('span', { class: 'wb-entity-type', text: entity.kindLabel })),
+      aiUi.h(
+        'span',
+        { class: `wb-entity-state${isBound ? ' wb-entity-state--bound' : ''}` },
+        aiUi.h('span', { text: stateText }),
+        aiUi.button({ text: isBound ? '管理' : '选择资产', compact: true, ariaLabel: `${isBound ? '管理' : '选择'}${entity.name}的资产`, onClick: () => openEntityDialog(entity.entityId) }).element
+      )
     );
   }
 
-  /** 按类型分组（角色、场景、道具、特效）列出实体，组标题带数量。 */
-  function renderEntities(entities) {
-    return Object.keys(KIND_LABELS)
-      .map((kind) => ({ kind, items: entities.filter((entity) => entity.kind === kind) }))
-      .filter((group) => group.items.length > 0)
-      .map((group) =>
-        aiUi.h(
-          'section',
-          { class: 'wb-bind-group', attrs: { 'aria-label': KIND_LABELS[group.kind] } },
-          aiUi.h('h3', { class: 'wb-bind-group__title', text: `${KIND_LABELS[group.kind]}（${group.items.length}）` }),
-          group.items.map(renderEntity)
-        )
-      );
+  /** 实体列表：标题带数量，没有实体时给出说明。 */
+  function renderRows() {
+    const entities = visibleEntities();
+    session.heading.textContent = `${session.entityIds === null ? '本集实体' : '本组实体'}（${entities.length}）`;
+    session.listElement.textContent = '';
+    if (entities.length === 0) session.listElement.append(aiUi.h('p', { class: 'description', text: '这一组没有出场实体。' }));
+    else session.listElement.append(...entities.map(renderRow));
+  }
+
+  /** 汇总、列表和“按名称自动匹配”按钮按当前数据与实体范围重画。 */
+  function renderAll() {
+    renderSummary();
+    renderRows();
+    session.matchButton.setDisabled(!visibleEntities().some((entity) => entity.visual.length === 0));
+  }
+
+  /** 当前提示应显示的位置：绑定弹出页打开时在弹出页里，否则在面板里。 */
+  function messageTarget() {
+    return session.dialog ? session.dialog.message : session.message;
+  }
+
+  /** 一个实体的绑定弹出页：形象资产（选择、再选、设为主资产、解除、新建）和角色的音色参考；绑定变化后随面板一起刷新。 */
+  function openEntityDialog(entityId) {
+    const entity = session.view && session.view.entities.find((item) => item.entityId === entityId);
+    if (!entity || session.dialog) return;
+    const message = aiUi.h('p', { class: 'wb-message', hidden: true, attrs: { role: 'status' } });
+    const body = aiUi.h('div', { class: 'wb-bind-dialog' });
+    const handle = aiUi.openPage({
+      title: `绑定资产：${entity.name}（${entity.kindLabel}）`,
+      content: aiUi.h('div', {}, message, body),
+      width: 460,
+      height: 420,
+      minWidth: 340,
+      minHeight: 240,
+      buttons: [{ id: 'close', text: '关闭', isCancel: true }]
+    });
+    const dialog = { entityId, message, body, handle };
+    session.dialog = dialog;
+    void handle.closed.then(() => {
+      if (session && session.dialog === dialog) session.dialog = null;
+    });
+    renderDialog();
+  }
+
+  /** 按最新数据重画绑定弹出页；实体已不存在（如作品被删除）时关闭。 */
+  function renderDialog() {
+    const dialog = session.dialog;
+    if (!dialog) return;
+    const entity = session.view && session.view.entities.find((item) => item.entityId === dialog.entityId);
+    if (!entity) {
+      dialog.handle.close('api');
+      return;
+    }
+    dialog.body.textContent = '';
+    dialog.body.append(renderVisualCell(entity), renderVoiceCell(entity));
   }
 
   /** 解除、设为主资产这类单次请求，完成后重新读取。 */
   async function changeBinding(name, payload) {
     if (!session) return;
-    if (await request(name, payload, session.message)) await refresh();
+    if (await request(name, payload, messageTarget())) await refresh();
   }
 
   /** 为实体选择形象资产：只列同类型、尚未绑定到该实体的资产。 */
@@ -243,28 +297,29 @@
     });
   }
 
-  /** 按名称自动匹配：先列出将建立的绑定，确认后逐条写入。 */
+  /** 按名称自动匹配：先列出将建立的绑定（只含当前显示的实体），确认后逐条写入。 */
   async function autoMatch() {
     if (!session) return;
     const { message, episodeId } = session;
     const data = await request(REQUEST_SUGGEST, { episodeId }, message);
     if (!data) return;
-    if (data.suggestions.length === 0) {
+    const suggestions = session.entityIds === null ? data.suggestions : data.suggestions.filter((item) => session.entityIds.has(item.entityId));
+    if (suggestions.length === 0) {
       await aiUi.alert({ title: '按名称自动匹配', message: '没有可以建立的绑定。只有名称（或别名）与同类型资产名称相同、且尚未绑定的实体才会匹配。' });
       return;
     }
-    const lines = data.suggestions.slice(0, MAX_SUGGESTION_LINES).map((item) => `${item.entityName} → ${item.assetName}`);
-    if (data.suggestions.length > MAX_SUGGESTION_LINES) lines.push(`……另有 ${data.suggestions.length - MAX_SUGGESTION_LINES} 个`);
+    const lines = suggestions.slice(0, MAX_SUGGESTION_LINES).map((item) => `${item.entityName} → ${item.assetName}`);
+    if (suggestions.length > MAX_SUGGESTION_LINES) lines.push(`……另有 ${suggestions.length - MAX_SUGGESTION_LINES} 个`);
     const confirmed = await aiUi.confirm({
       title: '按名称自动匹配',
-      message: `将建立 ${data.suggestions.length} 个形象绑定，已有的绑定不受影响：`,
+      message: `将建立 ${suggestions.length} 个形象绑定，已有的绑定不受影响：`,
       details: lines,
       confirmText: '建立绑定',
       cancelText: '取消'
     });
     if (!confirmed || !session) return;
     let failed = 0;
-    for (const item of data.suggestions) {
+    for (const item of suggestions) {
       const result = await request(REQUEST_BIND, { episodeId, entityId: item.entityId, assetId: item.assetId, purpose: PURPOSE_VISUAL }, message);
       if (!result) failed += 1;
     }
@@ -272,12 +327,22 @@
     if (failed > 0 && session) setMessage(session.message, `有 ${failed} 个绑定没有建立成功，请手动处理。`, true);
   }
 
-  /** 顶部汇总：已绑定的实体数；有未绑定的给出警告。 */
-  function renderSummary(view) {
-    const total = view.entities.length;
-    const bound = view.entities.filter((entity) => entity.visual.length > 0).length;
-    session.summary.textContent = total === 0 ? '这一集所在的作品没有可绑定的实体。' : `已绑定 ${bound} / 共 ${total} 个实体${bound < total ? '，未绑定的实体生成时没有参考图' : ''}`;
-    session.summary.className = total > 0 && bound < total ? 'status-warning' : 'description';
+  /** 顶部汇总：当前显示的实体里已绑定的数量与进度条；有未绑定的用警告色并写明数量。 */
+  function renderSummary() {
+    const entities = visibleEntities();
+    const total = entities.length;
+    const bound = entities.filter((entity) => entity.visual.length > 0).length;
+    const percent = total === 0 ? 0 : Math.round((bound / total) * 100);
+    if (total === 0) {
+      session.summary.textContent = session.entityIds === null ? '这一集所在的作品没有可绑定的实体。' : '这一组没有出场实体。';
+      session.summary.className = 'description';
+    } else {
+      session.summary.textContent = bound < total ? `${bound} / ${total} 已绑定` : '✓ 已全部绑定';
+      session.summary.className = bound < total ? 'status-warning' : 'status-success';
+    }
+    session.progress.hidden = total === 0;
+    session.progress.setAttribute('aria-valuenow', String(percent));
+    session.progressValue.style.width = `${percent}%`;
   }
 
   /** 重新读取并刷新面板；还没有选择集时只显示提示。 */
@@ -287,6 +352,8 @@
     if (current.episodeId === null) {
       current.summary.textContent = '请先选择一个有分镜脚本的集。';
       current.summary.className = 'description';
+      current.progress.hidden = true;
+      current.heading.textContent = '';
       current.listElement.textContent = '';
       current.matchButton.setDisabled(true);
       return;
@@ -295,14 +362,22 @@
       const view = await window.hostBridge.request(REQUEST_VIEW, { episodeId: current.episodeId });
       if (session !== current) return;
       current.view = view;
-      renderSummary(view);
-      current.listElement.textContent = '';
-      current.listElement.append(...renderEntities(view.entities));
-      current.matchButton.setDisabled(view.entities.length === 0);
+      renderAll();
+      renderDialog();
     } catch (error) {
       if (session !== current) return;
       setMessage(current.message, errorText(error), true);
     }
+  }
+
+  /** 指定只显示哪些实体（所选镜头组出场的实体标识）；null 表示显示本集全部。范围没有变化时不重画。 */
+  function setEntities(entityIds) {
+    if (!session) return;
+    const next = entityIds === null ? null : new Set(entityIds);
+    const same = next === null ? session.entityIds === null : session.entityIds !== null && next.size === session.entityIds.size && [...next].every((id) => session.entityIds.has(id));
+    if (same) return;
+    session.entityIds = next;
+    if (session.view) renderAll();
   }
 
   /** 切换到另一集；集没有变化时不重复读取。 */
@@ -314,17 +389,30 @@
   }
 
   /**
-   * 创建实体绑定面板（检查器的“绑定”页签）；只创建一个实例，用 setEpisode 指定集。
-   * @returns {{ element: HTMLElement, setEpisode: (episodeId: number|null) => void, refresh: () => Promise<void> }}
+   * 创建实体绑定面板（“绑定素材”步骤）；只创建一个实例，用 setEpisode 指定集、setEntities 指定显示哪些实体。
+   * @returns {{ element: HTMLElement, setEpisode: (episodeId: number|null) => void, setEntities: (entityIds: number[]|null) => void, refresh: () => Promise<void> }}
    */
   function create() {
     const message = aiUi.h('p', { class: 'wb-message', hidden: true, attrs: { role: 'status' } });
     const summary = aiUi.h('span', { class: 'description', text: '请先选择一个有分镜脚本的集。' });
+    const progressValue = aiUi.h('div', { class: 'wb-progress__value' });
+    const progress = aiUi.h('div', { class: 'wb-progress', hidden: true, attrs: { role: 'progressbar', 'aria-label': '素材绑定进度', 'aria-valuemin': 0, 'aria-valuemax': 100, 'aria-valuenow': 0 } }, progressValue);
     const matchButton = aiUi.button({ text: '按名称自动匹配', disabled: true, onClick: () => void autoMatch() });
-    const listElement = aiUi.h('div', { class: 'wb-bind-list' });
-    const element = aiUi.h('div', { class: 'wb-bind' }, aiUi.h('div', { class: 'wb-bind__bar' }, summary, matchButton.element), message, listElement);
-    session = { episodeId: null, view: null, message, summary, listElement, matchButton };
-    return { element, setEpisode, refresh };
+    const heading = aiUi.h('h3', { class: 'wb-entity-heading' });
+    const listElement = aiUi.h('div', { class: 'wb-entity-list' });
+    const element = aiUi.h(
+      'div',
+      { class: 'wb-bind' },
+      aiUi.h('div', { class: 'wb-bind__head' }, aiUi.h('strong', { text: '素材绑定进度' }), summary),
+      progress,
+      aiUi.h('p', { class: 'description', text: '先按名称自动匹配已有资产，剩余项逐个选择。未绑定的实体仍可生成，但只能按文字描述。' }),
+      aiUi.h('div', { class: 'wb-bind__actions' }, matchButton.element),
+      message,
+      heading,
+      listElement
+    );
+    session = { episodeId: null, view: null, entityIds: null, dialog: null, message, summary, progress, progressValue, heading, listElement, matchButton };
+    return { element, setEpisode, setEntities, refresh };
   }
 
   window.aiBindings = { create };

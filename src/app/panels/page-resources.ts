@@ -94,10 +94,10 @@ export const ASSET_LIST_PAGE_RESOURCES: PageResources = createEditorPageResource
   ]
 );
 
-/** 生成工作台页：镜头的编辑与分镜脚本确认复用阶段产出层，因此一并加载表单引擎与分镜脚本产出层；右栏检查器的页签容器由 inspector.js 提供，其中的实体绑定面板由 bindings.js 提供、生成参数面板由 profile.js 提供、提交面板由 submit-panel.js 提供，结果视频的内置播放器由 player.js 提供，结果版本页由 versions.js 提供，尾帧截取由 tail-frames.js 提供。 */
+/** 生成工作台页：镜头的编辑与分镜脚本确认复用阶段产出层，因此一并加载表单引擎与分镜脚本产出层；右栏的步骤页签由 step-tabs.js 提供，其中第 1 步的实体绑定面板由 bindings.js 提供、第 2 步的生成参数面板由 profile.js 提供、第 3 步的提交面板由 submit-panel.js 提供，结果视频的内置播放器由 player.js 提供，结果版本页由 versions.js 提供，尾帧截取由 tail-frames.js 提供。 */
 export const WORKBENCH_PAGE_RESOURCES: PageResources = createEditorPageResources(
   ['form/form.css', 'stage/stage.css', 'workbench/workbench.css'],
-  ['form/form-runtime.js', 'shared/page-format.js', 'stage/stage.js', 'stage/stage-storyboard.js', 'workbench/inspector.js', 'workbench/bindings.js', 'workbench/profile.js', 'workbench/submit-panel.js', 'workbench/player.js', 'workbench/versions.js', 'workbench/tail-frames.js', 'workbench/workbench.js']
+  ['form/form-runtime.js', 'shared/page-format.js', 'stage/stage.js', 'stage/stage-storyboard.js', 'workbench/step-tabs.js', 'workbench/bindings.js', 'workbench/profile.js', 'workbench/submit-panel.js', 'workbench/player.js', 'workbench/versions.js', 'workbench/tail-frames.js', 'workbench/workbench.js']
 );
 
 /** 模型设置页：设置即时保存，没有弹出表单。 */

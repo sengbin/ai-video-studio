@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：workbench-profile.test.mjs
-// 说明：工作台“参数”页签中提示词相关参数的 DOM 测试：负向清单（默认清单说明、常用项一键加入、清空表示不要、恢复沿用）与提示词改写开关（开启、关闭、模型不支持时置灰）。
+// 说明：工作台“配置参数”步骤中的 DOM 测试：声音内容的四个开关（一行一个、模型不支持的置灰、至少开启一项），以及提示词相关参数：负向清单（默认清单说明、常用项一键加入、清空表示不要、恢复沿用）与提示词改写开关（开启、关闭、模型不支持时置灰）。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-03
@@ -135,6 +135,32 @@ test('提示词改写：下拉选择开启或关闭并保存；沿用时说明�
   const disabled = fieldOf(unsupported.doc, '提示词改写');
   assert.match(disabled.textContent, /所选模型不支持提示词改写开关/);
   assert.ok(unsupported.doc.querySelector('[aria-label="提示词改写"]').disabled || unsupported.doc.querySelector('[aria-label="提示词改写"]').classList.contains('ui-is-disabled'));
+});
+
+test('声音内容：每个内容一个开关、一行一个，模型不支持的置灰；关闭一项保存剩余项，最后一项不能关闭', async () => {
+  const { doc, saved } = setup();
+  const field = fieldOf(doc, '声音内容');
+  const rows = [...field.querySelectorAll('.ui-switch-row')];
+  assert.deepEqual(
+    rows.map((row) => row.querySelector('.ui-switch-row__label').textContent),
+    ['对白', '旁白（所选模型不支持）', '音效', '配乐（所选模型不支持）']
+  );
+  const switches = rows.map((row) => row.querySelector('[role="switch"]'));
+  assert.deepEqual(switches.map((item) => item.disabled), [false, true, false, true]);
+  assert.deepEqual(switches.map((item) => item.getAttribute('aria-checked')), ['true', 'false', 'true', 'false']);
+  assert.equal(field.querySelectorAll('input[type="checkbox"], [role="checkbox"]').length, 0, '不再用复选框');
+
+  switches[0].click();
+  await flush();
+  assert.deepEqual(plain(saved), [['work', { audioElements: ['sfx'] }]]);
+  env.close();
+
+  const single = setup(true, { audioElements: ['dialogue'] });
+  const last = fieldOf(single.doc, '声音内容').querySelector('[role="switch"]');
+  last.click();
+  await flush();
+  assert.deepEqual(plain(single.saved), [], '至少保留一项，不保存');
+  assert.match(single.doc.querySelector('.wb-message').textContent, /至少开启一项/);
 });
 
 test('生效参数：已设置的值原样使用，未设置的负向清单与改写开关来源为“默认”；模型不支持改写开关却设置了时记为问题', () => {

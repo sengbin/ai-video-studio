@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：submit-panel.js
-// 说明：提交面板（检查器的“提交”页签，对应表单 F10）：勾选要提交的镜头组，调用宿主的“预览提交”得到逐组汇总（整组时长、首帧来源、参考素材数量、声音与声音内容、种子）与阻断问题、提醒，没有阻断问题（提醒需勾选“已了解”）时才能提交所选镜头组。
+// 说明：提交面板（“检查并提交”步骤，对应表单 F10）：勾选要提交的镜头组，调用宿主的“预览提交”得到逐组汇总（整组时长、首帧来源、参考素材数量、声音与声音内容、种子）与阻断问题、提醒，没有阻断问题（提醒需勾选“已了解”）时才能提交所选镜头组。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-03
@@ -46,12 +46,11 @@
    *   groupStatus: (group: object) => { text: string, className: string },
    *   isSelectable: (group: object) => boolean,
    *   isPending: (group: object) => boolean,
-   *   summarize: () => string,
-   *   openTab: (id: string) => void,
+   *   openPrevious: () => void,
    *   preview: (groupIds: number[]) => Promise<{ groups: object[] }>,
    *   submit: (groupIds: number[]) => Promise<boolean>
    * }} host 宿主页面提供的状态与操作：isSelectable 判断组能否勾选（没有进行中的任务），isPending 判断组是否“还没有结果也没有进行中任务”；submit 提交成功（至少有一组已入队）时返回 true，宿主返回错误或所选组都被拒绝时返回 false，面板据此决定是否清空勾选。
-   * @returns {{ element: HTMLElement, refresh: () => void, select: (groupIds: number[]) => void }}
+   * @returns {{ element: HTMLElement, refresh: () => void }}
    */
   function create(host) {
     /** 勾选的镜头组；null 表示这一集还没有初始化（首次显示时勾选全部未完成的组）。 */
@@ -186,16 +185,9 @@
       }
       if (!resolved || !resolved.model || Object.keys(resolved.issues).length > 0) {
         element.append(
-          aiUi.h(
-            'div',
-            { class: 'wb-submit__notice' },
-            aiUi.h('span', { class: 'status-warning', text: resolved && resolved.model ? '生成参数需要调整后才能提交。' : '还没有可用的视频模型或生成参数。' }),
-            aiUi.button({ text: '查看生成参数', compact: true, onClick: () => host.openTab('profile') }).element
-          )
+          aiUi.h('p', { class: 'status-warning wb-submit__notice', text: resolved && resolved.model ? '生成参数需要调整后才能提交，请回到“配置参数”步骤修改。' : '还没有可用的视频模型或生成参数。' })
         );
       }
-      element.append(aiUi.h('p', { class: 'description wb-submit__params', text: host.summarize() }));
-
       const quick = aiUi.h(
         'div',
         { class: 'wb-submit__quick' },
@@ -261,10 +253,10 @@
       element.append(
         aiUi.h(
           'div',
-          { class: 'wb-submit__footer' },
+          { class: 'wb-steps__footer wb-submit__footer' },
           acknowledgement && acknowledgement.element,
           hint ? aiUi.h('p', { class: 'description', text: hint }) : null,
-          submitButton.element
+          aiUi.h('div', { class: 'wb-steps__actions' }, aiUi.button({ text: '← 上一步', onClick: host.openPrevious }).element, submitButton.element)
         )
       );
     }
@@ -283,16 +275,8 @@
       if (host.isVisible() && stateKey() !== renderedKey) render();
     }
 
-    /** 外部指定勾选的镜头组（如“提交未完成的镜头组”）。 */
-    function select(groupIds) {
-      selection = new Set(groupIds);
-      acknowledged = false;
-      previewKey = '';
-      if (host.isVisible()) render();
-    }
-
     render();
-    return { element, refresh, select };
+    return { element, refresh };
   }
 
   window.aiSubmit = { create };

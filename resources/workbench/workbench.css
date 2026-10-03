@@ -1,41 +1,84 @@
 /*
  * ------------------------------------------------------------------------
  * 名称：workbench.css
- * 说明：生成工作台页样式：工具栏的选择器宽度、操作结果与提示、批量操作行、左栏镜头组列表与分隔条、选中镜头组的详情、右栏检查器（页签、绑定面板、参数面板、提交面板）、底部可折叠的队列与结果、镜头内容、任务状态、失败原因和历史记录，以及选择资产的弹出页。
+ * 说明：生成工作台页样式，与设计稿 docs/workbench-wireframe.html 一致：撑满窗口的页面骨架（不出现整页滚动条，各区域内部滚动）、顶部上下文栏、左栏镜头组列表、中栏镜头组详情、右栏步骤页签与三个步骤的面板（绑定素材、配置参数、检查并提交）、底部可折叠的队列与结果，以及任务状态、失败原因、历史记录、结果版本页、播放器和绑定弹出页。
  * 作者：Lion
  * 邮箱：chengbin@3578.cn
  * 日期：2026-10-02
- * 备注：颜色统一使用主题变量；表格样式见 ui-kit/src/ui-table.css。
+ * 备注：背景与面板全部为灰度，随 VS Code 亮暗主题切换（body.vscode-light / body.vscode-dark）；颜色统一使用 rgb() 写法；下拉、输入框和按钮都沿用组件库的外观与尺寸，与其他页面的表单一致（这里只调宽度）；表格样式见 ui-kit/src/ui-table.css。
  * ------------------------------------------------------------------------
  */
 
-/* 工具栏放在标题栏的第二行，选择器按内容分配宽度，窄屏换行 */
-.wb-toolbar {
+/* ---------- 设计令牌 ---------- */
+:root {
+  --wb-gap: 14px;
+  --wb-radius: 8px;
+  --wb-inner-radius: 6px;
+  --wb-pane-height: 340px;
+  --wb-shots-height: clamp(130px, 26vh, 260px);
+  --wb-queue-max-height: min(24vh, 180px);
+  --wb-accent: var(--vscode-button-background);
+  --wb-panel-bg: color-mix(in srgb, var(--vscode-editorWidget-background, var(--bg)) 90%, rgb(255, 255, 255));
+  --wb-panel-border: color-mix(in srgb, var(--text) 12%, var(--bg));
+  --wb-line-strong: color-mix(in srgb, var(--text) 28%, transparent);
+  --wb-panel-shadow: none;
+  --wb-inset-bg: color-mix(in srgb, var(--bg) 83%, rgb(0, 0, 0));
+  --wb-raised-bg: color-mix(in srgb, var(--text) 5%, var(--wb-panel-bg));
+  --wb-selected-bg: color-mix(in srgb, var(--text) 8%, transparent);
+  --wb-hover-bg: color-mix(in srgb, var(--text) 6%, transparent);
+
+  /* 本页的标签用灰色底，不带彩色背景 */
+  --chip-bg: color-mix(in srgb, var(--text) 10%, transparent);
+  --chip-border: color-mix(in srgb, var(--text) 18%, transparent);
+}
+
+body.vscode-light {
+  --wb-panel-bg: color-mix(in srgb, var(--bg) 62%, rgb(226, 226, 226));
+  --wb-panel-border: color-mix(in srgb, rgb(0, 0, 0) 22%, rgb(255, 255, 255));
+  --wb-panel-shadow: 0 1px 2px rgba(0, 0, 0, 0.07);
+  --wb-inset-bg: color-mix(in srgb, var(--bg) 76%, rgb(216, 216, 216));
+}
+
+body.vscode-dark {
+  --wb-panel-bg: color-mix(in srgb, var(--bg) 97%, rgb(255, 255, 255));
+  --wb-panel-border: color-mix(in srgb, rgb(255, 255, 255) 7%, var(--bg));
+}
+
+/* ---------- 页面骨架：撑满窗口，各区域在内部滚动 ---------- */
+html,
+body {
+  height: 100%;
+}
+
+body {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-}
-
-.wb-filter {
-  flex: 0 0 auto;
-}
-
-.wb-filter--episode {
-  width: 300px;
-}
-
-/* 当前生效参数的摘要在空间不够时截断，完整内容在悬停提示里 */
-.wb-toolbar__summary {
-  max-width: 360px;
+  flex-direction: column;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  font-size: 13px;
+}
+
+.page-header {
+  flex: none;
+}
+
+#app {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.wb-content {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
 }
 
 /* 操作结果可能有多行（逐个镜头的提醒与未提交原因） */
 .wb-message {
-  margin: 8px 0;
+  flex: none;
+  margin: 4px 0;
   white-space: pre-line;
 }
 
@@ -49,63 +92,349 @@
 
 .wb-notice {
   display: flex;
+  flex: none;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
-  margin: 0 0 8px;
+  margin: 8px 0 0;
 }
 
-.wb-batch {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin: 0 0 8px;
+/* ---------- 顶部上下文栏：项目、作品、分集和当前生成配置 ---------- */
+.wb-context {
+  display: grid;
+  flex: none;
+  grid-template-columns: minmax(150px, 1.1fr) minmax(150px, 1.1fr) minmax(110px, 0.7fr) minmax(180px, 1.3fr);
+  gap: 10px;
+  padding: 8px 12px;
+  border: 1px solid var(--wb-panel-border);
+  border-radius: var(--wb-radius);
+  background: var(--wb-panel-bg);
+  box-shadow: var(--wb-panel-shadow);
 }
 
-/* 镜头组：标题行、组内镜头列表（每行一个镜头，可在某个镜头前拆开） */
-.wb-group__title {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 2px 8px;
+.wb-context__item {
+  min-width: 0;
+}
+
+.wb-context__label {
+  display: block;
   margin: 0 0 4px;
+  line-height: 1.1;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.wb-shots {
+/* 当前生效参数的摘要是只读的，用虚线框与下拉区分；空间不够时截断，完整内容在悬停提示里 */
+.wb-context__summary {
+  display: flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 8px;
+  overflow: hidden;
+  border: 1px dashed var(--input-border);
+  border-radius: 4px;
+  color: var(--text-muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------- 三栏工作区与面板 ---------- */
+.wb-workspace {
+  display: grid;
+  flex: 1 1 auto;
+  grid-auto-rows: minmax(0, 1fr);
+  grid-template-columns: minmax(170px, 0.78fr) minmax(280px, 1.6fr) minmax(280px, 1fr);
+  gap: var(--wb-gap);
+  min-height: 160px;
+  margin-top: 8px;
+}
+
+.wb-panel {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--wb-panel-border);
+  border-radius: var(--wb-radius);
+  background: var(--wb-panel-bg);
+  box-shadow: var(--wb-panel-shadow);
+}
+
+.wb-panel__header {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 44px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--divider);
+}
+
+.wb-panel__title {
   margin: 0;
-  padding: 0;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.wb-panel__subtitle {
+  margin: 1px 0 0;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.wb-panel__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 8px 10px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.wb-panel__footer {
+  flex: none;
+  padding: 6px 12px;
+  border-top: 1px solid var(--divider);
+}
+
+.wb-count {
+  padding: 6px 10px;
+  border: 1px solid var(--wb-panel-border);
+  border-radius: 999px;
+  background: var(--wb-panel-bg);
+  color: var(--text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+/* ---------- 左栏：镜头组列表 ---------- */
+.wb-groups__list {
+  display: grid;
+  align-content: start;
+  gap: 4px;
+  margin: 0;
   list-style: none;
 }
 
-.wb-shot {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 2px 0;
+.wb-group-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 1px 8px;
+  width: 100%;
+  padding: 6px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--wb-inner-radius);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
 }
 
-.wb-shot__text {
-  min-width: 0;
-  overflow-wrap: anywhere;
+.wb-group-item:hover {
+  background: var(--wb-hover-bg);
+}
+
+/* 选中项：灰色底加 3px 的内侧左标记，同时有 aria-current */
+.wb-group-item--selected,
+.wb-group-item--selected:hover {
+  border-color: var(--wb-line-strong);
+  background: var(--wb-selected-bg);
+  box-shadow: inset 3px 0 0 var(--wb-accent);
+}
+
+.wb-group-item:focus-visible {
+  outline: 1px solid var(--focus-border);
+  outline-offset: 2px;
+}
+
+.wb-group-item__name {
+  font-weight: 650;
+}
+
+.wb-group-item__status {
+  align-self: start;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.wb-group-item__meta {
+  grid-column: 1 / -1;
+  font-size: 11px;
+}
+
+.wb-panel__footer .description {
+  font-size: 11px;
 }
 
 .wb-regroup {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
-  margin-left: auto;
+  margin: 4px 0 0;
+  font-size: 11px;
+}
+
+.wb-regroup .description {
+  font-size: 11px;
 }
 
 .wb-regroup__input {
-  width: 64px;
+  width: 56px;
 }
 
-.wb-chips {
+/* ---------- 中栏：镜头组详情 ---------- */
+.wb-detail-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 6px;
+}
+
+.wb-detail-title {
+  margin: 0 0 2px;
+  font-size: 16px;
+}
+
+.wb-detail-summary {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.wb-detail-status {
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* 详情区：镜头列表有最小高度（框内自己滚动），详情区有富余高度时列表自然撑高，让生成状态贴到底部；内容多（如展开折叠内容）时不挤压列表，而是让整个详情区滚动 */
+.wb-detail__body {
+  display: flex;
+  flex-direction: column;
+}
+
+.wb-detail__body > * {
+  flex: none;
+}
+
+/* 镜头列表：每个镜头一行（序号、景别与画面动作加场次、时长），可在某个镜头前拆开；底部的并入上一组固定在列表外沿 */
+.wb-detail__body > .wb-shot-list {
+  display: flex;
+  flex: 1 0 var(--wb-shots-height);
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--wb-panel-border);
+  border-radius: var(--wb-inner-radius);
+  background: var(--wb-inset-bg);
+}
+
+.wb-shots {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  list-style: none;
+}
+
+.wb-shot {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 8px;
+  padding: 4px 10px;
+}
+
+.wb-shot + .wb-shot {
+  border-top: 1px solid var(--divider);
+}
+
+.wb-shot__seq {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.5;
+}
+
+.wb-shot__action {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.wb-shot__scene {
+  display: block;
+  margin-top: 1px;
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.wb-shot__side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.wb-shot__duration {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.wb-shots__more {
+  flex: none;
+  width: 100%;
+  border-radius: 0;
+}
+
+/* 生成状态：与上面的内容用分隔线隔开，标题行右侧是这一组的操作 */
+.wb-section {
+  margin: 8px 0 0;
+  padding: 8px 0 0;
+  border-top: 1px solid var(--divider);
+}
+
+.wb-section__head {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
-  margin: 4px 0 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 8px;
+  margin: 0 0 4px;
+}
+
+.wb-section__title {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.wb-section__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.wb-section .description {
+  font-size: 11px;
+}
+
+/* 后续组采用的视频基于上一组旧版本尾帧时的提示 */
+.wb-stale {
+  margin: 0 0 6px;
 }
 
 .wb-job + .wb-job {
@@ -172,17 +501,193 @@
   margin: 0 0 4px;
 }
 
-/* 实体绑定弹出页：顶部汇总与操作、实体表、资产缩略图与选择资产列表 */
-.wb-bind__bar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  margin: 0 0 8px;
+/* ---------- 右栏：步骤页签与面板 ---------- */
+.wb-steps__tabs {
+  display: grid;
+  flex: none;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  min-height: 44px;
+  border-bottom: 1px solid var(--divider);
 }
 
-/* 实体的字段行（形象、音色）：左为字段名，右为绑定列表与操作；每条绑定一行，名称在左、操作靠右 */
+.wb-steps__tab {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 3px;
+  min-width: 0;
+  padding: 5px 10px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.wb-steps__tab:hover {
+  background: var(--wb-hover-bg);
+}
+
+.wb-steps__tab--active,
+.wb-steps__tab--active:hover {
+  border-bottom-color: var(--wb-accent);
+  background: var(--wb-selected-bg);
+}
+
+.wb-steps__tab:focus-visible,
+.wb-steps__panel:focus-visible {
+  outline: 1px solid var(--focus-border);
+  outline-offset: -1px;
+}
+
+.wb-steps__tab-title {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wb-steps__tab--active .wb-steps__tab-title {
+  color: var(--wb-accent);
+}
+
+.wb-steps__tab--done .wb-steps__tab-title {
+  color: var(--status-success);
+}
+
+.wb-steps__tab-note {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wb-steps__panel {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 8px 10px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.wb-steps__context {
+  margin: 0 0 8px;
+  padding: 0 0 6px;
+  border-bottom: 1px solid var(--divider);
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+/* 面板底部的操作固定在滚动区底部，内容再长也能直接点到 */
+.wb-steps__footer {
+  position: sticky;
+  bottom: -12px;
+  margin: 8px -10px -8px;
+  padding: 8px 10px;
+  border-top: 1px solid var(--divider);
+  background: var(--wb-panel-bg);
+}
+
+.wb-steps__actions {
+  display: flex;
+  gap: 8px;
+}
+
+.wb-steps__actions .ui-button--primary {
+  flex: 1;
+}
+
+/* 绑定面板：顶部是绑定进度与自动匹配，下面每个实体一行 */
+.wb-bind__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 0 0 4px;
+}
+
+.wb-bind__head strong {
+  font-size: 13px;
+}
+
+.wb-progress {
+  height: 5px;
+  margin: 0 0 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text) 10%, transparent);
+}
+
+.wb-progress__value {
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--wb-accent);
+  transition: width 0.2s;
+}
+
+.wb-bind .description {
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.wb-bind__actions {
+  margin: 8px 0 2px;
+}
+
+.wb-bind__actions .ui-button {
+  width: 100%;
+}
+
+.wb-entity-heading {
+  margin: 8px 0 0;
+  padding: 0 0 4px;
+  border-bottom: 1px solid var(--divider);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.wb-entity-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 30px;
+  padding: 3px 0;
+  border-bottom: 1px solid var(--divider);
+  font-size: 12px;
+}
+
+.wb-entity-row:last-child {
+  border-bottom: 0;
+}
+
+.wb-entity-type {
+  margin-left: 5px;
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.wb-entity-state {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--status-warning);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.wb-entity-state--bound {
+  color: var(--status-success);
+}
+
+/* 绑定弹出页：实体的字段行（形象、音色），左为字段名，右为绑定列表与操作；每条绑定一行，名称在左、操作靠右 */
 .wb-bind-field {
   display: grid;
   grid-template-columns: 32px minmax(0, 1fr);
@@ -192,7 +697,7 @@
 }
 
 .wb-bind-field__label {
-  color: var(--vscode-descriptionForeground);
+  color: var(--text-muted);
   font-size: 12px;
   line-height: 36px;
 }
@@ -268,7 +773,7 @@
 }
 
 .wb-bind-thumb--empty {
-  color: var(--vscode-descriptionForeground);
+  color: var(--text-muted);
   font-size: 11px;
 }
 
@@ -277,27 +782,61 @@
   max-height: 100%;
   object-fit: cover;
 }
+
 .wb-bind-picker__search {
   margin: 0 0 8px;
 }
 
-/* 生成参数弹出页：范围切换下的各字段竖向排列 */
+/* 参数面板：各字段竖向排列，字段标签与说明用小号淡色字 */
 .wb-profile__fields {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 12px;
 }
 
 .wb-profile > * + * {
-  margin-top: 6px;
+  margin-top: 8px;
 }
 
-/* 参数字段下方的“恢复沿用上一级”按钮 */
+.wb-profile .description {
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+/* 应用范围：三个选项排成一行的分段开关，选中的有灰色底和下方的强调线 */
+.wb-profile__scope .ui-choice-group {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0;
+  overflow: hidden;
+  border: 1px solid var(--wb-line-strong);
+  border-radius: var(--wb-inner-radius);
+}
+
+.wb-profile__scope .ui-choice {
+  justify-content: center;
+  min-height: 32px;
+  font-size: 12px;
+}
+
+.wb-profile__scope .ui-choice + .ui-choice {
+  border-left: 1px solid var(--divider);
+}
+
+.wb-profile__scope .ui-choice__mark {
+  display: none;
+}
+
+.wb-profile__scope .ui-choice[aria-checked="true"] {
+  background: var(--wb-selected-bg);
+  box-shadow: inset 0 -2px 0 var(--wb-accent);
+  font-weight: 650;
+}
+
 .wb-profile__restore {
   margin-top: 6px;
 }
 
-/* 负向清单的常用项 */
 .wb-profile__chips {
   display: flex;
   flex-wrap: wrap;
@@ -305,12 +844,185 @@
   margin-top: 6px;
 }
 
-/* 后续组采用的视频基于上一组旧版本尾帧时的提示 */
-.wb-stale {
-  margin: 0 0 6px;
+/* 声音内容的开关列表：每个开关一行，行与行之间用分隔线 */
+.wb-switch-list {
+  overflow: hidden;
+  border: 1px solid var(--wb-line-strong);
+  border-radius: var(--wb-inner-radius);
+  background: var(--wb-inset-bg);
 }
 
-/* 结果版本弹出页与版本对比弹出页：顶部对比操作、版本表、对比表的取值列 */
+.wb-switch-list .ui-switch-row {
+  min-height: 38px;
+  padding: 0 12px;
+}
+
+.wb-switch-list .ui-switch-row + .ui-switch-row {
+  border-top: 1px solid var(--divider);
+}
+
+/* 提交面板：每个镜头组一行（勾选、状态），勾选后显示预览汇总、阻断问题与提醒，底部是确认与提交 */
+.wb-submit__notice {
+  margin: 0 0 6px;
+  font-size: 12px;
+}
+
+.wb-submit__quick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 4px;
+}
+
+.wb-submit__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.wb-submit__group {
+  padding: 5px 0;
+  border-bottom: 1px solid var(--divider);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.wb-submit__group:last-child {
+  border-bottom: 0;
+}
+
+.wb-submit__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.wb-submit__status {
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.wb-submit__details {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 4px 0 0 24px;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.wb-submit__details .description {
+  font-size: 11px;
+}
+
+.wb-submit__footer {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.wb-submit__footer .description {
+  font-size: 11px;
+}
+
+/* ---------- 底部：队列与结果 ---------- */
+.wb-queue {
+  flex: none;
+  margin: 8px 0 0;
+}
+
+.wb-queue__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 6px 12px;
+  border: 1px solid var(--wb-panel-border);
+  border-radius: var(--wb-radius);
+  background: var(--wb-panel-bg);
+  box-shadow: var(--wb-panel-shadow);
+}
+
+.wb-queue--open .wb-queue__header {
+  border-radius: var(--wb-radius) var(--wb-radius) 0 0;
+}
+
+.wb-queue__title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  min-width: 0;
+}
+
+.wb-queue__title .description {
+  font-size: 11px;
+}
+
+/* 任务表在队列内部滚动，表头固定；表格自带的外框与底色去掉，沿用队列面板的 */
+.wb-queue__body {
+  max-height: var(--wb-queue-max-height);
+  overflow: auto;
+  border: 1px solid var(--wb-panel-border);
+  border-top: 0;
+  border-radius: 0 0 var(--wb-radius) var(--wb-radius);
+  background: var(--wb-panel-bg);
+  overscroll-behavior: contain;
+}
+
+.wb-queue__body .ui-table-container {
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.wb-queue__body .ui-table th,
+.wb-queue__body .ui-table td {
+  padding: 4px 13px;
+  font-size: 11px;
+}
+
+.wb-queue__body .ui-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--wb-panel-bg);
+  border-bottom: 1px solid var(--divider);
+  font-weight: 600;
+}
+
+.wb-queue__body .ui-table tbody tr {
+  height: 32px;
+}
+
+.wb-queue__body .ui-table tbody .ui-table__cell--actions {
+  background: var(--wb-panel-bg);
+}
+
+.wb-queue__body .ui-table tbody tr:hover .ui-table__cell--actions {
+  background: linear-gradient(var(--wb-hover-bg), var(--wb-hover-bg)), var(--wb-panel-bg);
+}
+
+.wb-queue__empty {
+  margin: 0;
+  padding: 10px;
+  font-size: 12px;
+  text-align: center;
+}
+
+.wb-queue__failure {
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------- 弹出页：结果版本与对比、内置播放器 ---------- */
 .wb-versions > * + * {
   margin-top: 8px;
 }
@@ -339,233 +1051,7 @@
   overflow-wrap: anywhere;
   user-select: text;
 }
-/* 主体：左栏镜头组列表、分隔条、选中镜头组的详情；窄屏时左栏换成顶部的下拉 */
-.wb-layout {
-  display: flex;
-  align-items: flex-start;
-  margin: 0 0 12px;
-}
 
-.wb-tree {
-  position: sticky;
-  top: 8px;
-  display: flex;
-  flex: 0 0 auto;
-  flex-direction: column;
-  max-height: calc(100vh - 32px);
-  min-width: 0;
-  border: 1px solid var(--table-border);
-  border-radius: 6px;
-  background: var(--table-surface);
-  font-size: 11px;
-  line-height: 1.4;
-}
-
-.wb-tree--collapsed {
-  padding: 4px;
-}
-
-/* 折叠按钮只有一个箭头，不需要紧凑按钮的最小宽度 */
-.wb-tree .ui-button {
-  min-width: 24px;
-}
-
-.wb-tree__head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 5px 6px;
-  border-bottom: 1px solid var(--table-row-divider);
-}
-
-.wb-tree__list {
-  min-height: 0;
-  margin: 0;
-  padding: 0;
-  overflow-y: auto;
-  list-style: none;
-}
-
-.wb-tree__group + .wb-tree__group {
-  border-top: 1px solid var(--table-row-divider);
-}
-
-.wb-tree__item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  width: 100%;
-  padding: 5px 6px;
-  border: 0;
-  background: transparent;
-  color: var(--text);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.wb-tree__item:hover {
-  background: var(--table-row-hover);
-}
-
-/* 选中项：主色 22% 的底色加 3px 的内侧左标记，同时有 aria-current */
-.wb-tree__item--selected {
-  background: color-mix(in srgb, var(--vscode-button-background) 22%, transparent);
-  box-shadow: inset 3px 0 0 var(--vscode-button-background);
-}
-
-.wb-tree__item:focus-visible {
-  outline: 1px solid var(--focus-border);
-  outline-offset: -1px;
-}
-
-.wb-tree__title {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 2px 6px;
-  min-width: 0;
-}
-
-.wb-tree__title .description {
-  font-size: 11px;
-}
-
-.wb-tree__status {
-  flex: 0 0 auto;
-  white-space: nowrap;
-}
-
-.wb-tree__shots {
-  margin: 0;
-  padding: 0 6px 6px 14px;
-  list-style: none;
-  color: var(--text-muted);
-}
-
-.wb-tree__shot {
-  padding: 1px 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* 分隔条：悬停或键盘聚焦时显示一条主题焦点色的细线 */
-.wb-splitter {
-  position: relative;
-  flex: 0 0 8px;
-  align-self: stretch;
-  cursor: col-resize;
-}
-
-.wb-splitter::after {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 3px;
-  width: 2px;
-  border-radius: 1px;
-  background: transparent;
-  content: '';
-}
-
-.wb-splitter:hover::after,
-.wb-splitter:focus-visible::after {
-  background: var(--focus-border);
-}
-
-.wb-splitter:focus-visible {
-  outline: none;
-}
-
-.wb-main {
-  flex: 1 1 0;
-  min-width: 0;
-}
-
-.wb-tree--collapsed + .wb-main {
-  margin-left: 8px;
-}
-
-.wb-group-select {
-  display: none;
-  margin: 0 0 8px;
-}
-
-.wb-detail__actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin: 8px 0 0;
-}
-
-.wb-detail__title {
-  margin: 12px 0 6px;
-  padding-top: 10px;
-  border-top: 1px solid var(--divider);
-  font-size: 12px;
-  font-weight: 600;
-}
-
-/* 底部队列与结果：折叠标题是一个按钮，展开后是任务表 */
-.wb-queue {
-  margin: 12px 0 0;
-  padding-top: 8px;
-  border-top: 1px solid var(--divider);
-}
-
-.wb-queue__toggle {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 8px;
-  margin: -2px -4px 0;
-  padding: 2px 4px;
-  border: 0;
-  border-radius: 4px;
-  background: transparent;
-  color: var(--text);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.wb-queue__toggle:focus-visible {
-  outline: 1px solid var(--focus-border);
-  outline-offset: 1px;
-}
-
-.wb-queue__icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 16px;
-  height: 16px;
-  color: var(--text-muted);
-  font-size: 11px;
-}
-
-.wb-queue__panel {
-  margin: 8px 0 0;
-}
-
-.wb-queue__failure {
-  max-width: 240px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* 选中镜头组的参数覆盖说明与入口 */
-.wb-group-params {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 8px;
-  margin: 8px 0 0;
-}
 /* 内置播放器：视频填满弹出页宽度，高度受限，黑色底 */
 .wb-player > * + * {
   margin-top: 8px;
@@ -577,270 +1063,66 @@
   max-height: 60vh;
   background: rgb(0, 0, 0);
 }
-@media (max-width: 899px) {
-  .wb-layout {
-    flex-direction: column;
-    align-items: stretch;
-  }
 
-  .wb-tree,
-  .wb-splitter {
-    display: none;
-  }
-
-  .wb-group-select {
-    display: block;
-  }
-}
-/* 右栏检查器：页签栏（绑定、参数）加可滚动的面板；折叠时只剩一个窄条 */
-.wb-inspector {
-  position: sticky;
-  top: 8px;
-  display: flex;
-  flex: 0 0 auto;
-  flex-direction: column;
-  max-height: calc(100vh - 32px);
-  min-width: 0;
-  border: 1px solid var(--table-border);
-  border-radius: 6px;
-  background: var(--table-surface);
-}
-
-.wb-inspector__bar {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 6px;
-  padding: 4px 4px 0;
-  border-bottom: 1px solid var(--table-row-divider);
-}
-
-.wb-inspector__tabs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 2px;
-  min-width: 0;
-}
-
-.wb-inspector__tab {
-  padding: 5px 8px;
-  border: 0;
-  border-bottom: 2px solid transparent;
-  background: transparent;
-  color: var(--text-muted);
-  font: inherit;
-  cursor: pointer;
-}
-
-.wb-inspector__tab:hover {
-  background: var(--table-row-hover);
-  color: var(--text);
-}
-
-.wb-inspector__tab--active {
-  border-bottom-color: var(--vscode-button-background);
-  color: var(--text);
-  font-weight: 600;
-}
-
-.wb-inspector__tab--warning {
-  color: var(--status-warning);
-}
-
-.wb-inspector__tab:focus-visible,
-.wb-inspector__panel:focus-visible {
-  outline: 1px solid var(--focus-border);
-  outline-offset: -1px;
-}
-
-.wb-inspector__actions .ui-button {
-  min-width: 24px;
-}
-
-.wb-inspector__panel {
-  min-height: 0;
-  padding: 8px;
-  overflow-y: auto;
-}
-
-.wb-rail {
-  position: sticky;
-  top: 8px;
-  flex: 0 0 auto;
-  margin-left: 8px;
-}
-
-.wb-rail .ui-button {
-  min-width: 24px;
-}
-
-/* 绑定面板：按类型分组，每个实体一块（名称与类型、形象资产、角色的音色参考），实体之间用分隔线 */
-.wb-bind-group + .wb-bind-group {
-  margin-top: 12px;
-}
-
-.wb-bind-group__title {
-  margin: 12px 0 0;
-  padding: 0 0 4px;
-  border-bottom: 1px solid var(--divider);
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.wb-bind-group:first-of-type .wb-bind-group__title {
-  margin-top: 6px;
-}
-
-.wb-bind-entity {
-  position: relative;
-  margin: 0 -8px;
-  padding: 10px 8px;
-  border-radius: 4px;
-}
-
-.wb-bind-entity:hover,
-.wb-bind-entity:has(:focus-visible) {
-  background: var(--table-row-hover);
-}
-
-/* 分隔线用伪元素内缩绘制，避免圆角处线条弯曲 */
-.wb-bind-entity + .wb-bind-entity::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  right: 8px;
-  left: 8px;
-  border-top: 1px solid var(--divider);
-}
-
-.wb-bind-entity__head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 6px;
-}
-/* 提交面板：勾选镜头组，勾选后显示预览汇总、阻断问题与提醒，底部是确认与提交 */
-.wb-submit__params {
-  margin: 0 0 8px;
-}
-
-.wb-submit__notice {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-  margin: 0 0 8px;
-}
-
-.wb-submit__quick {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin: 0 0 8px;
-}
-
-.wb-submit__list {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.wb-submit__group {
-  padding: 6px 0;
-  border-top: 1px solid var(--divider);
-}
-
-.wb-submit__head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.wb-submit__status {
-  flex: 0 0 auto;
-  white-space: nowrap;
-}
-
-.wb-submit__details {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  margin: 4px 0 0 24px;
-  overflow-wrap: anywhere;
-}
-
-.wb-submit__footer {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 6px;
-  margin: 10px 0 0;
-  padding-top: 8px;
-  border-top: 1px solid var(--divider);
-}
-@media (max-width: 899px) {
-  .wb-inspector {
-    position: static;
-    width: auto !important;
-    max-height: none;
-    margin: 12px 0 0;
-  }
-
-  .wb-rail {
-    margin: 12px 0 0;
+@media (prefers-reduced-motion: reduce) {
+  .wb-progress__value {
+    transition: none;
   }
 }
 
-/* 宽屏：页面不出现整页滚动条，页面撑满窗口高度，镜头组栏、中栏详情、检查器面板和队列各自在内部滚动；窄屏沿用整页纵向排列 */
-@media (min-width: 900px) {
-  html,
-  body {
-    height: 100%;
-  }
-
-  body {
-    display: flex;
-    flex-direction: column;
-    overflow: auto;
-  }
-
-  #app,
+/* ---------- 响应式：窄屏重新排布，不缩小字号；页面仍不出现整页滚动条 ---------- */
+/* 窗口窄或矮时，各栏用固定高度，由内容区（不是页面）纵向滚动，避免每栏被压得太矮 */
+@media (max-width: 840px), (max-height: 600px) {
   .wb-content {
-    display: flex;
-    flex: 1 1 auto;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .wb-workspace {
+    flex: none;
+    grid-auto-rows: var(--wb-pane-height);
+  }
+}
+
+@media (max-width: 840px) {
+  .wb-context {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .wb-workspace {
+    grid-template-columns: minmax(170px, 0.72fr) minmax(0, 1.5fr);
+  }
+
+  .wb-steps {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 560px) {
+  .wb-context {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+    padding: 10px 12px;
+  }
+
+  .wb-workspace {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+  }
+
+  .wb-steps {
+    grid-column: auto;
+  }
+
+  .wb-shot {
+    grid-template-columns: 40px minmax(0, 1fr) auto;
+    gap: 7px;
+    padding: 10px 8px;
+  }
+
+  .wb-queue__header {
+    align-items: flex-start;
     flex-direction: column;
-    min-height: 0;
-  }
-
-  .wb-layout {
-    flex: 1 1 auto;
-    align-items: stretch;
-    min-height: 240px;
-    margin-bottom: 0;
-  }
-
-  .wb-tree,
-  .wb-inspector {
-    position: static;
-    max-height: none;
-  }
-
-  .wb-rail {
-    align-self: flex-start;
-  }
-
-  .wb-main {
-    min-height: 0;
-    overflow-y: auto;
-  }
-
-  .wb-queue {
-    flex: 0 0 auto;
-  }
-
-  .wb-queue__panel {
-    max-height: 30vh;
-    overflow-y: auto;
+    gap: 8px;
   }
 }
