@@ -93,23 +93,39 @@
     const page = aiUi.openPage({ title, content, width: 520, height: 460, minWidth: 360, minHeight: 280, buttons: [{ id: 'cancel', text: '取消', isCancel: true }] });
   }
 
-  /** 一条绑定：缩略图、名称、主资产标记、设为主资产与解除；音色参考带“试听”。 */
+  /** 一条绑定：一行内左为缩略图与名称（下方是主资产标记、时长），右为操作；音色参考不显示缩略图，操作里带“试听”。 */
   function renderItem(item, siblingCount, withPreview) {
     const buttons = [];
+    if (withPreview) buttons.push(renderVoicePreview(item));
     if (siblingCount > 1 && !item.isPrimary) {
       buttons.push(aiUi.button({ text: '设为主资产', compact: true, ariaLabel: `把${item.assetName}设为主资产`, onClick: () => void changeBinding(REQUEST_SET_PRIMARY, { id: item.id }) }).element);
     }
     buttons.push(aiUi.button({ text: '解除', compact: true, ariaLabel: `解除绑定：${item.assetName}`, onClick: () => void changeBinding(REQUEST_UNBIND, { id: item.id }) }).element);
+    const showMeta = (siblingCount > 1 && item.isPrimary) || item.durationSeconds !== null;
     return aiUi.h(
       'div',
       { class: 'wb-bind-item' },
-      renderThumb(item),
-      aiUi.h('span', { class: 'wb-bind-item__name', text: item.assetName, attrs: { title: item.assetName } }),
-      siblingCount > 1 && item.isPrimary ? aiUi.chip({ text: '主资产' }) : null,
-      item.durationSeconds === null ? null : aiUi.h('span', { class: 'description', text: `${item.durationSeconds} 秒` }),
-      withPreview ? renderVoicePreview(item) : null,
-      buttons
+      withPreview ? null : renderThumb(item),
+      aiUi.h(
+        'div',
+        { class: 'wb-bind-item__main' },
+        aiUi.h('span', { class: 'wb-bind-item__name', text: item.assetName, attrs: { title: item.assetName } }),
+        showMeta
+          ? aiUi.h(
+              'span',
+              { class: 'wb-bind-item__meta' },
+              siblingCount > 1 && item.isPrimary ? aiUi.chip({ text: '主资产' }) : null,
+              item.durationSeconds === null ? null : aiUi.h('span', { class: 'description', text: `${item.durationSeconds} 秒` })
+            )
+          : null
+      ),
+      aiUi.h('div', { class: 'wb-bind-item__actions' }, buttons)
     );
+  }
+
+  /** 实体里的一个字段行：左为字段名（形象、音色），右为绑定列表与操作。 */
+  function renderField(label, content) {
+    return aiUi.h('div', { class: 'wb-bind-field' }, aiUi.h('span', { class: 'wb-bind-field__label', text: label }), aiUi.h('div', { class: 'wb-bind-field__body' }, content));
   }
 
   /** 音色参考的试听控件：点击后才向宿主读取音频内容；失败时在提示区显示原因，默认是面板提示区，选择页传自己的 message。 */
@@ -123,17 +139,17 @@
 
   /** 形象资产单元格：已绑定的资产与“选择资产”“新建资产”。 */
   function renderVisualCell(entity) {
-    return aiUi.h(
-      'div',
-      { class: 'wb-bind-cell' },
-      entity.visual.length === 0 ? aiUi.h('span', { class: 'status-warning', text: '未绑定' }) : entity.visual.map((item) => renderItem(item, entity.visual.length)),
+    return renderField('形象', [
+      entity.visual.length === 0
+        ? aiUi.h('div', { class: 'wb-bind-empty status-warning', text: '未绑定' })
+        : aiUi.h('div', { class: 'wb-bind-items' }, entity.visual.map((item) => renderItem(item, entity.visual.length))),
       aiUi.h(
         'div',
         { class: 'wb-bind-cell__actions' },
         aiUi.button({ text: entity.visual.length === 0 ? '选择资产' : '再选一个', compact: true, ariaLabel: `为${entity.name}选择资产`, onClick: () => pickVisual(entity) }).element,
         aiUi.button({ text: '新建资产', compact: true, ariaLabel: `按${entity.name}的设定新建${entity.kindLabel}资产`, onClick: () => void createAsset(entity) }).element
       )
-    );
+    ]);
   }
 
   /** 按实体设定预填新建资产，保存后自动绑定为该实体的形象。 */
@@ -146,12 +162,16 @@
   /** 音色参考单元格：只有角色有；一个实体使用一个音色，更换时替换原来的。 */
   function renderVoiceCell(entity) {
     if (entity.kind !== 'character') return null;
-    return aiUi.h(
-      'div',
-      { class: 'wb-bind-cell' },
-      entity.voice.length === 0 ? aiUi.h('span', { class: 'description', text: '未指定（只使用设定里的文字音色）' }) : entity.voice.map((item) => renderItem(item, 1, true)),
-      aiUi.button({ text: entity.voice.length === 0 ? '选择音色' : '更换音色', compact: true, ariaLabel: `为${entity.name}选择音色参考`, onClick: () => pickVoice(entity) }).element
-    );
+    return renderField('音色', [
+      entity.voice.length === 0
+        ? aiUi.h('div', { class: 'wb-bind-empty description', text: '未指定（只使用设定里的文字音色）' })
+        : aiUi.h('div', { class: 'wb-bind-items' }, entity.voice.map((item) => renderItem(item, 1, true))),
+      aiUi.h(
+        'div',
+        { class: 'wb-bind-cell__actions' },
+        aiUi.button({ text: entity.voice.length === 0 ? '选择音色' : '更换音色', compact: true, ariaLabel: `为${entity.name}选择音色参考`, onClick: () => pickVoice(entity) }).element
+      )
+    ]);
   }
 
   /** 一个实体：名称与类型、形象资产、角色的音色参考。 */
@@ -161,9 +181,7 @@
       { class: 'wb-bind-entity' },
       aiUi.h('div', { class: 'wb-bind-entity__head' }, aiUi.h('strong', { text: entity.name }), aiUi.chip({ text: entity.kindLabel })),
       renderVisualCell(entity),
-      entity.kind === 'character'
-        ? aiUi.h('div', { class: 'wb-bind-entity__voice' }, aiUi.h('div', { class: 'description', text: '音色参考' }), renderVoiceCell(entity))
-        : null
+      renderVoiceCell(entity)
     );
   }
 

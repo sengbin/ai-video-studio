@@ -182,31 +182,77 @@
   margin: 0 0 8px;
 }
 
-.wb-bind-cell {
+/* 实体的字段行（形象、音色）：左为字段名，右为绑定列表与操作；每条绑定一行，名称在左、操作靠右 */
+.wb-bind-field {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.wb-bind-field__label {
+  color: var(--vscode-descriptionForeground);
+  font-size: 12px;
+  line-height: 36px;
+}
+
+.wb-bind-field__body {
+  min-width: 0;
+}
+
+.wb-bind-items {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
   gap: 6px;
 }
 
 .wb-bind-item {
   display: flex;
-  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+}
+
+.wb-bind-item__main {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.wb-bind-item__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wb-bind-item__meta {
+  display: flex;
   align-items: center;
   gap: 6px;
+  font-size: 12px;
+}
+
+.wb-bind-item__actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.wb-bind-empty {
+  display: flex;
+  align-items: center;
+  min-height: 36px;
 }
 
 .wb-bind-cell__actions {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-}
-
-.wb-bind-item__name {
-  max-width: 160px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  margin-top: 6px;
 }
 
 .wb-bind-thumb {
@@ -214,8 +260,8 @@
   flex: 0 0 auto;
   align-items: center;
   justify-content: center;
-  width: 40px;
-  height: 40px;
+  width: 36px;
+  height: 36px;
   overflow: hidden;
   border: 1px solid var(--table-border);
   border-radius: 4px;
@@ -231,7 +277,6 @@
   max-height: 100%;
   object-fit: cover;
 }
-
 .wb-bind-picker__search {
   margin: 0 0 8px;
 }
@@ -629,9 +674,15 @@
   min-width: 24px;
 }
 
-/* 绑定面板：按类型分组，每个实体一块（名称与类型、形象资产、角色的音色参考） */
+/* 绑定面板：按类型分组，每个实体一块（名称与类型、形象资产、角色的音色参考），实体之间用分隔线 */
+.wb-bind-group + .wb-bind-group {
+  margin-top: 12px;
+}
+
 .wb-bind-group__title {
-  margin: 10px 0 2px;
+  margin: 12px 0 0;
+  padding: 0 0 4px;
+  border-bottom: 1px solid var(--divider);
   font-size: 12px;
   font-weight: 600;
 }
@@ -641,7 +692,24 @@
 }
 
 .wb-bind-entity {
-  padding: 6px 0;
+  position: relative;
+  margin: 0 -8px;
+  padding: 10px 8px;
+  border-radius: 4px;
+}
+
+.wb-bind-entity:hover,
+.wb-bind-entity:has(:focus-visible) {
+  background: var(--table-row-hover);
+}
+
+/* 分隔线用伪元素内缩绘制，避免圆角处线条弯曲 */
+.wb-bind-entity + .wb-bind-entity::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 8px;
+  left: 8px;
   border-top: 1px solid var(--divider);
 }
 
@@ -650,13 +718,7 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 4px 6px;
-  margin: 0 0 4px;
 }
-
-.wb-bind-entity__voice {
-  margin: 6px 0 0;
-}
-
 /* 提交面板：勾选镜头组，勾选后显示预览汇总、阻断问题与提醒，底部是确认与提交 */
 .wb-submit__params {
   margin: 0 0 8px;
