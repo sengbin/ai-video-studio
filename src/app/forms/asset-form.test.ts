@@ -23,6 +23,7 @@ import { ProjectService } from '../services/project-service';
 import { FILE_PROMPTS, ScriptedText } from '../stages/testing/scripted-text';
 import { ASSET_FORM_NAMES, createAssetFormCatalog } from './asset-form';
 import { FormDefinition } from './form-definition';
+import { DEFAULT_TEXT_MODEL_OPTION, createFakeTextModels } from './testing/fake-text-models';
 import { MemoryAssetFileStore } from '../../domain/ports/testing/memory-asset-file-store';
 
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
@@ -38,14 +39,15 @@ function createFixture(projectNames: readonly string[] = ['项目甲', '项目�
   const text = new ScriptedText(responder ?? (() => ({ promptZh: '中文提示词', promptEn: 'english prompt' })));
   const notifications: number[] = [];
   const prompts = new AssetPromptService({
-    text,
+    texts: text,
     prompts: FILE_PROMPTS,
     assets: assetRepository,
     notify: () => notifications.push(1)
   });
   const bindings = new BindingService(new SqliteBindingRepository(database), assetRepository);
-  const catalog = createAssetFormCatalog({ projects, assets, categories, prompts, entities: bindings });
-  const open = (name: string, params: unknown): FormDefinition => {
+  const { textModels } = createFakeTextModels();
+  const catalog = createAssetFormCatalog({ projects, assets, categories, prompts, textModels, entities: bindings });
+  const open = async (name: string, params: unknown): Promise<FormDefinition> => {
     const factory = catalog.get(name);
     assert.ok(factory);
     return factory(params);
@@ -69,25 +71,25 @@ async function waitForPrompt(assets: AssetService, id: number): Promise<void> {
   throw new Error('提示词生成没有结束。');
 }
 
-test('新建表单：生成来源的字段随类型变化且没有文件字段，音频默认选中“音色参考”', () => {
+test('新建表单：生成来源的字段随类型变化且没有文件字段，音频默认选中“音色参考”', async () => {
   const { database, open } = createFixture();
   try {
-    const keysOf = (kind: string) => open(ASSET_FORM_NAMES.create, { kind }).schema.fields.map((field) => field.key);
-    assert.deepEqual(keysOf('character'), [
+    const keysOf = async (kind: string) => (await open(ASSET_FORM_NAMES.create, { kind })).schema.fields.map((field) => field.key);
+    assert.deepEqual(await keysOf('character'), [
       'name', 'category', 'composition', 'style', 'background', 'referenceAspectRatio',
-      'characterType', 'appearance', 'clothing', 'expressionPose', 'voiceDescription', 'extra'
+      'characterType', 'appearance', 'clothing', 'expressionPose', 'voiceDescription', 'extra', 'textModel'
     ]);
-    assert.deepEqual(keysOf('prop'), [
-      'name', 'category', 'composition', 'style', 'background', 'referenceAspectRatio', 'appearance', 'state', 'extra'
+    assert.deepEqual(await keysOf('prop'), [
+      'name', 'category', 'composition', 'style', 'background', 'referenceAspectRatio', 'appearance', 'state', 'extra', 'textModel'
     ]);
-    assert.deepEqual(keysOf('audio'), ['name', 'category', 'audioKind', 'description', 'language', 'extra']);
+    assert.deepEqual(await keysOf('audio'), ['name', 'category', 'audioKind', 'description', 'language', 'extra', 'textModel']);
 
-    const image = open(ASSET_FORM_NAMES.create, { kind: 'scene' });
+    const image = await open(ASSET_FORM_NAMES.create, { kind: 'scene' });
     assert.equal(image.schema.title, '新建场景');
     assert.ok(image.schema.fields.find((field) => field.key === 'composition')?.options?.includes('平视广角全景'));
     assert.equal(image.schema.submitActions?.length, 2);
 
-    const audio = open(ASSET_FORM_NAMES.create, { kind: 'audio' });
+    const audio = await open(ASSET_FORM_NAMES.create, { kind: 'audio' });
     assert.deepEqual(audio.schema.fields.find((field) => field.key === 'audioKind')?.options, ['音色参考', '背景音乐', '音效']);
     assert.equal(audio.initialValues.audioKind, '音色参考');
     assert.equal(audio.schema.fields.find((field) => field.key === 'name')?.checkUnique, true);
@@ -99,21 +101,21 @@ test('新建表单：生成来源的字段随类型变化且没有文件字段�
 test('新建上传表单：图片只有名称、分类与必填的参考图，音频另有类型、描述、语言；没有提示词按钮；来源参数无效时打不开', async () => {
   const { database, assets, open } = createFixture();
   try {
-    const keysOf = (kind: string) => open(ASSET_FORM_NAMES.create, { kind, fileSource: 'upload' }).schema.fields.map((field) => field.key);
-    assert.deepEqual(keysOf('character'), ['name', 'category', 'files']);
-    assert.deepEqual(keysOf('audio'), ['name', 'category', 'audioKind', 'description', 'language', 'files']);
+    const keysOf = async (kind: string) => (await open(ASSET_FORM_NAMES.create, { kind, fileSource: 'upload' })).schema.fields.map((field) => field.key);
+    assert.deepEqual(await keysOf('character'), ['name', 'category', 'files']);
+    assert.deepEqual(await keysOf('audio'), ['name', 'category', 'audioKind', 'description', 'language', 'files']);
 
-    const image = open(ASSET_FORM_NAMES.create, { kind: 'scene', fileSource: 'upload' });
+    const image = await open(ASSET_FORM_NAMES.create, { kind: 'scene', fileSource: 'upload' });
     assert.deepEqual([image.schema.title, image.schema.submitLabel, image.schema.submitActions], ['上传场景图片', '创建', undefined]);
     const imageFiles = image.schema.fields.find((field) => field.key === 'files');
     assert.deepEqual([imageFiles?.multiple, imageFiles?.preview, imageFiles?.derive, imageFiles?.required], [true, 'image', 'image', true]);
 
-    const audio = open(ASSET_FORM_NAMES.create, { kind: 'audio', fileSource: 'upload' });
+    const audio = await open(ASSET_FORM_NAMES.create, { kind: 'audio', fileSource: 'upload' });
     const audioFiles = audio.schema.fields.find((field) => field.key === 'files');
     assert.deepEqual([audio.schema.title, audioFiles?.multiple, audioFiles?.derive, audioFiles?.required], ['上传音频', false, 'audio', true]);
     assert.equal(audio.initialValues.audioKind, '音色参考');
 
-    assert.throws(() => open(ASSET_FORM_NAMES.create, { kind: 'scene', fileSource: 'bogus' }), ValidationError);
+    await assert.rejects(() => open(ASSET_FORM_NAMES.create, { kind: 'scene', fileSource: 'bogus' }), ValidationError);
     const file = { name: 'a.png', mimeType: 'image/png', size: PNG.length, data: PNG.toString('base64'), width: 10, height: 10 };
     await assert.rejects(submit(image, { name: '灯塔' }), ValidationError);
     await submit(image, { name: '灯塔', files: JSON.stringify([file]) });
@@ -124,17 +126,17 @@ test('新建上传表单：图片只有名称、分类与必填的参考图，�
   }
 });
 
-test('新建表单：类型无效时打不开；重名在失去焦点时检查，不同类型同名不算重名；没有项目也能打开', () => {
+test('新建表单：类型无效时打不开；重名在失去焦点时检查，不同类型同名不算重名；没有项目也能打开', async () => {
   const { database, assets, open } = createFixture([]);
   try {
-    assert.throws(() => open(ASSET_FORM_NAMES.create, { kind: 'bogus' }), ValidationError);
-    assert.throws(() => open(ASSET_FORM_NAMES.create, undefined), ValidationError);
+    await assert.rejects(() => open(ASSET_FORM_NAMES.create, { kind: 'bogus' }), ValidationError);
+    await assert.rejects(() => open(ASSET_FORM_NAMES.create, undefined), ValidationError);
 
     assets.createAsset('prop', { name: '钥匙' });
-    const form = open(ASSET_FORM_NAMES.create, { kind: 'prop' });
+    const form = await open(ASSET_FORM_NAMES.create, { kind: 'prop' });
     assert.equal(form.checkField?.('name', '钥匙'), DUPLICATE_ASSET_NAME_MESSAGE);
     assert.equal(form.checkField?.('name', '怀表'), undefined);
-    assert.equal(open(ASSET_FORM_NAMES.create, { kind: 'scene' }).checkField?.('name', '钥匙'), undefined);
+    assert.equal((await open(ASSET_FORM_NAMES.create, { kind: 'scene' })).checkField?.('name', '钥匙'), undefined);
   } finally {
     database.close();
   }
@@ -143,7 +145,7 @@ test('新建表单：类型无效时打不开；重名在失去焦点时检查�
 test('提交新建：创建资产；重名给出冲突错误', async () => {
   const { database, assets, open } = createFixture();
   try {
-    const form = open(ASSET_FORM_NAMES.create, { kind: 'prop' });
+    const form = await open(ASSET_FORM_NAMES.create, { kind: 'prop' });
     await submit(form, { name: '钥匙', appearance: '黄铜' });
     const [item] = assets.listAssets('prop');
     assert.deepEqual([item.name, item.attributes], ['钥匙', { appearance: '黄铜' }]);
@@ -160,7 +162,7 @@ test('编辑表单：生成来源带出已有内容、没有文件字段，重�
     const asset = assets.createAsset('character', { name: '林夏', characterType: '人类', style: '水彩插画', referenceAspectRatio: '1:1' });
     assets.createAsset('character', { name: '周远' });
 
-    const form = open(ASSET_FORM_NAMES.edit, { assetId: asset.id });
+    const form = await open(ASSET_FORM_NAMES.edit, { assetId: asset.id });
     assert.equal(form.schema.title, '编辑角色');
     assert.equal(form.schema.fields.find((field) => field.key === 'name')?.checkUnique, true);
     assert.equal(form.schema.fields.some((field) => field.key === 'files'), false);
@@ -175,8 +177,8 @@ test('编辑表单：生成来源带出已有内容、没有文件字段，重�
 
     await submit(form, { ...form.initialValues, name: '林夏二' });
     assert.equal(assets.getAsset(asset.id).name, '林夏二');
-    assert.throws(() => open(ASSET_FORM_NAMES.edit, { assetId: 9999 }), NotFoundError);
-    assert.throws(() => open(ASSET_FORM_NAMES.edit, {}), ValidationError);
+    await assert.rejects(() => open(ASSET_FORM_NAMES.edit, { assetId: 9999 }), NotFoundError);
+    await assert.rejects(() => open(ASSET_FORM_NAMES.edit, {}), ValidationError);
   } finally {
     database.close();
   }
@@ -187,7 +189,7 @@ test('编辑上传表单：带出已上传的文件，替换文件后保存；�
   try {
     const file = { name: 'a.png', mimeType: 'image/png', size: PNG.length, data: PNG.toString('base64'), width: 10, height: 10 };
     const asset = assets.createAsset('character', { name: '林夏', files: JSON.stringify([file]) }, { fileSource: 'upload' });
-    const form = open(ASSET_FORM_NAMES.edit, { assetId: asset.id });
+    const form = await open(ASSET_FORM_NAMES.edit, { assetId: asset.id });
     assert.deepEqual([form.schema.title, form.schema.fields.map((field) => field.key)], ['上传角色图片', ['name', 'category', 'files']]);
     assert.deepEqual(JSON.parse(form.initialValues.files), [{ name: 'a.png', mimeType: 'image/png', size: PNG.length, data: PNG.toString('base64') }]);
 
@@ -197,11 +199,11 @@ test('编辑上传表单：带出已上传的文件，替换文件后保存；�
 
     // 切到生成：上传的文件保留；再用 fileSource=upload 打开编辑表单，带出保留的文件，保存后改用上传。
     assets.switchFileSource(asset.id, 'generated');
-    const reopened = open(ASSET_FORM_NAMES.edit, { assetId: asset.id, fileSource: 'upload' });
+    const reopened = await open(ASSET_FORM_NAMES.edit, { assetId: asset.id, fileSource: 'upload' });
     assert.equal((JSON.parse(reopened.initialValues.files) as unknown[]).length, 1);
     await submit(reopened, { ...reopened.initialValues });
     assert.equal(assets.getAsset(asset.id).fileSource, 'upload');
-    assert.throws(() => open(ASSET_FORM_NAMES.edit, { assetId: asset.id, fileSource: 'bogus' }), ValidationError);
+    await assert.rejects(() => open(ASSET_FORM_NAMES.edit, { assetId: asset.id, fileSource: 'bogus' }), ValidationError);
   } finally {
     database.close();
   }
@@ -214,12 +216,12 @@ test('所属分类字段：选项为该类型的分类名称，默认不分类�
     categories.createCategory('character', { name: '配角' });
     categories.createCategory('scene', { name: '室内' });
 
-    const form = open(ASSET_FORM_NAMES.create, { kind: 'character' });
+    const form = await open(ASSET_FORM_NAMES.create, { kind: 'character' });
     const field = form.schema.fields.find((item) => item.key === 'category');
     assert.deepEqual([field?.control, field?.required, field?.options, field?.placeholder], ['select', false, ['主角', '配角'], '不分类']);
     assert.equal(form.initialValues.category, undefined);
-    assert.deepEqual(open(ASSET_FORM_NAMES.create, { kind: 'scene' }).schema.fields.find((item) => item.key === 'category')?.options, ['室内']);
-    assert.deepEqual(open(ASSET_FORM_NAMES.create, { kind: 'prop' }).schema.fields.find((item) => item.key === 'category')?.options, []);
+    assert.deepEqual((await open(ASSET_FORM_NAMES.create, { kind: 'scene' })).schema.fields.find((item) => item.key === 'category')?.options, ['室内']);
+    assert.deepEqual((await open(ASSET_FORM_NAMES.create, { kind: 'prop' })).schema.fields.find((item) => item.key === 'category')?.options, []);
 
     await submit(form, { name: '林夏', category: '主角' });
     await submit(form, { name: '周远', category: '' });
@@ -245,9 +247,9 @@ test('编辑时带出所属分类；可改成其他分类或改为不分类；�
     const asset = assets.createAsset('character', { name: '林夏' }, { categoryId: hero.id });
     const plain = assets.createAsset('character', { name: '路人' });
 
-    const form = open(ASSET_FORM_NAMES.edit, { assetId: asset.id });
+    const form = await open(ASSET_FORM_NAMES.edit, { assetId: asset.id });
     assert.equal(form.initialValues.category, '主角');
-    assert.equal(open(ASSET_FORM_NAMES.edit, { assetId: plain.id }).initialValues.category, '');
+    assert.equal((await open(ASSET_FORM_NAMES.edit, { assetId: plain.id })).initialValues.category, '');
 
     await submit(form, { ...form.initialValues, category: '配角' });
     assert.equal(assets.getAsset(asset.id).categoryId, categories.resolveCategoryId('character', '配角'));
@@ -256,30 +258,30 @@ test('编辑时带出所属分类；可改成其他分类或改为不分类；�
 
     await submit(form, { ...form.initialValues, category: '主角' });
     categories.deleteCategory(hero.id);
-    assert.equal(open(ASSET_FORM_NAMES.edit, { assetId: asset.id }).initialValues.category, '');
+    assert.equal((await open(ASSET_FORM_NAMES.edit, { assetId: asset.id })).initialValues.category, '');
     await assert.rejects(submit(form, { ...form.initialValues, category: '主角' }), ValidationError);
   } finally {
     database.close();
   }
 });
 
-test('编辑音频的表单带所属分类字段，选项取自音频分类', () => {
+test('编辑音频的表单带所属分类字段，选项取自音频分类', async () => {
   const { database, assets, categories, open } = createFixture();
   try {
     categories.createCategory('audio', { name: '配乐' });
     const audio = assets.createAsset('audio', { name: '配乐一', audioKind: '背景音乐' });
-    const edit = open(ASSET_FORM_NAMES.edit, { assetId: audio.id });
+    const edit = await open(ASSET_FORM_NAMES.edit, { assetId: audio.id });
     assert.deepEqual(edit.schema.fields.find((item) => item.key === 'category')?.options, ['配乐']);
   } finally {
     database.close();
   }
 });
 
-test('编辑音频：生成来源初始值使用界面文字、没有文件字段；上传来源已有音频随表单带出', () => {
+test('编辑音频：生成来源初始值使用界面文字、没有文件字段；上传来源已有音频随表单带出', async () => {
   const { database, assets, open } = createFixture();
   try {
     const generated = assets.createAsset('audio', { name: '雨声', audioKind: '音效', description: '细雨' });
-    const generatedForm = open(ASSET_FORM_NAMES.edit, { assetId: generated.id });
+    const generatedForm = await open(ASSET_FORM_NAMES.edit, { assetId: generated.id });
     assert.deepEqual([generatedForm.initialValues.audioKind, generatedForm.initialValues.description, generatedForm.initialValues.files], ['音效', '细雨', undefined]);
 
     const audio = assets.createAsset(
@@ -292,7 +294,7 @@ test('编辑音频：生成来源初始值使用界面文字、没有文件字�
       },
       { fileSource: 'upload' }
     );
-    const form = open(ASSET_FORM_NAMES.edit, { assetId: audio.id });
+    const form = await open(ASSET_FORM_NAMES.edit, { assetId: audio.id });
     assert.deepEqual([form.initialValues.audioKind, form.initialValues.description, form.initialValues.language], ['背景音乐', '紧张', '']);
     assert.equal((JSON.parse(form.initialValues.files) as unknown[]).length, 1);
   } finally {
@@ -300,10 +302,10 @@ test('编辑音频：生成来源初始值使用界面文字、没有文件字�
   }
 });
 
-test('提交按钮：新建与编辑表单各有两个按钮，主按钮生成提示词；编辑的主按钮要求覆盖确认；表单里没有字段动作', () => {
+test('提交按钮：新建与编辑表单各有两个按钮，主按钮生成提示词；编辑的主按钮要求覆盖确认；表单里没有字段动作', async () => {
   const { database, assets, open } = createFixture();
   try {
-    const form = open(ASSET_FORM_NAMES.create, { kind: 'character' });
+    const form = await open(ASSET_FORM_NAMES.create, { kind: 'character' });
     assert.deepEqual(form.schema.submitActions, [
       { key: 'create', label: '仅创建' },
       { key: 'createAndPrompt', label: '创建并生成提示词', primary: true }
@@ -312,12 +314,12 @@ test('提交按钮：新建与编辑表单各有两个按钮，主按钮生成�
     assert.equal(form.schema.actions, undefined);
 
     const asset = assets.createAsset('character', { name: '林夏' });
-    const edit = open(ASSET_FORM_NAMES.edit, { assetId: asset.id });
+    const edit = await open(ASSET_FORM_NAMES.edit, { assetId: asset.id });
     const [save, regenerate] = edit.schema.submitActions ?? [];
     assert.deepEqual([save.key, regenerate.key, regenerate.primary], ['save', 'saveAndPrompt', true]);
     assert.equal(regenerate.confirmOverwrite, undefined, '没有提示词时不需要覆盖确认');
     assets.updatePrompts(asset.id, { promptZh: '已有提示词' });
-    const withPrompt = open(ASSET_FORM_NAMES.edit, { assetId: asset.id }).schema.submitActions ?? [];
+    const withPrompt = (await open(ASSET_FORM_NAMES.edit, { assetId: asset.id })).schema.submitActions ?? [];
     assert.deepEqual(withPrompt[1].confirmOverwrite?.fields, [], '提示词不在表单里，总是询问');
   } finally {
     database.close();
@@ -327,7 +329,7 @@ test('提交按钮：新建与编辑表单各有两个按钮，主按钮生成�
 test('创建并生成提示词：先保存资产，后台用已保存内容生成，写入提示词；仅创建不生成', async () => {
   const { database, assets, text, notifications, open } = createFixture();
   try {
-    const form = open(ASSET_FORM_NAMES.create, { kind: 'character' });
+    const form = await open(ASSET_FORM_NAMES.create, { kind: 'character' });
     await submit(form, { name: '林夏', style: '写实摄影', appearance: '短发' }, 'createAndPrompt');
 
     const [asset] = assets.listAssets('character');
@@ -358,7 +360,7 @@ test('创建并生成提示词：先保存资产，后台用已保存内容生�
 test('创建并生成提示词：信息不足时不创建资产；仅创建不受限制', async () => {
   const { database, assets, open } = createFixture();
   try {
-    const form = open(ASSET_FORM_NAMES.create, { kind: 'prop' });
+    const form = await open(ASSET_FORM_NAMES.create, { kind: 'prop' });
     await assert.rejects(
       submit(form, { name: '钥匙' }, 'createAndPrompt'),
       (error) => error instanceof ValidationError && /至少填写一项描述/.test(error.message)
@@ -367,7 +369,7 @@ test('创建并生成提示词：信息不足时不创建资产；仅创建不�
     await submit(form, { name: '钥匙' }, 'create');
     assert.equal(assets.listAssets('prop').length, 1);
 
-    const audio = open(ASSET_FORM_NAMES.create, { kind: 'audio' });
+    const audio = await open(ASSET_FORM_NAMES.create, { kind: 'audio' });
     await assert.rejects(submit(audio, { name: '雨声', audioKind: '音效' }, 'createAndPrompt'), ValidationError);
     await submit(audio, { name: '雨声', audioKind: '音效', description: '细雨敲窗' }, 'createAndPrompt');
     const rain = assets.listAssets('audio')[0];
@@ -383,7 +385,7 @@ test('提示词生成失败：资产照常创建，状态为失败并记录原�
   const { database, assets, prompts, text, open } = createFixture();
   try {
     text.unavailable = true;
-    const form = open(ASSET_FORM_NAMES.create, { kind: 'prop' });
+    const form = await open(ASSET_FORM_NAMES.create, { kind: 'prop' });
     await submit(form, { name: '钥匙', appearance: '黄铜' }, 'createAndPrompt');
     const key = assets.listAssets('prop')[0];
     await waitForPrompt(assets, key.id);
@@ -430,7 +432,7 @@ test('编辑：保存并重新生成覆盖提示词；生成中保存保留库�
     assets.updatePrompts(asset.id, { promptZh: '旧中文', promptEn: 'old english' });
     const { done } = prompts.start(asset.id);
 
-    const edit = open(ASSET_FORM_NAMES.edit, { assetId: asset.id });
+    const edit = await open(ASSET_FORM_NAMES.edit, { assetId: asset.id });
     assert.ok(!edit.schema.fields.some((field) => field.key === 'promptZh' || field.key === 'promptEn'));
     await assert.rejects(submit(edit, { ...edit.initialValues }, 'saveAndPrompt'), (error) => error instanceof ValidationError && /正在生成中/.test(error.message));
 
@@ -443,7 +445,7 @@ test('编辑：保存并重新生成覆盖提示词；生成中保存保留库�
     assert.deepEqual([finished.promptZh, finished.promptEn, finished.promptStatus], ['新中文', 'new english', 'succeeded']);
 
     // 提示词已有内容时，“保存并重新生成”改写提示词；表单字段改动使表单修订号加 1，生成依据改动后的内容。
-    const again = open(ASSET_FORM_NAMES.edit, { assetId: asset.id });
+    const again = await open(ASSET_FORM_NAMES.edit, { assetId: asset.id });
     await submit(again, { ...again.initialValues, appearance: '银色' }, 'saveAndPrompt');
     await waitForPrompt(assets, asset.id);
     const regenerated = assets.getAsset(asset.id);
@@ -457,9 +459,9 @@ test('提示词表单：带出现有提示词与状态说明；保存即确认�
   const { database, assets, open } = createFixture();
   try {
     const asset = assets.createAsset('prop', { name: '钥匙', appearance: '黄铜' });
-    const empty = open(ASSET_FORM_NAMES.prompt, { assetId: asset.id });
+    const empty = await open(ASSET_FORM_NAMES.prompt, { assetId: asset.id });
     assert.equal(empty.schema.title, '提示词：钥匙');
-    assert.deepEqual(empty.schema.fields.map((field) => [field.key, field.disabled]), [['promptZh', false], ['promptEn', false]]);
+    assert.deepEqual(empty.schema.fields.map((field) => [field.key, field.disabled]), [['promptZh', false], ['promptEn', false], ['textModel', false]]);
     assert.deepEqual((empty.schema.submitActions ?? []).map((action) => [action.key, action.label, action.primary]), [
       ['save', '保存', false],
       ['regenerate', '生成提示词', true]
@@ -467,7 +469,7 @@ test('提示词表单：带出现有提示词与状态说明；保存即确认�
 
     await submit(empty, { promptZh: '黄铜钥匙', promptEn: 'a brass key' }, 'save');
     assets.updateAsset(asset.id, { name: '钥匙', appearance: '银质' });
-    const outdated = open(ASSET_FORM_NAMES.prompt, { assetId: asset.id });
+    const outdated = await open(ASSET_FORM_NAMES.prompt, { assetId: asset.id });
     assert.deepEqual([outdated.initialValues.promptZh, outdated.initialValues.promptEn], ['黄铜钥匙', 'a brass key']);
     assert.match(outdated.schema.fields[0].description, /可能需要更新/);
     const [save, regenerate] = outdated.schema.submitActions ?? [];
@@ -476,19 +478,82 @@ test('提示词表单：带出现有提示词与状态说明；保存即确认�
     await submit(outdated, { promptZh: '黄铜钥匙', promptEn: 'a brass key' }, 'save');
     const confirmed = assets.getAsset(asset.id);
     assert.deepEqual([confirmed.promptRevision, confirmed.promptContentRevision, confirmed.contentRevision], [1, 2, 2]);
-    assert.doesNotMatch(open(ASSET_FORM_NAMES.prompt, { assetId: asset.id }).schema.fields[0].description, /需要更新/);
+    assert.doesNotMatch((await open(ASSET_FORM_NAMES.prompt, { assetId: asset.id })).schema.fields[0].description, /需要更新/);
 
     await submit(outdated, {}, 'regenerate');
     assert.equal(assets.getAsset(asset.id).promptStatus, 'running');
-    const running = open(ASSET_FORM_NAMES.prompt, { assetId: asset.id });
-    assert.deepEqual(running.schema.fields.map((field) => field.disabled), [true, true]);
+    const running = await open(ASSET_FORM_NAMES.prompt, { assetId: asset.id });
+    assert.deepEqual(running.schema.fields.map((field) => field.disabled), [true, true, true]);
     assert.match(running.schema.fields[0].description, /生成中/);
     await assert.rejects(submit(running, { promptZh: '新' }, 'save'), ValidationError);
     await waitForPrompt(assets, asset.id);
     assert.equal(assets.getAsset(asset.id).promptZh, '中文提示词');
 
-    assert.throws(() => open(ASSET_FORM_NAMES.prompt, { assetId: 9999 }), NotFoundError);
-    assert.throws(() => open(ASSET_FORM_NAMES.prompt, {}), ValidationError);
+    await assert.rejects(() => open(ASSET_FORM_NAMES.prompt, { assetId: 9999 }), NotFoundError);
+    await assert.rejects(() => open(ASSET_FORM_NAMES.prompt, {}), ValidationError);
+  } finally {
+    database.close();
+  }
+});
+
+const FAKE_MODEL_LABEL = '假服务商 · 假文本模型';
+const FAKE_MODEL_KEY = 'model:fake/fake-text';
+
+test('文本模型：生成来源的新建与编辑表单带文本模型下拉，上传来源没有；所选模型只用于本次生成提示词', async () => {
+  const { database, assets, text, open } = createFixture();
+  try {
+    const form = await open(ASSET_FORM_NAMES.create, { kind: 'character' });
+    const field = form.schema.fields.find((item) => item.key === 'textModel');
+    assert.deepEqual([field?.control, field?.required], ['select', true]);
+    assert.deepEqual(field?.options, [DEFAULT_TEXT_MODEL_OPTION, 'Copilot · 自动', FAKE_MODEL_LABEL]);
+    assert.equal(form.initialValues.textModel, DEFAULT_TEXT_MODEL_OPTION);
+    assert.ok(!(await open(ASSET_FORM_NAMES.create, { kind: 'character', fileSource: 'upload' })).schema.fields.some((item) => item.key === 'textModel'));
+
+    // 沿用默认：不指定模型；选了模型：本次使用所选模型。
+    await submit(form, { ...form.initialValues, name: '林夏', appearance: '短发' }, 'createAndPrompt');
+    await submit(form, { ...form.initialValues, name: '周远', appearance: '长发', textModel: FAKE_MODEL_LABEL }, 'createAndPrompt');
+    for (const asset of assets.listAssets('character')) {
+      await waitForPrompt(assets, asset.id);
+    }
+    assert.deepEqual(text.modelKeys, [null, FAKE_MODEL_KEY]);
+
+    // 仅创建不读取文本模型，即使字段值无效也不影响。
+    await submit(form, { ...form.initialValues, name: '许诺', textModel: '已被停用的模型' }, 'create');
+    assert.equal(assets.listAssets('character').length, 3);
+    await assert.rejects(
+      submit(form, { ...form.initialValues, name: '孙悦', appearance: '卷发', textModel: '已被停用的模型' }, 'createAndPrompt'),
+      (error) => error instanceof ValidationError && error.fieldErrors.textModel !== undefined
+    );
+    assert.equal(assets.listAssets('character').length, 3, '模型无效时不创建资产');
+
+    const target = assets.listAssets('character').find((item) => item.name === '林夏');
+    assert.ok(target);
+    const edit = await open(ASSET_FORM_NAMES.edit, { assetId: target.id });
+    assert.equal(edit.schema.fields.at(-1)?.key, 'textModel');
+    assert.equal(edit.initialValues.textModel, DEFAULT_TEXT_MODEL_OPTION);
+    await submit(edit, { ...edit.initialValues, textModel: FAKE_MODEL_LABEL }, 'saveAndPrompt');
+    await waitForPrompt(assets, target.id);
+    assert.deepEqual(text.modelKeys.slice(2), [FAKE_MODEL_KEY]);
+  } finally {
+    database.close();
+  }
+});
+
+test('文本模型：提示词表单重新生成时使用所选模型，保存不使用', async () => {
+  const { database, assets, text, open } = createFixture();
+  try {
+    const asset = assets.createAsset('prop', { name: '钥匙', appearance: '黄铜' });
+    const form = await open(ASSET_FORM_NAMES.prompt, { assetId: asset.id });
+    assert.equal(form.initialValues.textModel, DEFAULT_TEXT_MODEL_OPTION);
+
+    await submit(form, { promptZh: '黄铜钥匙', promptEn: 'a brass key', textModel: '已被停用的模型' }, 'save');
+    assert.deepEqual(text.modelKeys, []);
+    await assert.rejects(submit(form, { textModel: '已被停用的模型' }, 'regenerate'), ValidationError);
+    assert.equal(assets.getAsset(asset.id).promptStatus, 'none');
+
+    await submit(form, { textModel: FAKE_MODEL_LABEL }, 'regenerate');
+    await waitForPrompt(assets, asset.id);
+    assert.deepEqual(text.modelKeys, [FAKE_MODEL_KEY]);
   } finally {
     database.close();
   }
@@ -513,7 +578,7 @@ test('从实体新建：按设定预填，画面风格预填为作品所在项�
   try {
     projects.updateProject(created[1].id, { name: '项目乙', visualStyle: '写实摄影' });
     const { episode, entity } = seedEntity(database, created[1].id);
-    const form = open(ASSET_FORM_NAMES.create, { episodeId: episode, entityId: entity });
+    const form = await open(ASSET_FORM_NAMES.create, { episodeId: episode, entityId: entity });
     assert.equal(form.schema.title, '新建角色');
     assert.ok(!form.schema.fields.some((field) => field.key === 'projectName'));
     assert.deepEqual(form.initialValues, {
@@ -522,8 +587,10 @@ test('从实体新建：按设定预填，画面风格预填为作品所在项�
       appearance: '花白胡须',
       clothing: '深蓝雨衣',
       voiceDescription: '低沉沙哑',
-      extra: '设定概述：灯塔守护者\n身份与目标：守塔四十年'
+      extra: '设定概述：灯塔守护者\n身份与目标：守塔四十年',
+      textModel: DEFAULT_TEXT_MODEL_OPTION
     });
+    assert.equal(form.schema.fields.at(-1)?.key, 'textModel');
 
     await submit(form, { ...form.initialValues });
     const [asset] = assets.listAssets('character');
@@ -542,7 +609,7 @@ test('从实体新建：可选择所属分类，创建的资产归入该分类�
   try {
     const { episode, entity } = seedEntity(database, created[0].id);
     const hero = categories.createCategory('character', { name: '主角' });
-    const form = open(ASSET_FORM_NAMES.create, { episodeId: episode, entityId: entity });
+    const form = await open(ASSET_FORM_NAMES.create, { episodeId: episode, entityId: entity });
     assert.deepEqual(form.schema.fields.find((field) => field.key === 'category')?.options, ['主角']);
     assert.equal(form.initialValues.category, undefined);
 
@@ -557,14 +624,14 @@ test('从实体新建：绑定失败时不留下新资产；实体不存在或�
   const { database, assets, created, open } = createFixture();
   try {
     const { episode, entity } = seedEntity(database, created[0].id);
-    const form = open(ASSET_FORM_NAMES.create, { episodeId: episode, entityId: entity });
+    const form = await open(ASSET_FORM_NAMES.create, { episodeId: episode, entityId: entity });
     // 实体在打开表单后被删除：绑定会失败，新建的资产要回滚。
     database.prepare('DELETE FROM script_entities WHERE id = ?').run(entity);
     await assert.rejects(submit(form, { ...form.initialValues }));
     assert.equal(assets.listAssets('character').length, 0);
 
-    assert.throws(() => open(ASSET_FORM_NAMES.create, { episodeId: episode, entityId: entity }), NotFoundError);
-    assert.throws(() => open(ASSET_FORM_NAMES.create, { episodeId: 'x', entityId: entity }), ValidationError);
+    await assert.rejects(() => open(ASSET_FORM_NAMES.create, { episodeId: episode, entityId: entity }), NotFoundError);
+    await assert.rejects(() => open(ASSET_FORM_NAMES.create, { episodeId: 'x', entityId: entity }), ValidationError);
   } finally {
     database.close();
   }

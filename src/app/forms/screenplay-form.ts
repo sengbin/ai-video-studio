@@ -4,7 +4,7 @@
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
-// 备注：生成表单的作品由入口固定；“选择作品”表单只选择、不启动生成，选好后由页面再打开生成表单；创意未确认时不能打开表单。
+// 备注：生成表单带文本模型字段，所选模型保存为作品的文本模型，启动失败时恢复原选择；生成表单的作品由入口固定；“选择作品”表单只选择、不启动生成，选好后由页面再打开生成表单；创意未确认时不能打开表单。
 // ------------------------------------------------------------------------
 
 import { FORM_LEVEL_ERROR_KEY, ValidationError } from '../../domain/errors';
@@ -18,9 +18,19 @@ import {
 } from '../../domain/rules/screenplay-rules';
 import { ProjectService } from '../services/project-service';
 import { ScreenplayService } from '../services/screenplay-service';
+import { WorkTextModelState } from '../services/text-settings-service';
 import { WorkService } from '../services/work-service';
-import { SyncFormCatalog, FormDefinition, FormValues } from './form-definition';
+import { AsyncFormFactory, FormCatalog, FormDefinition, FormFactory, FormValues } from './form-definition';
 import { FormFieldSchema } from './form-schema';
+import {
+  TEXT_MODEL_FIELD_KEY,
+  TEXT_MODEL_SAVED_NOTE,
+  WorkTextModels,
+  createTextModelField,
+  readTextModelKey,
+  startWithWorkTextModel,
+  textModelInitialValue
+} from './text-model-field';
 
 /** 剧本表单在表单目录中的名称，页面据此请求打开。 */
 export const SCREENPLAY_FORM_NAMES = {
@@ -33,6 +43,8 @@ export interface ScreenplayFormDependencies {
   readonly projects: ProjectService;
   readonly works: WorkService;
   readonly screenplays: ScreenplayService;
+  /** 文本模型：读取候选与作品当前的选择，保存本次选择。 */
+  readonly textModels: WorkTextModels;
   /** 生成已开始后调用，用于打开阶段产出层。 */
   readonly onStarted: (workId: number) => void;
   /** “选择作品”表单提交后调用，用于打开该作品的生成表单。 */
@@ -45,6 +57,7 @@ const PICK_FIELD_KEY = 'work';
 const PICK_SEPARATOR = ' › ';
 const NO_STARTABLE_MESSAGE = '没有可生成剧本的作品，请先在“创作”列表中确认创意。';
 const PICK_REQUIRED_MESSAGE = '请选择所属作品。';
+const TEXT_MODEL_PURPOSE = '生成剧本时';
 
 /** 生成参数转表单初始值：数字转为文本，未设置的项为空串。 */
 function paramsToValues(params: ScreenplayParams): FormValues {
@@ -56,13 +69,14 @@ function paramsToValues(params: ScreenplayParams): FormValues {
 }
 
 /** 创建“生成剧本”表单的定义。 */
-function createStartForm(dependencies: ScreenplayFormDependencies, workId: number): FormDefinition {
-  const { works, screenplays, onStarted } = dependencies;
+function createStartForm(dependencies: ScreenplayFormDependencies, workId: number, textModelState: WorkTextModelState): FormDefinition {
+  const { works, screenplays, textModels, onStarted } = dependencies;
   const work = works.getWork(workId);
   screenplays.assertCanStart(workId);
   const lastParams = screenplays.getLastParams(workId);
 
   const fields: FormFieldSchema[] = [
+    createTextModelField(textModelState, TEXT_MODEL_PURPOSE, TEXT_MODEL_SAVED_NOTE),
     {
       key: 'maxEpisodeDurationSeconds',
       label: '单集最大时长（秒）',
@@ -91,9 +105,12 @@ function createStartForm(dependencies: ScreenplayFormDependencies, workId: numbe
 
   return {
     schema: { title: `生成剧本：${work.name}`, submitLabel: SUBMIT_LABEL, fields },
-    initialValues: lastParams === undefined ? {} : paramsToValues(lastParams),
+    initialValues: { [TEXT_MODEL_FIELD_KEY]: textModelInitialValue(textModelState), ...(lastParams === undefined ? {} : paramsToValues(lastParams)) },
     submit: async (values) => {
-      await screenplays.start(workId, values);
+      const textModel = readTextModelKey(textModelState, values);
+      await startWithWorkTextModel(textModels, workId, textModelState, textModel, async () => {
+        await screenplays.start(workId, values);
+      });
       onStarted(workId);
     }
   };
@@ -138,9 +155,15 @@ function createPickForm(dependencies: ScreenplayFormDependencies, projectId: num
  * 创建剧本表单目录：`screenplay.start` 的参数为 `{ workId }`，`screenplay.pick` 的参数为 `{ projectId? }`。
  * @param dependencies 服务与回调。
  */
-export function createScreenplayFormCatalog(dependencies: ScreenplayFormDependencies): SyncFormCatalog {
-  return new Map([
-    [SCREENPLAY_FORM_NAMES.start, (params) => createStartForm(dependencies, readEntityId({ id: readRecord(params).workId }, '作品'))],
+export function createScreenplayFormCatalog(dependencies: ScreenplayFormDependencies): FormCatalog {
+  return new Map<string, FormFactory | AsyncFormFactory>([
+    [
+      SCREENPLAY_FORM_NAMES.start,
+      async (params) => {
+        const workId = readEntityId({ id: readRecord(params).workId }, '作品');
+        return createStartForm(dependencies, workId, await dependencies.textModels.getWorkState(workId));
+      }
+    ],
     [
       SCREENPLAY_FORM_NAMES.pick,
       (params) => {

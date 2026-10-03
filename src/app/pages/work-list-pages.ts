@@ -111,6 +111,7 @@ export class WorkListPages {
           projects,
           works,
           screenplays,
+          textModels,
           onStarted: (workId) => openStage(workId, 'screenplay'),
           onPicked: (workId) => entry.panel?.postEvent(WORK_LIST_EVENTS.startScreenplay, { workId })
         }),
@@ -118,6 +119,7 @@ export class WorkListPages {
           projects,
           works,
           storyboards,
+          textModels,
           profiles,
           providers,
           onStarted: (workId, episodeIds) =>

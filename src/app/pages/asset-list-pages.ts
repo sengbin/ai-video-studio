@@ -18,6 +18,7 @@ import { OpenedPanel, PanelManager } from '../panels/panel-manager';
 import { AssetCategoryService } from '../services/asset-category-service';
 import { AssetGenerationService } from '../services/asset-generation-service';
 import { AssetPromptService } from '../services/asset-prompt-service';
+import { TextSettingsService } from '../services/text-settings-service';
 import { AssetService } from '../services/asset-service';
 import { ProjectService } from '../services/project-service';
 import { registerAssetCategoryHandlers } from './asset-category-handlers';
@@ -47,7 +48,7 @@ export class AssetListPages {
   private readonly opened = new Map<AssetKind, OpenedAssetList>();
 
   /**
-   * @param services 项目（从实体新建资产时读取视觉风格）、资产、资产分类与提示词生成服务。
+   * @param services 项目（从实体新建资产时读取视觉风格）、资产、资产分类、提示词生成与文本模型服务。
    * @param panels 面板管理器。
    */
   constructor(
@@ -56,6 +57,7 @@ export class AssetListPages {
       readonly assets: AssetService;
       readonly categories: AssetCategoryService;
       readonly prompts: AssetPromptService;
+      readonly textModels: TextSettingsService;
       readonly generation: AssetGenerationService;
     },
     private readonly panels: PanelManager
@@ -76,7 +78,7 @@ export class AssetListPages {
       return;
     }
 
-    const { projects, assets, categories, prompts } = this.services;
+    const { projects, assets, categories, prompts, textModels } = this.services;
     const entry: OpenedAssetList = { panel: undefined, pending: request };
     const router = new MessageRouter();
     registerAssetListHandlers(router, kind, this.services, {
@@ -89,7 +91,7 @@ export class AssetListPages {
     registerAssetCategoryHandlers(router, categories);
     // 路由器只能注册一次表单请求，因此合并资产表单与分类表单两个目录。
     const catalog: FormCatalog = new Map([
-      ...createAssetFormCatalog({ projects, assets, categories, prompts }),
+      ...createAssetFormCatalog({ projects, assets, categories, prompts, textModels }),
       ...createAssetCategoryFormCatalog(categories)
     ]);
     registerFormHandlers(router, catalog);

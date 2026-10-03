@@ -155,6 +155,15 @@ test('作品的选择优先于全局默认，不同作品互不影响，没有�
   ]);
 });
 
+test('本次指定的模型优先于作品的选择与全局默认，指定的模型已不可用时回退到作品的选择', async () => {
+  const { router } = createRouter({ defaultModel: 'copilot:', models: [usable(1, 'a')], workModels: { 1: 'copilot:gpt-4o' } });
+  assert.deepEqual(await router.forWork(1, 'model:fake/a').generate(REQUEST), { from: 'provider:a' });
+  assert.deepEqual(await router.forWork(null, 'copilot:gpt-4o').generate(REQUEST), { from: 'copilot:gpt-4o' });
+  assert.deepEqual(await router.forWork(1, null).generate(REQUEST), { from: 'copilot:gpt-4o' });
+  assert.deepEqual(await router.forWork(1, 'model:fake/gone').generate(REQUEST), { from: 'copilot:gpt-4o' });
+  assert.deepEqual(await router.forWork(null, 'model:fake/gone').generate(REQUEST), { from: 'copilot:' });
+});
+
 test('选择的模型已不可用：作品回退到全局默认，默认也不可用时回退到第一个可用模型', async () => {
   // 作品选了已被停用的服务商模型 → 全局默认。
   const stopped = createRouter({ defaultModel: 'copilot:gpt-4o', models: [], workModels: { 1: 'model:fake/a' } });

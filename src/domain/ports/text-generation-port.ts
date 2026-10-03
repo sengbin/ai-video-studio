@@ -44,13 +44,14 @@ export interface TextModelInfo {
   readonly maxInputTokens: number;
 }
 
-/** 按作品提供文本生成端口：作品可以单独选择文本模型，没有单独选择时使用全局默认。 */
+/** 按作品提供文本生成端口：本次生成可以指定文本模型，其次是作品单独选择的模型，都没有时使用全局默认。 */
 export interface TextGenerationSource {
   /**
    * 取得某个作品使用的文本生成端口；返回的端口在 resolveModel 时按当时的设置选定模型，之后的调用沿用该选择。
-   * @param workId 作品标识；null 表示不属于任何作品（如资产提示词），使用全局默认。
+   * @param workId 作品标识；null 表示不属于任何作品（如资产提示词）。
+   * @param modelKey 本次生成指定的文本模型键；缺省或 null 时依次使用作品单独选择的模型、全局默认。指定的模型不可用时同样依次回退。
    */
-  forWork(workId: number | null): TextGenerationPort;
+  forWork(workId: number | null, modelKey?: string | null): TextGenerationPort;
 }
 
 /** 文本生成端口。 */

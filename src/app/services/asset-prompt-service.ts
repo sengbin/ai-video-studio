@@ -11,7 +11,7 @@ import { NotFoundError, TextGenerationError, ValidationError, FORM_LEVEL_ERROR_K
 import { AssetRecord } from '../../domain/models/asset';
 import { AssetRepository } from '../../domain/ports/asset-repository';
 import { PromptTemplates } from '../../domain/ports/prompt-templates';
-import { ImageInput, TextGenerationPort } from '../../domain/ports/text-generation-port';
+import { ImageInput, TextGenerationSource } from '../../domain/ports/text-generation-port';
 import { UPLOAD_SOURCE_GENERATION_MESSAGE } from '../../domain/rules/asset-generation-rules';
 import {
   ASSET_PROMPT_IMAGE_MAX_BYTES,
@@ -42,7 +42,8 @@ const ALREADY_RUNNING_MESSAGE = '提示词正在生成中。';
 
 /** 资产提示词服务的依赖。 */
 export interface AssetPromptServiceDependencies {
-  readonly text: TextGenerationPort;
+  /** 文本生成来源：每次生成可以指定本次使用的文本模型。 */
+  readonly texts: TextGenerationSource;
   readonly prompts: PromptTemplates;
   readonly assets: AssetRepository;
   /** 提示词状态变化后通知界面刷新。 */
@@ -73,11 +74,13 @@ export class AssetPromptService {
 
   /**
    * 启动后台生成：立即返回，生成在后台进行，状态与结果保存在资产上。
+   * @param assetId 资产标识。
+   * @param textModel 本次使用的文本模型键；缺省或 null 使用全局默认。
    * @returns done 在后台任务结束（成功、失败或取消）后完成，从不拒绝，供测试等待。
    * @throws NotFoundError 资产不存在。
    * @throws ValidationError 信息不足，或已在生成中。
    */
-  start(assetId: number): { readonly done: Promise<void> } {
+  start(assetId: number, textModel: string | null = null): { readonly done: Promise<void> } {
     const { assets } = this.dependencies;
     const asset = assets.findById(assetId);
     if (asset === undefined) {
@@ -95,7 +98,7 @@ export class AssetPromptService {
     this.dependencies.notify();
     const controller = new AbortController();
     this.running.set(assetId, controller);
-    return { done: this.run(asset, images, controller) };
+    return { done: this.run(asset, images, controller, textModel) };
   }
 
   /**
@@ -127,9 +130,10 @@ export class AssetPromptService {
   }
 
   /** 执行一次生成并把结果写回资产。 */
-  private async run(asset: AssetRecord, images: readonly ImageInput[], controller: AbortController): Promise<void> {
-    const { text, prompts, assets } = this.dependencies;
+  private async run(asset: AssetRecord, images: readonly ImageInput[], controller: AbortController, textModel: string | null): Promise<void> {
+    const { texts, prompts, assets } = this.dependencies;
     try {
+      const text = texts.forWork(null, textModel);
       const model = await text.resolveModel();
       const draft = describeAssetDraft(asset.kind, assetToDraftValues(asset));
       const common = { kindLabel: promptKindLabel(asset), material: wrapMaterial(draft.lines.join('\n')), focus: promptFocus(asset) };

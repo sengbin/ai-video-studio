@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：text-generation-router.ts
-// 说明：文本生成的路由实现：按作品的单独选择、全局默认的顺序决定使用 Copilot 的某个模型还是服务商的某个文本模型。
+// 说明：文本生成的路由实现：按本次生成指定的模型、作品的单独选择、全局默认的顺序决定使用 Copilot 的某个模型还是服务商的某个文本模型。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-03
@@ -55,18 +55,19 @@ type ActiveEngine =
 export class TextGenerationRouter implements TextGenerationSource {
   constructor(private readonly dependencies: TextGenerationRouterDependencies) {}
 
-  forWork(workId: number | null): TextGenerationPort {
-    return new RoutedTextPort(this.dependencies, workId);
+  forWork(workId: number | null, modelKey: string | null = null): TextGenerationPort {
+    return new RoutedTextPort(this.dependencies, workId, modelKey);
   }
 }
 
-/** 绑定到一个作品的文本生成端口。 */
+/** 绑定到一个作品、可再指定本次模型的文本生成端口。 */
 class RoutedTextPort implements TextGenerationPort {
   private active: ActiveEngine | undefined;
 
   constructor(
     private readonly dependencies: TextGenerationRouterDependencies,
-    private readonly workId: number | null
+    private readonly workId: number | null,
+    private readonly requestedKey: string | null
   ) {}
 
   async resolveModel(): Promise<TextModelInfo> {
@@ -142,7 +143,7 @@ class RoutedTextPort implements TextGenerationPort {
   }
 
   /**
-   * 按“作品的选择、全局默认、Copilot 自动、第一个可用的服务商文本模型”的顺序列出候选（已去重）。
+   * 按“本次指定的模型、作品的选择、全局默认、Copilot 自动、第一个可用的服务商文本模型”的顺序列出候选（已去重）。
    * Copilot 的候选是否真的可用要等解析时才知道，解析失败（unavailable）后由 resolveModel 继续尝试后面的候选。
    */
   private candidates(): ChosenModel[] {
@@ -164,7 +165,7 @@ class RoutedTextPort implements TextGenerationPort {
     };
 
     const workKey = this.workId === null ? null : workModels.find(this.workId);
-    const keys = [workKey, defaultModel, copilotEnabled ? copilotModelKey('') : null, [...providerKeys.keys()][0] ?? null];
+    const keys = [this.requestedKey, workKey, defaultModel, copilotEnabled ? copilotModelKey('') : null, [...providerKeys.keys()][0] ?? null];
     const candidates = new Map<string, ChosenModel>();
     for (const key of keys) {
       const chosen = toChosen(key);

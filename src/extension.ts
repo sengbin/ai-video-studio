@@ -147,8 +147,6 @@ export function activate(context: vscode.ExtensionContext): void {
     providers: providerService,
     workModels: workTextModels
   });
-  // 不属于任何作品的文本生成（资产提示词）使用全局默认。
-  const textGeneration = textRouter.forWork(null);
 
   // 应用服务。
   const projectService = new ProjectService(new SqliteProjectRepository(database));
@@ -198,7 +196,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const assetVersionRepository = new SqliteAssetVersionRepository(database, assetFileStore);
   const notifyAssetsChanged = (): void => assetService.notifyChanged();
   const assetPromptService = new AssetPromptService({
-    text: textGeneration,
+    texts: textRouter,
     prompts,
     assets: assetRepository,
     notify: notifyAssetsChanged
@@ -274,7 +272,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const projectPages = new ProjectPages(projectService, panels);
   const workListPages = new WorkListPages({ ...services, profiles: profileService, providers: providerService, textModels: textSettingsService }, panels);
   const assetListPages = new AssetListPages(
-    { projects: projectService, assets: assetService, categories: assetCategoryService, prompts: assetPromptService, generation: assetGenerationService },
+    { projects: projectService, assets: assetService, categories: assetCategoryService, prompts: assetPromptService, textModels: textSettingsService, generation: assetGenerationService },
     panels
   );
   const settingsPages = new SettingsPages({ text: textSettingsService, providers: providerService }, panels);
@@ -291,7 +289,7 @@ export function activate(context: vscode.ExtensionContext): void {
   });
   const backupPages = new BackupPages(backupService, panels);
   const workbenchPages = new WorkbenchPages(
-    { generation: generationService, profiles: profileService, bindings: bindingService, assets: assetService, categories: assetCategoryService, prompts: assetPromptService, providers: providerService, ...services },
+    { generation: generationService, profiles: profileService, bindings: bindingService, assets: assetService, categories: assetCategoryService, prompts: assetPromptService, providers: providerService, textModels: textSettingsService, ...services },
     // 结果视频用系统默认的视频播放器打开，也可导出到用户选择的位置或在文件夹中显示。
     createWorkbenchHost(),
     panels

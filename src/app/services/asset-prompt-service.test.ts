@@ -11,7 +11,7 @@ import assert from 'node:assert/strict';
 import { join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { TextGenerationError } from '../../domain/errors';
-import { TextGenerationPort, TextGenerationOptions } from '../../domain/ports/text-generation-port';
+import { TextGenerationPort, TextGenerationOptions, TextGenerationSource } from '../../domain/ports/text-generation-port';
 import { IN_MEMORY_DATABASE_PATH, openDatabase } from '../../infra/database/database-connection';
 import { SqliteAssetRepository } from '../../infra/database/sqlite-asset-repository';
 import { FilePromptTemplates } from '../../infra/prompts/file-prompt-templates';
@@ -29,11 +29,17 @@ interface PendingCall {
   reject(error: unknown): void;
 }
 
-/** 假文本端口：generate 挂起，直到测试结束它；abortRejects 为 true 时，收到中止信号会立即以“已取消”失败。 */
-class FakeTextPort implements TextGenerationPort {
+/** 假文本端口兼来源：generate 挂起，直到测试结束它；abortRejects 为 true 时，收到中止信号会立即以“已取消”失败；记录每次取端口时指定的作品与模型键。 */
+class FakeTextPort implements TextGenerationPort, TextGenerationSource {
   readonly calls: PendingCall[] = [];
+  readonly requests: Array<{ workId: number | null; modelKey: string | null | undefined }> = [];
 
   constructor(private readonly abortRejects: boolean) {}
+
+  forWork(workId: number | null, modelKey?: string | null): TextGenerationPort {
+    this.requests.push({ workId, modelKey });
+    return this;
+  }
 
   async resolveModel() {
     return { id: 'fake/model', maxInputTokens: 100000 };
@@ -61,7 +67,7 @@ function createFixture(abortRejects: boolean) {
   const text = new FakeTextPort(abortRejects);
   let notifications = 0;
   const service = new AssetPromptService({
-    text,
+    texts: text,
     prompts: new FilePromptTemplates(PROMPTS_DIRECTORY),
     assets: repository,
     notify: () => {
@@ -91,6 +97,28 @@ test('生成成功：提示词写回资产，状态为成功', async () => {
     await done;
     const saved = assets.getAsset(asset.id);
     assert.deepEqual([saved.promptStatus, saved.promptZh, saved.promptEn, saved.promptError], ['succeeded', GENERATED.promptZh, GENERATED.promptEn, null]);
+  } finally {
+    database.close();
+  }
+});
+
+test('文本模型：不指定时使用全局默认，指定后本次生成使用所选模型', async () => {
+  const { database, service, text, assets, asset } = createFixture(true);
+  try {
+    const first = service.start(asset.id);
+    await waitForCalls(text, 1);
+    text.calls[0].resolve(GENERATED);
+    await first.done;
+
+    const second = service.start(asset.id, 'model:fake/fake-text');
+    await waitForCalls(text, 2);
+    text.calls[1].resolve(GENERATED);
+    await second.done;
+    assert.deepEqual(text.requests, [
+      { workId: null, modelKey: null },
+      { workId: null, modelKey: 'model:fake/fake-text' }
+    ]);
+    assert.equal(assets.getAsset(asset.id).promptStatus, 'succeeded');
   } finally {
     database.close();
   }

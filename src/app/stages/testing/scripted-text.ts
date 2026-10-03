@@ -39,8 +39,11 @@ export const FILE_PROMPTS: PromptTemplates = { get: readPrompt };
 /** 脚本化的假文本生成端口；同时是文本生成来源，所有作品都返回它自己。 */
 export class ScriptedText implements TextGenerationPort, TextGenerationSource {
   readonly requests: TextGenerationRequest[] = [];
+  /** 每次取端口时指定的文本模型键，没有指定为 null。 */
+  readonly modelKeys: Array<string | null> = [];
 
-  forWork(): TextGenerationPort {
+  forWork(_workId?: number | null, modelKey?: string | null): TextGenerationPort {
+    this.modelKeys.push(modelKey ?? null);
     return this;
   }
   /** 为 true 时 resolveModel 抛出“不可用”错误。 */

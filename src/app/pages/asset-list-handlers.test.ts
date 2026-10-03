@@ -30,7 +30,7 @@ function createFixture() {
   const assets = new AssetService(assetRepository);
   const categories = new AssetCategoryService(new SqliteAssetCategoryRepository(database));
   const text = new ScriptedText(() => ({ promptZh: '中文', promptEn: 'english' }));
-  const prompts = new AssetPromptService({ text, prompts: FILE_PROMPTS, assets: assetRepository, notify: () => undefined });
+  const prompts = new AssetPromptService({ texts: text, prompts: FILE_PROMPTS, assets: assetRepository, notify: () => undefined });
   const generation = new AssetGenerationService({
     assets: assetRepository,
     versions: new SqliteAssetVersionRepository(database, files),
@@ -177,7 +177,7 @@ test('读取列表：音频资产按各自的音频类型逐条判断有无可�
       {
         assets: fixture.assets,
         categories: new AssetCategoryService(new SqliteAssetCategoryRepository(fixture.database)),
-        prompts: new AssetPromptService({ text, prompts: FILE_PROMPTS, assets: fixture.assetRepository, notify: () => undefined }),
+        prompts: new AssetPromptService({ texts: text, prompts: FILE_PROMPTS, assets: fixture.assetRepository, notify: () => undefined }),
         generation: fixture.generation
       },
       { takePending: () => undefined }

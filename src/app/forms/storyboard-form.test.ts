@@ -23,6 +23,7 @@ import { ProviderService } from '../services/provider-service';
 import { createServiceFixture } from '../services/testing/service-fixture';
 import { FormDefinition } from './form-definition';
 import { STORYBOARD_FORM_NAMES, createStoryboardFormCatalog } from './storyboard-form';
+import { DEFAULT_TEXT_MODEL_OPTION, createFakeTextModels } from './testing/fake-text-models';
 
 const CREATIVE_PARAMS = { chapterMinWords: 100, chapterMaxWords: 200, maxChapters: 3 };
 const SCREENPLAY_PARAMS = { maxEpisodeDurationSeconds: '60', maxEpisodes: '3' };
@@ -61,10 +62,12 @@ async function createFixture(kind: '单个短视频' | '多集短片', approveSc
   });
   const started: Array<[number, readonly number[]]> = [];
   const picked: number[] = [];
+  const { textModels, saved: savedTextModels } = createFakeTextModels();
   const catalog = createStoryboardFormCatalog({
     projects: fixture.projects,
     works: fixture.works,
     storyboards: fixture.storyboards,
+    textModels,
     profiles,
     providers,
     onStarted: (workId, episodeIds) => started.push([workId, episodeIds]),
@@ -75,7 +78,7 @@ async function createFixture(kind: '单个短视频' | '多集短片', approveSc
     assert.ok(factory);
     return factory(params);
   };
-  return { ...fixture, work, started, picked, open, profiles, modelId };
+  return { ...fixture, work, started, picked, savedTextModels, open, profiles, modelId };
 }
 
 test('字段：多集作品可选集，单个短视频或指定了集时不显示选择；新建时带默认值', async () => {
@@ -85,6 +88,7 @@ test('字段：多集作品可选集，单个短视频或指定了集时不显�
     const seriesForm = await series.open({ workId: series.work.id });
     assert.deepEqual(seriesForm.schema.fields.map((field) => field.key), [
       'episodes',
+      'textModel',
       'videoModel',
       'aspectRatio',
       'resolution',
@@ -100,6 +104,7 @@ test('字段：多集作品可选集，单个短视频或指定了集时不显�
     ]);
     assert.deepEqual(seriesForm.schema.fields[0].options, ['第 1 集 第一集', '第 2 集 第二集']);
     assert.equal(seriesForm.schema.title, '生成分镜脚本：作品甲');
+    assert.equal(seriesForm.initialValues.textModel, DEFAULT_TEXT_MODEL_OPTION);
     assert.equal(seriesForm.initialValues.continuity, '由 AI 判断');
     assert.equal(seriesForm.initialValues.audioMode, '模型原生生成');
     assert.deepEqual(JSON.parse(seriesForm.initialValues.episodes), ['第 1 集 第一集', '第 2 集 第二集']);
@@ -274,6 +279,31 @@ test('目标模型：不满足能力或不在列表中时返回字段错误，�
     await runner.whenIdle();
     assert.equal(started.length, 1);
     assert.deepEqual(profiles.getWorkDefaults(work.id).values, EMPTY_PROFILE);
+  } finally {
+    database.close();
+  }
+});
+
+test('文本模型：初始值为作品当前的选择，所选模型保存为作品的选择；选项无效或没能启动时作品选择不变', async () => {
+  const { database, open, work, savedTextModels, runner, started } = await createFixture('单个短视频');
+  try {
+    savedTextModels.set(work.id, 'copilot:');
+    const form = await open({ workId: work.id });
+    assert.equal(form.initialValues.textModel, 'Copilot · 自动');
+    assert.deepEqual(form.schema.fields.find((field) => field.key === 'textModel')?.options, [DEFAULT_TEXT_MODEL_OPTION, 'Copilot · 自动', '假服务商 · 假文本模型']);
+
+    await assert.rejects(
+      Promise.resolve(form.submit({ ...form.initialValues, textModel: '已被停用的模型' })),
+      (error) => error instanceof ValidationError && error.fieldErrors.textModel !== undefined
+    );
+    // 参数无效、没能启动生成：作品保持原选择。
+    await assert.rejects(Promise.resolve(form.submit({ ...form.initialValues, maxShots: '0', textModel: '假服务商 · 假文本模型' })), ValidationError);
+    assert.equal(savedTextModels.get(work.id), 'copilot:');
+    assert.deepEqual(started, []);
+
+    await form.submit({ ...form.initialValues, textModel: '假服务商 · 假文本模型' });
+    await runner.whenIdle();
+    assert.equal(savedTextModels.get(work.id), 'model:fake/fake-text');
   } finally {
     database.close();
   }

@@ -32,6 +32,15 @@ import { StoryboardService } from '../services/storyboard-service';
 import { WorkService } from '../services/work-service';
 import { AsyncFormFactory, FormCatalog, FormDefinition, FormFactory, FormValues } from './form-definition';
 import { FormFieldSchema } from './form-schema';
+import {
+  TEXT_MODEL_FIELD_KEY,
+  TEXT_MODEL_SAVED_NOTE,
+  WorkTextModels,
+  createTextModelField,
+  readTextModelKey,
+  startWithWorkTextModel,
+  textModelInitialValue
+} from './text-model-field';
 
 /** 分镜脚本表单在表单目录中的名称，页面据此请求打开。 */
 export const STORYBOARD_FORM_NAMES = {
@@ -44,6 +53,8 @@ export interface StoryboardFormDependencies {
   readonly projects: ProjectService;
   readonly works: WorkService;
   readonly storyboards: StoryboardService;
+  /** 文本模型：读取候选与作品当前的选择，保存本次选择。 */
+  readonly textModels: WorkTextModels;
   /** 作品默认生成参数：目标模型、画幅、分辨率的初始值与保存。 */
   readonly profiles: Pick<GenerationProfileService, 'getWorkDefaults' | 'saveWorkDefaults'>;
   /** 可用的视频模型，作为目标模型的选项。 */
@@ -62,6 +73,7 @@ const NO_STARTABLE_MESSAGE = '没有可生成分镜脚本的作品，请先在�
 const PICK_REQUIRED_MESSAGE = '请选择所属作品。';
 const EPISODE_REQUIRED_MESSAGE = '请至少选择一集。';
 const MODEL_INVALID_MESSAGE = '请选择列表中的模型。';
+const TEXT_MODEL_PURPOSE = '生成分镜脚本时';
 /** 目标模型、画幅、分辨率的字段键：保存为作品默认，不属于分镜脚本的生成参数。 */
 const TARGET_KEYS = { model: 'videoModel', aspectRatio: 'aspectRatio', resolution: 'resolution' } as const;
 const SOUND_KINDS = Object.keys(SOUND_KIND_LABELS) as SoundKind[];
@@ -118,13 +130,14 @@ function mergeOptions(lists: ReadonlyArray<readonly string[]>): string[] {
  * @param episodeId 指定时只为这一集生成（重新生成、从某集进入）；缺省时多集作品可多选。
  */
 async function createStartForm(dependencies: StoryboardFormDependencies, workId: number, episodeId: number | undefined): Promise<FormDefinition> {
-  const { works, projects, storyboards, profiles, providers, onStarted } = dependencies;
+  const { works, projects, storyboards, textModels, profiles, providers, onStarted } = dependencies;
   const work = works.getWork(workId);
   storyboards.assertCanStart(workId);
   const statuses = storyboards.listEpisodeStatuses(workId);
   if (episodeId !== undefined && !statuses.some((status) => status.episodeId === episodeId)) {
     throw new ValidationError({ [FORM_LEVEL_ERROR_KEY]: '集不存在。' });
   }
+  const textModelState = await textModels.getWorkState(workId);
   const projectStyle = projects.getProject(work.projectId).visualStyle;
   // 这一集还没有生成过时，沿用作品里其他集最近一次的参数。
   const lastParams = storyboards.getLastParams(workId, episodeId) ?? storyboards.getLastParams(workId);
@@ -161,6 +174,7 @@ async function createStartForm(dependencies: StoryboardFormDependencies, workId:
       options: [...episodeLabels.values()]
     });
   }
+  fields.push(createTextModelField(textModelState, TEXT_MODEL_PURPOSE, TEXT_MODEL_SAVED_NOTE));
   if (hasTargets) {
     fields.push(
       {
@@ -270,6 +284,7 @@ async function createStartForm(dependencies: StoryboardFormDependencies, workId:
   return {
     schema: { title, submitLabel: SUBMIT_LABEL, fields },
     initialValues: {
+      [TEXT_MODEL_FIELD_KEY]: textModelInitialValue(textModelState),
       ...(lastParams === undefined ? defaultValues(capGroupSeconds(DEFAULT_GROUP_MAX_SECONDS, defaultModel?.capability)) : paramsToValues(lastParams)),
       ...targetValues,
       ...(needsEpisodeChoice ? { episodes: JSON.stringify(defaultEpisodes) } : {})
@@ -285,11 +300,14 @@ async function createStartForm(dependencies: StoryboardFormDependencies, workId:
       } else {
         ids = episodeId === undefined ? [statuses[0].episodeId] : [episodeId];
       }
+      const textModel = readTextModelKey(textModelState, values);
       const paramValues = withoutTargetValues(values);
       const changes = hasTargets ? readTargetChanges(values, targetValues, models, normalizeStoryboardParams(paramValues)) : {};
       // 画幅留空时由服务取项目默认画幅；没有可选模型时沿用作品默认。
       const aspectRatio = hasTargets ? values[TARGET_KEYS.aspectRatio] || null : defaults.aspectRatio;
-      await storyboards.start(workId, ids, paramValues, aspectRatio);
+      await startWithWorkTextModel(textModels, workId, textModelState, textModel, async () => {
+        await storyboards.start(workId, ids, paramValues, aspectRatio);
+      });
       // 生成已启动后再保存默认参数，启动失败时不改动作品默认。
       if (Object.keys(changes).length > 0) {
         profiles.saveWorkDefaults(workId, changes);

@@ -14,19 +14,9 @@ import { normalizeWorkCreation } from '../../domain/rules/work-rules';
 import { createServiceFixture } from '../services/testing/service-fixture';
 import { DUPLICATE_WORK_NAME_MESSAGE } from '../services/work-service';
 import { FormDefinition } from './form-definition';
-import { WorkTextModelState } from '../services/text-settings-service';
-import { WORK_FORM_NAMES, WorkTextModels, createWorkFormCatalog } from './work-form';
+import { DEFAULT_TEXT_MODEL_OPTION, createFakeTextModels } from './testing/fake-text-models';
+import { WORK_FORM_NAMES, createWorkFormCatalog } from './work-form';
 
-const TEXT_MODEL_STATE: WorkTextModelState = {
-  choices: [
-    { key: 'copilot:', label: 'Copilot · 自动' },
-    { key: 'model:fake/fake-text', label: '假服务商 · 假文本模型' }
-  ],
-  defaultLabel: 'Copilot · 自动',
-  selectedKey: null,
-  unavailableHint: null
-};
-const DEFAULT_TEXT_MODEL_OPTION = '沿用默认（Copilot · 自动）';
 const UNAVAILABLE_HINT = '原选择的文本模型已不可用，当前将使用“Copilot · 自动”。';
 
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
@@ -48,17 +38,7 @@ async function submit(form: FormDefinition, values: Record<string, string>): Pro
 function createFixture() {
   const fixture = createServiceFixture();
   const started: number[] = [];
-  const savedTextModels = new Map<number, string | null>();
-  /** 作品原选择的模型已不可用时的提示：键为作品标识。 */
-  const unavailableHints = new Map<number, string>();
-  const textModels: WorkTextModels = {
-    getWorkState: async (workId) => ({
-      ...TEXT_MODEL_STATE,
-      selectedKey: workId === null ? null : (savedTextModels.get(workId) ?? null),
-      unavailableHint: workId === null ? null : (unavailableHints.get(workId) ?? null)
-    }),
-    setWorkModel: (workId, key) => savedTextModels.set(workId, key)
-  };
+  const { textModels, saved: savedTextModels, unavailableHints } = createFakeTextModels();
   const catalog = createWorkFormCatalog({
     projects: fixture.projects,
     works: fixture.works,
@@ -211,6 +191,8 @@ test('重新生成：只有生成参数字段，初始值为上次参数，提�
     assert.equal(form.initialValues.genre, '悬疑');
     assert.equal(form.initialValues.chapterMaxWords, '200');
     assert.equal(form.initialValues.idea, '一个关于灯塔的故事');
+    assert.equal(form.schema.fields[0].key, 'textModel');
+    assert.equal(form.initialValues.textModel, DEFAULT_TEXT_MODEL_OPTION);
 
     await form.submit({ ...form.initialValues, genre: '科幻' });
     await runner.whenIdle();
@@ -367,7 +349,7 @@ test('文本模型字段：新建时选项是“沿用默认”加全部候选�
   }
 });
 
-test('文本模型字段：编辑时初始值是作品当前的选择，修改后保存，改回“沿用默认”则清除；重新生成表单没有这个字段', async () => {
+test('文本模型字段：编辑时初始值是作品当前的选择，修改后保存，改回“沿用默认”则清除', async () => {
   const fixture = createFixture();
   try {
     const work = addWork(fixture, '作品甲');
@@ -380,15 +362,35 @@ test('文本模型字段：编辑时初始值是作品当前的选择，修改�
     await form.submit({ workName: '作品甲', kind: '单个短视频', textModel: DEFAULT_TEXT_MODEL_OPTION });
     assert.equal(fixture.savedTextModels.get(work.id), null);
     await assert.rejects(() => submit(form, { workName: '作品甲', kind: '单个短视频', textModel: '不存在' }), ValidationError);
-
-    const regenerate = await fixture.open(WORK_FORM_NAMES.regenerate, { workId: work.id });
-    assert.ok(!regenerate.schema.fields.some((field) => field.key === 'textModel'));
   } finally {
     fixture.database.close();
   }
 });
 
-test('文本模型失效提示：编辑与重新生成表单提示原选择已不可用及当前使用的模型，没有失效时不提示，重新生成不新增字段', async () => {
+test('文本模型字段：重新生成时初始值是作品当前的选择，所选模型保存为作品的选择，没能启动时恢复原选择', async () => {
+  const fixture = createFixture();
+  try {
+    const work = addWork(fixture, '作品甲');
+    fixture.savedTextModels.set(work.id, 'copilot:');
+    const form = await fixture.open(WORK_FORM_NAMES.regenerate, { workId: work.id });
+    assert.equal(form.initialValues.textModel, 'Copilot · 自动');
+
+    await form.submit({ ...form.initialValues, ...VALID_VALUES, textModel: '假服务商 · 假文本模型' });
+    await fixture.runner.whenIdle();
+    assert.equal(fixture.savedTextModels.get(work.id), 'model:fake/fake-text');
+
+    await assert.rejects(() => submit(form, { ...form.initialValues, textModel: '已被停用的模型' }), (error) => error instanceof ValidationError && Boolean(error.fieldErrors.textModel));
+    assert.equal(fixture.savedTextModels.get(work.id), 'model:fake/fake-text', '选项无效时不改动作品的选择');
+
+    // 参数无效、没能启动生成：作品保持原选择。
+    await assert.rejects(() => submit(form, { ...form.initialValues, chapterMinWords: '0', textModel: DEFAULT_TEXT_MODEL_OPTION }), ValidationError);
+    assert.equal(fixture.savedTextModels.get(work.id), 'model:fake/fake-text');
+  } finally {
+    fixture.database.close();
+  }
+});
+
+test('文本模型失效提示：编辑与重新生成表单提示原选择已不可用及当前使用的模型，没有失效时不提示', async () => {
   const fixture = createFixture();
   try {
     const work = addWork(fixture, '作品甲');
@@ -398,17 +400,14 @@ test('文本模型失效提示：编辑与重新生成表单提示原选择已�
     const normalEdit = await fixture.open(WORK_FORM_NAMES.edit, { workId: work.id });
     const normalRegenerate = await fixture.open(WORK_FORM_NAMES.regenerate, { workId: work.id });
     assert.ok(!descriptionOf(normalEdit, 'textModel').includes('已不可用'));
-    assert.ok(!normalRegenerate.schema.fields.some((field) => field.description.includes('已不可用')));
+    assert.ok(!descriptionOf(normalRegenerate, 'textModel').includes('已不可用'));
 
     fixture.unavailableHints.set(work.id, UNAVAILABLE_HINT);
     const edit = await fixture.open(WORK_FORM_NAMES.edit, { workId: work.id });
     assert.ok(descriptionOf(edit, 'textModel').endsWith(UNAVAILABLE_HINT));
 
     const regenerate = await fixture.open(WORK_FORM_NAMES.regenerate, { workId: work.id });
-    const baseline = normalRegenerate.schema.fields;
-    assert.deepEqual(regenerate.schema.fields.map((field) => field.key), baseline.map((field) => field.key), '只提示，不新增字段');
-    assert.ok(regenerate.schema.fields[0].description.startsWith(UNAVAILABLE_HINT));
-    assert.deepEqual(regenerate.schema.fields.slice(1), baseline.slice(1));
+    assert.ok(descriptionOf(regenerate, 'textModel').endsWith(UNAVAILABLE_HINT));
   } finally {
     fixture.database.close();
   }

@@ -4,7 +4,7 @@
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
-// 备注：类型由入口决定、创建后不能修改，资产不属于项目；文件来源由入口参数 fileSource 决定（缺省为生成）：上传表单只有名称、分类、必填的文件（音频另有类型、描述、语言），没有提示词按钮；生成表单没有文件字段；编辑时可用 fileSource=upload 打开上传表单，保存后资产改用上传；字段约束取自领域规则常量，保证界面与宿主校验一致；表单引擎不支持字段联动和折叠，风格留空表示不指定风格，语言仅对音色参考有效；“所属分类”是下拉，选项为该类型已有的分类名称，不选（空串）表示不分类，提交时由分类服务解析为分类标识（null 为不分类）；提交按钮区分“仅保存”与“保存并生成提示词”，后者在保存后启动后台提示词生成；从实体新建（参数带 episodeId、entityId）时按实体设定预填，画面风格预填为作品所在项目的视觉风格，保存后自动绑定为形象。
+// 备注：类型由入口决定、创建后不能修改，资产不属于项目；文件来源由入口参数 fileSource 决定（缺省为生成）：上传表单只有名称、分类、必填的文件（音频另有类型、描述、语言），没有提示词按钮；生成表单没有文件字段；编辑时可用 fileSource=upload 打开上传表单，保存后资产改用上传；字段约束取自领域规则常量，保证界面与宿主校验一致；表单引擎不支持字段联动和折叠，风格留空表示不指定风格，语言仅对音色参考有效；“所属分类”是下拉，选项为该类型已有的分类名称，不选（空串）表示不分类，提交时由分类服务解析为分类标识（null 为不分类）；提交按钮区分“仅保存”与“保存并生成提示词”，后者在保存后启动后台提示词生成；生成来源的表单带文本模型下拉（上传来源没有提示词生成，不带），所选模型只对本次生成提示词有效；从实体新建（参数带 episodeId、entityId）时按实体设定预填，画面风格预填为作品所在项目的视觉风格，保存后自动绑定为形象。
 // ------------------------------------------------------------------------
 
 import { FORM_LEVEL_ERROR_KEY, ValidationError } from '../../domain/errors';
@@ -42,8 +42,10 @@ import { AssetService, DUPLICATE_ASSET_NAME_MESSAGE } from '../services/asset-se
 import { ASSET_CATEGORY_FIELD_KEY, AssetCategoryService } from '../services/asset-category-service';
 import { AssetPromptService } from '../services/asset-prompt-service';
 import { ProjectService } from '../services/project-service';
-import { SyncFormCatalog, FormDefinition, FormFactory, FormValues } from './form-definition';
+import { WorkTextModelState } from '../services/text-settings-service';
+import { AsyncFormFactory, FormCatalog, FormDefinition, FormFactory, FormValues } from './form-definition';
 import { FormFieldSchema, FormSubmitActionSchema } from './form-schema';
+import { TEXT_MODEL_FIELD_KEY, TextModelStates, createTextModelField, readTextModelKey, textModelInitialValue } from './text-model-field';
 import { ASSET_PROMPT_FORM_NAME, createAssetPromptForm } from './asset-prompt-form';
 
 /** 资产表单在表单目录中的名称，页面据此请求打开。 */
@@ -65,6 +67,10 @@ const PROMPT_RUNNING_MESSAGE = '提示词正在生成中，完成后再重新生
 const MEGABYTE = 1024 * 1024;
 /** 参考图以外的长文本描述最多长到的行数。 */
 const ATTRIBUTE_MAX_ROWS = 4;
+
+/** 文本模型字段说明里的用途与限定：资产没有所属作品，选择只对本次生成提示词有效。 */
+const TEXT_MODEL_PURPOSE = '生成提示词时';
+const TEXT_MODEL_NOTE = '；仅对本次生成有效，“仅创建”“仅保存”不会用到';
 
 /** 所属分类下拉里表示“不分类”的文字：选项为空值时显示，提交的值为空串。 */
 const NO_CATEGORY_LABEL = '不分类';
@@ -344,6 +350,8 @@ export interface AssetFormDependencies {
   readonly projects: ProjectService;
   readonly assets: AssetService;
   readonly prompts: AssetPromptService;
+  /** 读取文本模型的候选，生成提示词时可以手动选择本次使用的模型。 */
+  readonly textModels: TextModelStates;
   /** 读取所属分类的选项，并把表单选择的分类名称解析为分类标识。 */
   readonly categories: AssetCategoryService;
   /** 从实体新建资产时读取实体设定并绑定；不支持从实体新建的页面可以不传。 */
@@ -356,11 +364,31 @@ export interface AssetEntitySource {
   bind(rawInput: unknown): unknown;
 }
 
+/** 读取文本模型选择状态；上传来源的表单没有提示词生成，不需要。 */
+async function loadTextModelState(textModels: TextModelStates, isUpload: boolean): Promise<WorkTextModelState | undefined> {
+  return isUpload ? undefined : textModels.getWorkState(null);
+}
+
+/** 生成来源的表单带文本模型下拉；上传来源的表单没有。 */
+function createTextModelFields(state: WorkTextModelState | undefined): FormFieldSchema[] {
+  return state === undefined ? [] : [createTextModelField(state, TEXT_MODEL_PURPOSE, TEXT_MODEL_NOTE)];
+}
+
+/** 文本模型字段的初始值；没有该字段时为空。 */
+function textModelValues(state: WorkTextModelState | undefined): FormValues {
+  return state === undefined ? {} : { [TEXT_MODEL_FIELD_KEY]: textModelInitialValue(state) };
+}
+
+/** 读取本次生成提示词所选的文本模型键；“沿用默认”为 null。 */
+function readStateTextModelKey(state: WorkTextModelState | undefined, values: FormValues): string | null {
+  return state === undefined ? null : readTextModelKey(state, values);
+}
+
 /**
  * 创建“新建资产”表单的定义。
  * @param params `{ kind, fileSource? }`（fileSource 为 upload 打开上传表单，缺省为生成）；或 `{ episodeId, entityId }`，从实体预填并在保存后绑定。
  */
-function createNewAssetForm(dependencies: AssetFormDependencies, params: unknown): FormDefinition {
+async function createNewAssetForm(dependencies: AssetFormDependencies, params: unknown): Promise<FormDefinition> {
   const source = readRecord(params ?? {});
   if (source.entityId !== undefined) {
     return createEntityAssetForm(dependencies, source);
@@ -369,25 +397,27 @@ function createNewAssetForm(dependencies: AssetFormDependencies, params: unknown
   const kind = readAssetKind(source.kind);
   const fileSource = readFileSource(source.fileSource);
   const isUpload = fileSource === 'upload';
+  const textModelState = await loadTextModelState(dependencies.textModels, isUpload);
   return {
     schema: {
       title: isUpload ? createUploadTitle(kind) : `新建${ASSET_KIND_LABELS[kind]}`,
       submitLabel: isUpload ? UPLOAD_SUBMIT_LABELS.create : CREATE_SUBMIT_ACTIONS[1].label,
-      fields: createFields(kind, categories, fileSource),
+      fields: [...createFields(kind, categories, fileSource), ...createTextModelFields(textModelState)],
       ...(isUpload ? {} : { submitActions: CREATE_SUBMIT_ACTIONS })
     },
-    initialValues: kind === 'audio' ? { audioKind: AUDIO_KIND_LABELS.voice } : {},
+    initialValues: { ...(kind === 'audio' ? { audioKind: AUDIO_KIND_LABELS.voice } : {}), ...textModelValues(textModelState) },
     checkField: (key, value) => (key === 'name' && !assets.isNameAvailable(kind, value) ? DUPLICATE_ASSET_NAME_MESSAGE : undefined),
     submit: (values, submitKey) => {
       // 先解析所属分类、检查信息是否足够生成提示词，避免保存了资产却无法生成。
       const categoryId = categories.resolveCategoryId(kind, values[ASSET_CATEGORY_FIELD_KEY] ?? '');
       const generate = submitKey === ASSET_SUBMIT_KEYS.createAndPrompt;
+      const textModel = generate ? readStateTextModelKey(textModelState, values) : null;
       if (generate) {
         prompts.assertCanGenerate(kind, values, false);
       }
       const asset = assets.createAsset(kind, values, { categoryId, fileSource });
       if (generate) {
-        prompts.start(asset.id);
+        prompts.start(asset.id, textModel);
       }
     }
   };
@@ -397,7 +427,7 @@ function createNewAssetForm(dependencies: AssetFormDependencies, params: unknown
  * 创建“从实体新建资产”表单的定义：类型与实体相同，画面风格预填为作品所在项目的视觉风格，保存后绑定为该实体的形象。
  * @param source `{ episodeId, entityId }`。
  */
-function createEntityAssetForm(dependencies: AssetFormDependencies, source: Record<string, unknown>): FormDefinition {
+async function createEntityAssetForm(dependencies: AssetFormDependencies, source: Record<string, unknown>): Promise<FormDefinition> {
   const { projects, assets, categories, entities } = dependencies;
   if (entities === undefined) {
     throw new ValidationError({ [FORM_LEVEL_ERROR_KEY]: '当前页面不支持从实体新建资产。' });
@@ -407,18 +437,20 @@ function createEntityAssetForm(dependencies: AssetFormDependencies, source: Reco
   const entity = entities.getEntityDetail(episodeId, entityId);
   const kind: AssetKind = entity.kind;
   const projectStyle = projects.getProject(entity.projectId).visualStyle;
+  const textModelState = await loadTextModelState(dependencies.textModels, false);
   return {
     schema: {
       title: `新建${ASSET_KIND_LABELS[kind]}`,
       submitLabel: CREATE_SUBMIT_ACTIONS[1].label,
-      fields: createFields(kind, categories, 'generated'),
+      fields: [...createFields(kind, categories, 'generated'), ...createTextModelFields(textModelState)],
       submitActions: CREATE_SUBMIT_ACTIONS
     },
-    initialValues: { ...(projectStyle === null ? {} : { style: projectStyle }), ...buildAssetPrefill(entity) },
+    initialValues: { ...(projectStyle === null ? {} : { style: projectStyle }), ...buildAssetPrefill(entity), ...textModelValues(textModelState) },
     checkField: (key, value) => (key === 'name' && !assets.isNameAvailable(kind, value) ? DUPLICATE_ASSET_NAME_MESSAGE : undefined),
     submit: (values, submitKey) => {
       const categoryId = categories.resolveCategoryId(kind, values[ASSET_CATEGORY_FIELD_KEY] ?? '');
       const generate = submitKey === ASSET_SUBMIT_KEYS.createAndPrompt;
+      const textModel = generate ? readStateTextModelKey(textModelState, values) : null;
       if (generate) {
         dependencies.prompts.assertCanGenerate(kind, values, false);
       }
@@ -431,7 +463,7 @@ function createEntityAssetForm(dependencies: AssetFormDependencies, source: Reco
         throw error;
       }
       if (generate) {
-        dependencies.prompts.start(asset.id);
+        dependencies.prompts.start(asset.id, textModel);
       }
     }
   };
@@ -441,34 +473,32 @@ function createEntityAssetForm(dependencies: AssetFormDependencies, source: Reco
  * 创建“编辑资产”表单的定义；类型不能修改，所属分类已被删除时显示为不分类。
  * @param fileSource 表单对应的文件来源：缺省取资产当前的来源；传 upload 且资产当前使用生成时，保存后资产改用上传。
  */
-function createEditAssetForm(
-  assets: AssetService,
-  prompts: AssetPromptService,
-  categories: AssetCategoryService,
-  assetId: number,
-  fileSource: AssetFileSource | undefined
-): FormDefinition {
+async function createEditAssetForm(dependencies: AssetFormDependencies, assetId: number, fileSource: AssetFileSource | undefined): Promise<FormDefinition> {
+  const { assets, prompts, categories } = dependencies;
   const asset = assets.getAsset(assetId);
   const mode = fileSource ?? asset.fileSource;
   const isUpload = mode === 'upload';
+  const textModelState = await loadTextModelState(dependencies.textModels, isUpload);
   const editActions = createEditSubmitActions(hasPrompt(asset));
   const categoryName = asset.categoryId === null ? '' : categories.getCategory(asset.categoryId).name;
   return {
     schema: {
       title: isUpload ? createUploadTitle(asset.kind) : `编辑${ASSET_KIND_LABELS[asset.kind]}`,
       submitLabel: isUpload ? UPLOAD_SUBMIT_LABELS.save : editActions[1].label,
-      fields: createFields(asset.kind, categories, mode),
+      fields: [...createFields(asset.kind, categories, mode), ...createTextModelFields(textModelState)],
       ...(isUpload ? {} : { submitActions: editActions })
     },
     initialValues: {
       ...toFormValues(asset, mode, isUpload ? assets.getUploadFiles(assetId) : []),
-      [ASSET_CATEGORY_FIELD_KEY]: categoryName
+      [ASSET_CATEGORY_FIELD_KEY]: categoryName,
+      ...textModelValues(textModelState)
     },
     checkField: (key, value) =>
       key === 'name' && !assets.isNameAvailable(asset.kind, value, asset.id) ? DUPLICATE_ASSET_NAME_MESSAGE : undefined,
     submit: (values, submitKey) => {
       const categoryId = categories.resolveCategoryId(asset.kind, values[ASSET_CATEGORY_FIELD_KEY] ?? '');
       const regenerate = submitKey === ASSET_SUBMIT_KEYS.saveAndPrompt;
+      const textModel = regenerate ? readStateTextModelKey(textModelState, values) : null;
       if (regenerate) {
         if (assets.getAsset(asset.id).promptStatus === 'running') {
           throw new ValidationError({ [FORM_LEVEL_ERROR_KEY]: PROMPT_RUNNING_MESSAGE });
@@ -478,7 +508,7 @@ function createEditAssetForm(
       }
       assets.updateAsset(asset.id, values, { categoryId, fileSource: mode });
       if (regenerate) {
-        prompts.start(asset.id);
+        prompts.start(asset.id, textModel);
       }
     }
   };
@@ -488,20 +518,27 @@ function createEditAssetForm(
  * 创建资产表单目录：新建的参数为 `{ kind, fileSource? }` 或 `{ episodeId, entityId }`（从实体新建），编辑的参数为 `{ assetId, fileSource? }`。
  * @param dependencies 项目、资产、分类与提示词生成服务，以及可选的实体来源。
  */
-export function createAssetFormCatalog(dependencies: AssetFormDependencies): SyncFormCatalog {
-  return new Map<string, FormFactory>([
+export function createAssetFormCatalog(dependencies: AssetFormDependencies): FormCatalog {
+  return new Map<string, FormFactory | AsyncFormFactory>([
     [ASSET_FORM_NAMES.create, (params) => createNewAssetForm(dependencies, params)],
     [
       ASSET_FORM_NAMES.edit,
       (params) =>
         createEditAssetForm(
-          dependencies.assets,
-          dependencies.prompts,
-          dependencies.categories,
+          dependencies,
           readEntityId({ id: readRecord(params ?? {}).assetId }, '资产'),
           readOptionalFileSource(readRecord(params ?? {}).fileSource)
         )
     ],
-    [ASSET_FORM_NAMES.prompt, (params) => createAssetPromptForm(dependencies.assets, dependencies.prompts, readEntityId({ id: readRecord(params ?? {}).assetId }, '资产'))]
+    [
+      ASSET_FORM_NAMES.prompt,
+      (params) =>
+        createAssetPromptForm(
+          dependencies.assets,
+          dependencies.prompts,
+          dependencies.textModels,
+          readEntityId({ id: readRecord(params ?? {}).assetId }, '资产')
+        )
+    ]
   ]);
 }

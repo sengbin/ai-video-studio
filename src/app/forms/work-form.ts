@@ -4,7 +4,7 @@
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-09-30
-// 备注：素材来源由入口决定，所属项目在新建表单里选择（入口可传默认项目）；提交时先校验全部字段，创建作品后再启动生成，启动失败会撤销刚创建的作品，让用户可以直接重试；作品原先单独选择的文本模型已不可用时，在文本模型字段（新建、编辑）的说明里提示，重新生成表单没有该字段，提示放在第一个字段的说明前。
+// 备注：素材来源由入口决定，所属项目在新建表单里选择（入口可传默认项目）；提交时先校验全部字段，创建作品后再启动生成，启动失败会撤销刚创建的作品，让用户可以直接重试；作品原先单独选择的文本模型已不可用时，在文本模型字段的说明里提示，重新生成表单同样有该字段，选择会保存为作品的文本模型，启动失败时恢复原选择。
 // ------------------------------------------------------------------------
 
 import { FORM_LEVEL_ERROR_KEY, ValidationError } from '../../domain/errors';
@@ -43,6 +43,15 @@ import { WorkTextModelState } from '../services/text-settings-service';
 import { DUPLICATE_WORK_NAME_MESSAGE, WorkService } from '../services/work-service';
 import { AsyncFormFactory, FormCatalog, FormDefinition, FormFactory, FormValues } from './form-definition';
 import { FormFieldSchema } from './form-schema';
+import {
+  TEXT_MODEL_FIELD_KEY,
+  TEXT_MODEL_SAVED_NOTE,
+  WorkTextModels,
+  createTextModelField,
+  readTextModelKey,
+  startWithWorkTextModel,
+  textModelInitialValue
+} from './text-model-field';
 
 /** 作品表单在表单目录中的名称，页面据此请求打开。 */
 export const WORK_FORM_NAMES = {
@@ -50,12 +59,6 @@ export const WORK_FORM_NAMES = {
   regenerate: 'work.regenerate',
   edit: 'work.edit'
 } as const;
-
-/** 作品表单对文本模型选择的需求：读取候选与当前选择，保存或清除作品的选择。 */
-export interface WorkTextModels {
-  getWorkState(workId: number | null): Promise<WorkTextModelState>;
-  setWorkModel(workId: number, modelKey: string | null): void;
-}
 
 /** 创意表单依赖的服务与回调。 */
 export interface WorkFormDependencies {
@@ -77,10 +80,8 @@ const PROJECT_FIELD_KEY = 'projectName';
 const NO_PROJECT_MESSAGE = '还没有项目，请先在“所有项目”中创建项目。';
 const PROJECT_REQUIRED_MESSAGE = '请选择所属项目。';
 const KIND_LOCKED_NOTE = '；剧本已确认，作品形态不能再修改';
-/** 文本模型字段的键。 */
-const TEXT_MODEL_FIELD_KEY = 'textModel';
-const TEXT_MODEL_UNAVAILABLE_MESSAGE = '所选文本模型已不可用，请重新选择。';
-const TEXT_MODEL_DESCRIPTION = '生成创意、剧本、分镜脚本时使用的模型；“沿用默认”使用“模型设置”中的默认文本模型，已关闭或停用的模型不在列表中';
+/** 文本模型字段说明里的用途：作品的文本模型用于创意、剧本、分镜脚本的生成。 */
+const TEXT_MODEL_PURPOSE = '生成创意、剧本、分镜脚本时';
 /** 创作主题或灵感是主要输入，多行文本最多长到 8 行。 */
 const IDEA_MAX_ROWS = 8;
 
@@ -314,54 +315,6 @@ function collectFieldErrors(checks: ReadonlyArray<() => void>): void {
   }
 }
 
-/** 文本模型字段的选项：第一项“沿用默认”，其后是全部可选的文本模型；选项文字就是字段值。 */
-function createTextModelField(state: WorkTextModelState): FormFieldSchema {
-  return {
-    key: TEXT_MODEL_FIELD_KEY,
-    label: '文本模型',
-    description: state.unavailableHint === null ? TEXT_MODEL_DESCRIPTION : `${TEXT_MODEL_DESCRIPTION}。${state.unavailableHint}`,
-    control: 'select',
-    required: true,
-    options: [defaultTextModelOption(state), ...state.choices.map((choice) => choice.label)]
-  };
-}
-
-/** 重新生成表单没有文本模型字段：作品原选择的模型已不可用时，把提示放在第一个字段的说明前，不新增字段。 */
-function withTextModelNotice(fields: readonly FormFieldSchema[], notice: string | null): FormFieldSchema[] {
-  if (notice === null) {
-    return [...fields];
-  }
-  const [first, ...rest] = fields;
-  return [{ ...first, description: `${notice}${first.description}` }, ...rest];
-}
-
-/** “沿用默认”选项的文字，带上当前默认模型的名称。 */
-function defaultTextModelOption(state: WorkTextModelState): string {
-  return `沿用默认（${state.defaultLabel ?? '没有可用的文本模型'}）`;
-}
-
-/** 文本模型字段的初始值：作品单独选择且仍可用的模型，否则是“沿用默认”。 */
-function textModelInitialValue(state: WorkTextModelState): string {
-  const selected = state.choices.find((choice) => choice.key === state.selectedKey);
-  return selected === undefined ? defaultTextModelOption(state) : selected.label;
-}
-
-/**
- * 把表单里的文本模型字段值转换为模型键。
- * @returns 模型键；“沿用默认”为 null。
- * @throws ValidationError 所选模型已不在候选列表中。
- */
-function readTextModelKey(state: WorkTextModelState, value: string | undefined): string | null {
-  if (value === undefined || value === '' || value === defaultTextModelOption(state)) {
-    return null;
-  }
-  const chosen = state.choices.find((choice) => choice.label === value);
-  if (chosen === undefined) {
-    throw new ValidationError({ [TEXT_MODEL_FIELD_KEY]: TEXT_MODEL_UNAVAILABLE_MESSAGE });
-  }
-  return chosen.key;
-}
-
 /**
  * 创建“新建作品并生成”表单的定义。
  * @param dependencies 服务与回调。
@@ -383,7 +336,7 @@ function createNewWorkForm(
       submitLabel: SUBMIT_LABEL_CREATE,
       fields: [
         ...createWorkFields(sourceType, projects.map((project) => project.name)),
-        createTextModelField(textModelState),
+        createTextModelField(textModelState, TEXT_MODEL_PURPOSE),
         ...createParamFields(sourceType)
       ]
     },
@@ -403,7 +356,7 @@ function createNewWorkForm(
           parsed.creation = normalizeWorkCreation(values, sourceType);
         },
         () => {
-          parsed.textModel = readTextModelKey(textModelState, values[TEXT_MODEL_FIELD_KEY]);
+          parsed.textModel = readTextModelKey(textModelState, values);
         },
         () => {
           parsed.params = normalizeCreativeParams(values);
@@ -432,21 +385,28 @@ function createNewWorkForm(
  * 创建“重新生成创意”表单的定义：作品与素材沿用，只调整生成参数；初始值为上次使用的参数。
  * @param dependencies 服务与回调。
  * @param workId 作品标识。
- * @param textModelState 作品的文本模型选择状态，只用来提示原选择的模型是否已不可用。
+ * @param textModelState 作品的文本模型选择状态，用于文本模型字段的选项与初始值。
  */
 function createRegenerateForm(dependencies: WorkFormDependencies, workId: number, textModelState: WorkTextModelState): FormDefinition {
-  const { works, stages, onStarted } = dependencies;
+  const { works, stages, textModels, onStarted } = dependencies;
   const work = works.getWork(workId);
   const lastParams = stages.getLastCreativeParams(workId);
   return {
     schema: {
       title: `重新生成创意：${work.name}`,
       submitLabel: SUBMIT_LABEL_REGENERATE,
-      fields: withTextModelNotice(createParamFields(work.sourceType), textModelState.unavailableHint)
+      fields: [createTextModelField(textModelState, TEXT_MODEL_PURPOSE, TEXT_MODEL_SAVED_NOTE), ...createParamFields(work.sourceType)]
     },
-    initialValues: lastParams === undefined ? DEFAULT_PARAM_VALUES : paramsToValues(lastParams),
+    initialValues: {
+      [TEXT_MODEL_FIELD_KEY]: textModelInitialValue(textModelState),
+      ...(lastParams === undefined ? DEFAULT_PARAM_VALUES : paramsToValues(lastParams))
+    },
     submit: async (values) => {
-      await stages.startCreative(workId, normalizeCreativeParams(values));
+      const params = normalizeCreativeParams(values);
+      const textModel = readTextModelKey(textModelState, values);
+      await startWithWorkTextModel(textModels, workId, textModelState, textModel, async () => {
+        await stages.startCreative(workId, params);
+      });
       onStarted(workId);
     }
   };
@@ -463,7 +423,7 @@ function createEditWorkForm(dependencies: WorkFormDependencies, workId: number, 
   const canChangeKind = works.canChangeKind(workId);
   const hasImages = work.sourceType === 'image';
   const fields: FormFieldSchema[] = canChangeKind ? [createNameField(true), createKindField()] : [createNameField(true, KIND_LOCKED_NOTE)];
-  fields.push(createTextModelField(textModelState));
+  fields.push(createTextModelField(textModelState, TEXT_MODEL_PURPOSE));
   if (hasImages) {
     fields.push(createImageField());
   }
@@ -482,7 +442,7 @@ function createEditWorkForm(dependencies: WorkFormDependencies, workId: number, 
     checkField: (key, value) =>
       key === 'workName' && !works.isWorkNameAvailable(work.projectId, value, work.id) ? DUPLICATE_WORK_NAME_MESSAGE : undefined,
     submit: (values) => {
-      const textModel = readTextModelKey(textModelState, values[TEXT_MODEL_FIELD_KEY]);
+      const textModel = readTextModelKey(textModelState, values);
       works.updateWork(work.id, values);
       textModels.setWorkModel(work.id, textModel);
     }
