@@ -1155,7 +1155,7 @@ const REQUEST_GROUP_VERSIONS = 'workbench.groupVersions';
     toolbarElement = aiUi.h('div', { class: 'wb-toolbar' });
     document.getElementById('page-toolbar').append(toolbarElement);
     messageElement = aiUi.h('p', { class: 'wb-message', hidden: true, attrs: { role: 'status' } });
-    contentElement = aiUi.h('div');
+    contentElement = aiUi.h('div', { class: 'wb-content' });
     root.append(messageElement, contentElement);
     // 检查器的两个面板创建一次，之后只在页签之间切换显示。
     bindingsPanel = aiBindings.create();

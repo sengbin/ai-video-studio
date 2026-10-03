@@ -791,3 +791,56 @@
     margin: 12px 0 0;
   }
 }
+
+/* 宽屏：页面不出现整页滚动条，页面撑满窗口高度，镜头组栏、中栏详情、检查器面板和队列各自在内部滚动；窄屏沿用整页纵向排列 */
+@media (min-width: 900px) {
+  html,
+  body {
+    height: 100%;
+  }
+
+  body {
+    display: flex;
+    flex-direction: column;
+    overflow: auto;
+  }
+
+  #app,
+  .wb-content {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  .wb-layout {
+    flex: 1 1 auto;
+    align-items: stretch;
+    min-height: 240px;
+    margin-bottom: 0;
+  }
+
+  .wb-tree,
+  .wb-inspector {
+    position: static;
+    max-height: none;
+  }
+
+  .wb-rail {
+    align-self: flex-start;
+  }
+
+  .wb-main {
+    min-height: 0;
+    overflow-y: auto;
+  }
+
+  .wb-queue {
+    flex: 0 0 auto;
+  }
+
+  .wb-queue__panel {
+    max-height: 30vh;
+    overflow-y: auto;
+  }
+}
