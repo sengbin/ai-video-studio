@@ -2,7 +2,7 @@
   "name": "aigc-video-studio",
   "displayName": "AIGC Video Studio",
   "description": "在 VS Code 中完成 AIGC 视频创作：剧本、分镜、素材与视频生成。",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "icon": "resources/logo.png",
   "publisher": "chengbin",
   "license": "Apache-2.0",
