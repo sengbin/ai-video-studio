@@ -4,6 +4,14 @@
 
 文字内容（创意、剧本、分镜、资产提示词）默认由 **GitHub Copilot** 生成，也可以改用 **千问AI平台** 的文本模型；图片、音频和视频由 **千问AI平台** 的模型生成。每一步的产出都先进入“待确认”，由你检查、修改后再确认采用，确认后才会被下一步使用。
 
+## 界面预览
+
+<p align="center"><img src="https://raw.githubusercontent.com/sengbin/aigc-video-studio/main/readme-images/view1.png" alt="剧本内容与确认状态" width="420"></p>
+
+<p align="center"><img src="https://raw.githubusercontent.com/sengbin/aigc-video-studio/main/readme-images/view2.png" alt="分镜脚本与确认状态" width="420"></p>
+
+<p align="center"><img src="https://raw.githubusercontent.com/sengbin/aigc-video-studio/main/readme-images/view3.png" alt="VS Code 编辑器界面" width="420"></p>
+
 ## 功能一览
 
 | 功能 | 说明 |
