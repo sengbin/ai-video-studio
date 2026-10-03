@@ -48,5 +48,6 @@ export function registerSettingsHandlers(router: MessageRouter, services: Settin
   router.register(SETTINGS_REQUESTS.providerSetKey, async (payload) => ({ provider: await services.providers.setApiKey(payload) }));
   router.register(SETTINGS_REQUESTS.providerClearKey, async (payload) => ({ provider: await services.providers.clearApiKey(payload) }));
   router.register(SETTINGS_REQUESTS.providerTestConnection, (payload) => services.providers.testConnection(payload));
-  router.register(SETTINGS_REQUESTS.modelSetEnabled, async (payload) => ({ provider: await services.providers.setModelEnabled(payload) }));
+  // 文本模型的启用与 Copilot 二选一，由文本设置服务统一处理；其他类型的模型交给服务商服务。
+  router.register(SETTINGS_REQUESTS.modelSetEnabled, async (payload) => ({ provider: await services.text.setModelEnabled(payload) }));
 }

@@ -438,15 +438,18 @@ test('剧本包结构快照默认为空对象且必须是合法 JSON；模型类
     database
       .prepare("INSERT INTO models (provider_id, code, display_name, kind, created_at) VALUES (1, 'i1', '图像', 'image', ?)")
       .run(NOW);
+    database
+      .prepare("INSERT INTO models (provider_id, code, display_name, kind, created_at) VALUES (1, 't1', '文本', 'text', ?)")
+      .run(NOW);
     assert.throws(() =>
       database
-        .prepare("INSERT INTO models (provider_id, code, display_name, kind, created_at) VALUES (1, 'x1', '未知', 'text', ?)")
+        .prepare("INSERT INTO models (provider_id, code, display_name, kind, created_at) VALUES (1, 'x1', '未知', 'unknown', ?)")
         .run(NOW)
     );
     const kinds = database.prepare('SELECT kind FROM models ORDER BY id').all() as { kind: string }[];
     assert.deepEqual(
       kinds.map((row) => row.kind),
-      ['video', 'image']
+      ['video', 'image', 'text']
     );
   } finally {
     database.close();
@@ -763,6 +766,32 @@ test('迁移 016：生成参数新增负向清单与提示词改写列，已有�
     profiles.save({ scope: 'episode', episodeId }, episode, NOW);
     assert.deepEqual(profiles.find({ scope: 'episode', episodeId }), episode, '空串与 null 不混淆');
     assert.throws(() => database.prepare("UPDATE generation_profiles SET prompt_extend = 2 WHERE scope = 'work'").run());
+  } finally {
+    database.close();
+  }
+});
+test('迁移 017：模型类型新增文本，已有模型与引用它的生成参数原样保留，外键约束仍然有效', () => {
+  const database = new DatabaseSync(IN_MEMORY_DATABASE_PATH);
+  try {
+    database.exec('PRAGMA foreign_keys = ON');
+    runMigrations(database, MIGRATIONS.slice(0, 16));
+    const { workId } = seedWorkWithEpisode(database);
+    database.prepare("INSERT INTO providers (code, display_name, created_at, updated_at) VALUES ('demo', '示例', ?, ?)").run(NOW, NOW);
+    database.prepare("INSERT INTO models (provider_id, code, display_name, kind, is_enabled, created_at) VALUES (1, 'v1', '视频', 'video', 0, ?)").run(NOW);
+    database.prepare("INSERT INTO model_capabilities (model_id, capability_json, updated_at) VALUES (1, '{}', ?)").run(NOW);
+    database.prepare("INSERT INTO generation_profiles (scope, work_id, model_id, updated_at) VALUES ('work', ?, 1, ?)").run(workId, NOW);
+
+    runMigrations(database, MIGRATIONS);
+    assert.equal(readSchemaVersion(database), MIGRATIONS.length);
+    assert.deepEqual({ ...database.prepare('SELECT id, code, kind, is_enabled FROM models').get() }, { id: 1, code: 'v1', kind: 'video', is_enabled: 0 });
+    assert.equal(countRows(database, 'model_capabilities'), 1);
+    assert.deepEqual({ ...database.prepare('SELECT model_id FROM generation_profiles').get() }, { model_id: 1 });
+    assert.throws(() => database.prepare('DELETE FROM models WHERE id = 1').run(), '被生成参数引用的模型仍然不能删除');
+
+    database.prepare("INSERT INTO models (provider_id, code, display_name, kind, created_at) VALUES (1, 't1', '文本', 'text', ?)").run(NOW);
+    assert.deepEqual({ ...database.prepare("SELECT id, kind FROM models WHERE code = 't1'").get() }, { id: 2, kind: 'text' });
+    assert.throws(() => database.prepare("INSERT INTO models (provider_id, code, display_name, kind, created_at) VALUES (1, 'x1', '未知', 'unknown', ?)").run(NOW));
+    assert.throws(() => database.prepare("INSERT INTO models (provider_id, code, display_name, kind, created_at) VALUES (1, 'v1', '重复', 'video', ?)").run(NOW), '同一服务商的模型代码仍然唯一');
   } finally {
     database.close();
   }

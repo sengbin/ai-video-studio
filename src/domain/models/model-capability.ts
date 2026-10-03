@@ -1,20 +1,21 @@
 // ------------------------------------------------------------------------
 // 名称：model-capability.ts
-// 说明：模型类型（图像、音频、视频）与按类型区分的模型能力描述：画幅、分辨率、时长、首尾帧、参考素材、声音等。
+// 说明：模型类型（文本、图像、音频、视频）与按类型区分的模型能力描述：上下文、画幅、分辨率、时长、首尾帧、参考素材、声音等。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
 // 备注：字段含义与 docs/database-design.md 4.6 一致；入库的 JSON 使用 snake_case 键，转换见 rules/model-capability-rules.ts。
 // ------------------------------------------------------------------------
 
-/** 模型类型：图像、音频、视频。 */
-export const MODEL_KINDS = ['image', 'audio', 'video'] as const;
+/** 模型类型：文本、图像、音频、视频。 */
+export const MODEL_KINDS = ['text', 'image', 'audio', 'video'] as const;
 
 /** 模型类型。 */
 export type ModelKind = (typeof MODEL_KINDS)[number];
 
 /** 模型类型的显示名称。 */
 export const MODEL_KIND_LABELS: Readonly<Record<ModelKind, string>> = {
+  text: '文本',
   image: '图像',
   audio: '音频',
   video: '视频'
@@ -116,8 +117,19 @@ export interface AudioCapability {
   readonly promptMaxLength: number;
 }
 
+/** 文本模型的能力。 */
+export interface TextCapability {
+  /** 上下文窗口大小（输入与输出共用），单位为 token。 */
+  readonly contextTokens: number;
+  /** 单次回复的最大输出 token 数。 */
+  readonly maxOutputTokens: number;
+  /** 是否支持随请求发送图片。 */
+  readonly imageInput: boolean;
+}
+
 /** 模型类型对应的能力类型。 */
 export interface CapabilityByKind {
+  readonly text: TextCapability;
   readonly video: VideoCapability;
   readonly image: ImageCapability;
   readonly audio: AudioCapability;

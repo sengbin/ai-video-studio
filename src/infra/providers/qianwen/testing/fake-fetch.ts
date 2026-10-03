@@ -15,8 +15,8 @@ export interface RecordedCall {
   readonly body: Record<string, unknown> | null;
 }
 
-/** 预设响应：正常响应，或要抛出的网络错误。 */
-export type FakeResponse = { status?: number; body: unknown } | Error;
+/** 预设响应：正常响应（raw 给出时原样作为响应体，用于流式事件文本），或要抛出的网络错误。 */
+export type FakeResponse = { status?: number; body: unknown; raw?: string } | Error;
 
 /**
  * 创建按顺序返回预设响应的假 fetch。
@@ -35,7 +35,7 @@ export function createFakeFetch(responses: FakeResponse[]): { fetchFunction: typ
     const next = responses.shift();
     if (next === undefined) throw new Error('没有预设的响应');
     if (next instanceof Error) throw next;
-    return new Response(JSON.stringify(next.body), { status: next.status ?? 200 });
+    return new Response(next.raw ?? JSON.stringify(next.body), { status: next.status ?? 200 });
   }) as typeof fetch;
   return { fetchFunction, calls };
 }

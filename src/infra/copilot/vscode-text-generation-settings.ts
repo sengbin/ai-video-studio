@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：vscode-text-generation-settings.ts
-// 说明：读写 VS Code 用户设置中的文本生成设置：Copilot 模型家族、小说分段方式与每段字数上限。
+// 说明：读写 VS Code 用户设置中的文本生成设置：是否使用 Copilot、Copilot 模型家族、小说分段方式与每段字数上限。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-09-30
@@ -25,6 +25,7 @@ export class VsCodeTextGenerationSettings implements CopilotModelSettings, TextG
   read(): TextGenerationSettings {
     const configuration = vscode.workspace.getConfiguration(CONFIGURATION_SECTION);
     return normalizeTextGenerationSettings({
+      copilotEnabled: configuration.get('copilot.enabled'),
       modelFamily: configuration.get('copilot.modelFamily'),
       splitMode: configuration.get('novel.splitMode'),
       maxSegmentChars: configuration.get('novel.maxSegmentChars')
@@ -35,6 +36,9 @@ export class VsCodeTextGenerationSettings implements CopilotModelSettings, TextG
   async write(patch: TextGenerationSettingsPatch): Promise<void> {
     const configuration = vscode.workspace.getConfiguration(CONFIGURATION_SECTION);
     const target = vscode.ConfigurationTarget.Global;
+    if (patch.copilotEnabled !== undefined) {
+      await configuration.update('copilot.enabled', patch.copilotEnabled, target);
+    }
     if (patch.modelFamily !== undefined) {
       await configuration.update('copilot.modelFamily', patch.modelFamily, target);
     }
@@ -48,6 +52,11 @@ export class VsCodeTextGenerationSettings implements CopilotModelSettings, TextG
 
   getModelFamily(): string {
     return this.read().modelFamily;
+  }
+
+  /** 是否使用 Copilot 生成文本。 */
+  isCopilotEnabled(): boolean {
+    return this.read().copilotEnabled;
   }
 
   getSplitSettings(): NovelSplitSettings {

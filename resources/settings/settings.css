@@ -35,6 +35,13 @@
   margin: 4px 0;
 }
 
+/* 分组内的小标题：区分引擎设置与对所有文本模型通用的设置 */
+.settings-section h3.settings-subtitle {
+  margin: 16px 0 8px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
 /* 保存状态文字紧跟字段，留出固定间距避免出现时整体跳动 */
 .settings-status {
   min-height: 16px;

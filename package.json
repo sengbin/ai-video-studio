@@ -33,6 +33,11 @@
     "configuration": {
       "title": "AIGC Video Studio",
       "properties": {
+        "aigcVideoStudio.copilot.enabled": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "是否使用 VS Code 内置的 Copilot 生成文本。关闭后需要在“模型设置”中启用千问AI平台的文本生成模型；两者同一时间只能用其一。"
+        },
         "aigcVideoStudio.copilot.modelFamily": {
           "type": "string",
           "default": "",

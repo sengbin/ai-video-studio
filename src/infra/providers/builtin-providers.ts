@@ -10,9 +10,14 @@
 import { ProviderRegistry } from '../../domain/ports/provider-registry';
 import { QianwenAudioProvider } from './qianwen/qianwen-audio-provider';
 import { QianwenImageProvider } from './qianwen/qianwen-image-provider';
+import { QianwenTextProvider } from './qianwen/qianwen-text-provider';
 import { QianwenVideoProvider } from './qianwen/qianwen-video-provider';
 
 /** 创建登记了全部内置适配器的注册表。 */
 export function createBuiltinProviderRegistry(): ProviderRegistry {
-  return new ProviderRegistry().register(new QianwenVideoProvider()).register(new QianwenImageProvider()).register(new QianwenAudioProvider());
+  return new ProviderRegistry()
+    .register(new QianwenVideoProvider())
+    .register(new QianwenImageProvider())
+    .register(new QianwenAudioProvider())
+    .register(new QianwenTextProvider());
 }

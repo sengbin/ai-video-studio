@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：provider-adapters.ts
-// 说明：图像、音频、视频模型适配器的端口接口：与模型无关的生成请求、远端任务引用与状态，以及三类适配器的统一方法（含可选的取消与测试连接）。
+// 说明：文本、图像、音频、视频模型适配器的端口接口：与模型无关的生成请求、远端任务引用与状态，以及各类适配器的统一方法（含可选的取消与测试连接）。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
@@ -10,6 +10,7 @@
 import { ProviderFailure } from '../errors';
 import { CapabilityByKind, GeneratedAudioKind, ModelKind, VideoAudioMode } from '../models/model-capability';
 import { ModelDescriptor, ProviderDescriptor, ProviderSettings } from '../models/model-provider';
+import { TextGenerationRequest } from './text-generation-port';
 
 /** 随请求发送的素材文件（图片、音频）。适配器决定传输方式，如 Base64 内联或上传到临时存储。 */
 export interface MediaInput {
@@ -111,8 +112,8 @@ export interface AudioJobResult {
   readonly durationSeconds: number | null;
 }
 
-/** 三类适配器的共同方法，均为异步任务式：提交后取得任务引用，再轮询状态。 */
-export interface ModelProvider<TKind extends ModelKind, TRequest, TResult> {
+/** 各类适配器的共同部分：模型类型、服务商声明、模型清单与可选的测试连接。 */
+export interface ProviderAdapterBase<TKind extends ModelKind> {
   /** 适配器的模型类型。 */
   readonly kind: TKind;
   /** 服务商信息；同一服务商的各类型适配器必须声明相同的内容。 */
@@ -124,6 +125,27 @@ export interface ModelProvider<TKind extends ModelKind, TRequest, TResult> {
   /** 取某个模型的能力；模型不存在返回 undefined。 */
   getCapability(modelCode: string): CapabilityByKind[TKind] | undefined;
 
+  /**
+   * 用凭据向服务商发一次轻量请求，确认接口地址和访问密钥可用；服务商不支持时不实现。
+   * @throws ProviderError 鉴权、网络、服务端等失败，或接口地址不正确。
+   */
+  checkConnection?(context: ProviderCallContext): Promise<void>;
+}
+
+/** 文本模型适配器：同步生成，一次请求直接返回结果，不经过任务队列。 */
+export interface TextModelProvider extends ProviderAdapterBase<'text'> {
+  /**
+   * 发送请求并返回模型通过输出工具提交的参数对象，内容未经校验。
+   * @param modelCode 服务商侧的模型标识。
+   * @param request 生成请求。
+   * @param context 凭据、设置与取消信号。
+   * @throws ProviderError 鉴权、限流、参数、内容审核、服务端或网络失败，或模型没有通过工具返回。
+   */
+  generate(modelCode: string, request: TextGenerationRequest, context: ProviderCallContext): Promise<unknown>;
+}
+
+/** 图像、音频、视频适配器的共同方法，均为异步任务式：提交后取得任务引用，再轮询状态。 */
+export interface ModelProvider<TKind extends ModelKind, TRequest, TResult> extends ProviderAdapterBase<TKind> {
   /**
    * 提交前按模型能力校验请求，不发起网络调用。
    * @returns 问题列表，逐条说明如何修正；没有问题返回空数组。
@@ -147,12 +169,6 @@ export interface ModelProvider<TKind extends ModelKind, TRequest, TResult> {
    * @throws ProviderError 取消请求失败。
    */
   cancel?(ref: RemoteJobRef, context: ProviderCallContext): Promise<void>;
-
-  /**
-   * 用凭据向服务商发一次轻量请求，确认接口地址和访问密钥可用；服务商不支持时不实现。
-   * @throws ProviderError 鉴权、网络、服务端等失败，或接口地址不正确。
-   */
-  checkConnection?(context: ProviderCallContext): Promise<void>;
 }
 
 /** 图像模型适配器。 */
@@ -166,6 +182,7 @@ export type VideoModelProvider = ModelProvider<'video', VideoGenerationRequest, 
 
 /** 模型类型与适配器类型的对应。 */
 export interface ProviderAdapterByKind {
+  readonly text: TextModelProvider;
   readonly image: ImageModelProvider;
   readonly audio: AudioModelProvider;
   readonly video: VideoModelProvider;
@@ -180,6 +197,9 @@ export interface ResolvedCall<TAdapter> {
   readonly context: ProviderCallContext;
   readonly modelCode: string;
 }
+
+/** 调用一个文本模型所需的内容。 */
+export type ResolvedTextCall = ResolvedCall<TextModelProvider>;
 
 /** 调用一个视频模型所需的内容。 */
 export type ResolvedVideoCall = ResolvedCall<VideoModelProvider>;

@@ -16,22 +16,25 @@ import {
   normalizeTextGenerationSettings
 } from './text-generation-settings';
 
-test('缺少设置时使用默认值：自动选择模型、按章节分段、每段 20000 字', () => {
+test('缺少设置时使用默认值：使用 Copilot、自动选择模型、按章节分段、每段 20000 字', () => {
   assert.deepEqual(normalizeTextGenerationSettings({}), {
+    copilotEnabled: true,
     modelFamily: '',
     novelSplit: { mode: 'chapter', maxSegmentChars: DEFAULT_SEGMENT_CHARS }
   });
 });
 
 test('合法设置原样使用，模型家族去除首尾空白', () => {
-  assert.deepEqual(normalizeTextGenerationSettings({ modelFamily: ' gpt-4o ', splitMode: 'length', maxSegmentChars: 30000 }), {
+  assert.deepEqual(normalizeTextGenerationSettings({ copilotEnabled: false, modelFamily: ' gpt-4o ', splitMode: 'length', maxSegmentChars: 30000 }), {
+    copilotEnabled: false,
     modelFamily: 'gpt-4o',
     novelSplit: { mode: 'length', maxSegmentChars: 30000 }
   });
 });
 
 test('非法设置回退为默认值', () => {
-  const settings = normalizeTextGenerationSettings({ modelFamily: 5, splitMode: 'paragraph', maxSegmentChars: '20000' });
+  const settings = normalizeTextGenerationSettings({ copilotEnabled: 'no', modelFamily: 5, splitMode: 'paragraph', maxSegmentChars: '20000' });
+  assert.equal(settings.copilotEnabled, true);
   assert.equal(settings.modelFamily, '');
   assert.equal(settings.novelSplit.mode, 'chapter');
   assert.equal(settings.novelSplit.maxSegmentChars, DEFAULT_SEGMENT_CHARS);

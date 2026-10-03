@@ -138,9 +138,10 @@ export class SqliteProviderRepository implements ProviderRepository {
         .prepare('SELECT id FROM models WHERE provider_id = ? AND code = ?')
         .get(providerId, descriptor.code) as unknown as { id: number } | undefined;
       if (existing === undefined) {
+        // 文本模型默认不启用：文本生成默认使用 Copilot，启用千问文本模型需要用户确认并关闭 Copilot。
         const result = this.database
-          .prepare('INSERT INTO models (provider_id, code, display_name, kind, is_enabled, created_at) VALUES (?, ?, ?, ?, 1, ?)')
-          .run(providerId, descriptor.code, descriptor.displayName, descriptor.kind, timestamp);
+          .prepare('INSERT INTO models (provider_id, code, display_name, kind, is_enabled, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+          .run(providerId, descriptor.code, descriptor.displayName, descriptor.kind, descriptor.kind === 'text' ? 0 : 1, timestamp);
         const modelId = Number(result.lastInsertRowid);
         this.database
           .prepare('INSERT INTO model_capabilities (model_id, capability_json, updated_at) VALUES (?, ?, ?)')

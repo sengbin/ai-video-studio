@@ -11,7 +11,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { NotFoundError, ProviderError, ValidationError } from '../../domain/errors';
 import { ProviderRegistry } from '../../domain/ports/provider-registry';
-import { FAKE_PROVIDER_CODE, FAKE_VIDEO_CAPABILITY, FakeImageProvider, FakeVideoProvider } from '../../domain/ports/testing/fake-model-providers';
+import { FAKE_PROVIDER_CODE, FAKE_VIDEO_CAPABILITY, FakeImageProvider, FakeTextProvider, FakeVideoProvider } from '../../domain/ports/testing/fake-model-providers';
 import { MemorySecretStore } from '../../domain/ports/testing/memory-secret-store';
 import { providerApiKeySecretKey } from '../../domain/rules/provider-rules';
 import { IN_MEMORY_DATABASE_PATH, openDatabase } from '../../infra/database/database-connection';
@@ -175,4 +175,28 @@ test('可用模型：服务商启用、已配置密钥、模型启用，三者�
   await service.setModelEnabled({ modelId: video.id, isEnabled: true });
   await service.updateProvider({ providerId: provider.id, isEnabled: false });
   assert.deepEqual(await usableVideos(), [], '服务商被停用');
+});
+
+test('文本模型：首次同步默认停用，需要密钥才能解析调用，可以一次停用全部', async () => {
+  const registry = new ProviderRegistry().register(new FakeVideoProvider()).register(new FakeTextProvider());
+  const { service, secrets } = createService(registry);
+  const [text] = service.listTextModels();
+  assert.deepEqual([text.code, text.kind, text.isEnabled], ['fake-text', 'text', false]);
+  assert.equal((await onlyProvider(service)).models.find((model) => model.code === 'fake-text')?.kindLabel, '文本');
+  assert.deepEqual(await service.listUsableModels('text'), []);
+
+  await service.setModelEnabled({ modelId: text.id, isEnabled: true });
+  await assert.rejects(() => service.resolveTextCall(text.id), (error) => error instanceof ProviderError && error.category === 'auth');
+
+  await secrets.set(providerApiKeySecretKey(FAKE_PROVIDER_CODE), 'sk-1');
+  const call = await service.resolveTextCall(text.id);
+  assert.equal(call.modelCode, 'fake-text');
+  assert.equal(call.context.apiKey, 'sk-1');
+  assert.equal((await service.listUsableModels('text')).length, 1);
+  assert.equal(service.findModel(text.id)?.id, text.id);
+
+  service.disableTextModels();
+  assert.deepEqual(service.listTextModels().map((model) => model.isEnabled), [false]);
+  await assert.rejects(() => service.resolveTextCall(text.id), ProviderError);
+  await assert.rejects(() => service.resolveTextCall(service.listTextModels()[0].id + 100), ProviderError);
 });

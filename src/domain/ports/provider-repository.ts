@@ -46,7 +46,7 @@ export interface ProviderRepository {
   findModelById(id: number): ModelRecord | undefined;
 
   /**
-   * 新增模型或更新已有模型的名称、类型和能力；已有模型保留用户设置的启用状态，新模型默认启用。
+   * 新增模型或更新已有模型的名称、类型和能力；已有模型保留用户设置的启用状态，新模型默认启用，文本模型默认停用。
    * @returns 写入后的模型。
    */
   upsertModel(providerId: number, descriptor: ModelDescriptor, timestamp: string): ModelRecord;

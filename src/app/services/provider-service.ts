@@ -24,6 +24,7 @@ import {
   ResolvedAudioCall,
   ResolvedCall,
   ResolvedImageCall,
+  ResolvedTextCall,
   ResolvedVideoCall
 } from '../../domain/ports/provider-adapters';
 import { ProviderRegistry } from '../../domain/ports/provider-registry';
@@ -203,6 +204,25 @@ export class ProviderService {
     return this.buildView(provider, descriptor);
   }
 
+  /** 按标识查找模型；不存在返回 undefined。 */
+  findModel(modelId: number): ModelRecord | undefined {
+    return this.repository.findModelById(modelId);
+  }
+
+  /** 列出全部文本模型（含已停用的），不论服务商是否启用。 */
+  listTextModels(): ModelRecord[] {
+    return this.repository.listModels({ kind: 'text' });
+  }
+
+  /** 停用全部文本模型。 */
+  disableTextModels(): void {
+    for (const model of this.listTextModels()) {
+      if (model.isEnabled) {
+        this.repository.setModelEnabled(model.id, false);
+      }
+    }
+  }
+
   /**
    * 列出某类型当前可以实际使用的模型：模型和服务商都已启用，且服务商已配置访问密钥。
    * @param kind 模型类型。
@@ -229,6 +249,11 @@ export class ProviderService {
    */
   async resolveVideoCall(modelId: number): Promise<ResolvedVideoCall> {
     return this.resolveCall('video', modelId);
+  }
+
+  /** 同 resolveVideoCall，用于文本模型。 */
+  async resolveTextCall(modelId: number): Promise<ResolvedTextCall> {
+    return this.resolveCall('text', modelId);
   }
 
   /** 同 resolveVideoCall，用于图像模型。 */

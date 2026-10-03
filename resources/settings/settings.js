@@ -1,9 +1,9 @@
 // ------------------------------------------------------------------------
 // 名称：settings.js
-// 说明：模型设置页脚本：顶部是文本生成设置（Copilot 模型、小说分段方式、每段字数上限），下面是服务商列表，点“设置”弹出该服务商的设置页（启用、访问密钥、设置项、模型开关与能力），全部即时保存。
+// 说明：模型设置页脚本：顶部是文本生成设置（是否使用 Copilot、Copilot 模型、小说分段方式、每段字数上限），下面是服务商列表，点“设置”弹出该服务商的设置页（启用、访问密钥、设置项、模型开关与能力），全部即时保存。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
-// 日期：2026-10-02
+// 日期：2026-10-03
 // 备注：请求名称与 src/app/pages/settings-handlers.ts 一致；每个字段旁显示“保存中…”“已保存”“保存失败”；访问密钥只发送给宿主，不回显；“测试连接”用宿主已保存的密钥和设置发起。
 // ------------------------------------------------------------------------
 
@@ -19,6 +19,7 @@
   const REQUEST_MODEL_SET_ENABLED = 'settings.modelSetEnabled';
 
   const AUTO_MODEL_LABEL = '自动';
+  const COPILOT_SWITCH_LABEL = '使用 VS Code 内置的 Copilot 生成文本';
   /** 下拉中“自动”选项的值：空串在下拉里表示“未选择”，所以用单独的值，保存时再转为空串。 */
   const AUTO_MODEL_VALUE = '__auto__';
   const SAVING_TEXT = '保存中…';
@@ -83,22 +84,79 @@
     return options;
   }
 
-  /** 文本生成设置区。 */
-  function renderTextSettings(view) {
-    const modelStatus = createSaveStatus();
-    const modelSelect = aiUi.select({
-      options: buildModelOptions(view),
-      value: view.modelFamily === '' ? AUTO_MODEL_VALUE : view.modelFamily,
-      allowEmpty: false,
-      ariaLabel: 'Copilot 模型',
-      onChange: (value) => void saveSetting({ modelFamily: value === AUTO_MODEL_VALUE ? '' : value }, modelStatus)
+  /** 文本生成引擎区：Copilot 开关；启用时显示 Copilot 模型选择，关闭时说明当前使用的千问文本模型。 */
+  function renderEngineSettings(view) {
+    const engineStatus = createSaveStatus();
+    const copilotSwitch = aiUi.switchControl({ label: COPILOT_SWITCH_LABEL, checked: view.copilotEnabled });
+    const engineField = aiUi.field({
+      description: '关闭后，需要在下方“千问AI平台”的设置中启用一个文本生成模型；Copilot 与千问文本模型同一时间只能使用其一。',
+      control: copilotSwitch
     });
-    const modelField = aiUi.field({
-      label: 'Copilot 模型',
-      description: '生成创意等文本时使用的模型；“自动”表示由 Copilot 选择可用模型。',
-      control: modelSelect
+    copilotSwitch.onChange(async (checked) => {
+      engineField.setError('');
+      if (checked && view.enabledTextModels.length > 0) {
+        const confirmed = await aiUi.confirm({
+          title: '启用 Copilot',
+          message: `启用 Copilot 将自动关闭已启用的千问文本模型（${view.enabledTextModels.join('、')}）。是否继续？`,
+          confirmText: '启用 Copilot',
+          cancelText: '取消'
+        });
+        if (!confirmed) {
+          copilotSwitch.setValue(false);
+          return;
+        }
+      }
+      copilotSwitch.setDisabled(true);
+      engineStatus.show(SAVING_TEXT, false);
+      try {
+        await window.hostBridge.request(REQUEST_UPDATE, { copilotEnabled: checked });
+      } catch (error) {
+        copilotSwitch.setValue(!checked);
+        copilotSwitch.setDisabled(false);
+        const message = fieldErrorOf(error, 'copilotEnabled');
+        if (message) {
+          engineField.setError(message);
+          engineStatus.show('', false);
+        } else {
+          engineStatus.show(`保存失败：${errorText(error)}`, true);
+        }
+        return;
+      }
+      // 切换引擎会同时改变千问文本模型的启用状态，重新读取后整页刷新。
+      await reloadPage();
     });
 
+    if (view.copilotEnabled) {
+      const modelStatus = createSaveStatus();
+      const modelSelect = aiUi.select({
+        options: buildModelOptions(view),
+        value: view.modelFamily === '' ? AUTO_MODEL_VALUE : view.modelFamily,
+        allowEmpty: false,
+        ariaLabel: 'Copilot 模型',
+        onChange: (value) => void saveSetting({ modelFamily: value === AUTO_MODEL_VALUE ? '' : value }, modelStatus)
+      });
+      const modelField = aiUi.field({
+        label: 'Copilot 模型',
+        description: '生成创意等文本时使用的模型；“自动”表示由 Copilot 选择可用模型。',
+        control: modelSelect
+      });
+      return [
+        engineField.element,
+        engineStatus.element,
+        modelField.element,
+        view.modelNote ? aiUi.h('p', { class: 'status-warning settings-note', text: view.modelNote }) : null,
+        modelStatus.element
+      ];
+    }
+    const current =
+      view.engineNote !== null
+        ? aiUi.h('p', { class: 'status-warning settings-note', text: view.engineNote })
+        : aiUi.h('p', { class: 'description settings-note', text: `当前使用千问AI平台的文本模型：${view.enabledTextModels.join('、')}。可在“千问AI平台”的设置中更换。` });
+    return [engineField.element, engineStatus.element, current];
+  }
+
+  /** 文本生成设置区：先选引擎，再设置对所有文本模型通用的小说分段。 */
+  function renderTextSettings(view) {
     const splitStatus = createSaveStatus();
     const splitRadio = aiUi.radioGroup({
       options: SPLIT_MODE_OPTIONS,
@@ -152,9 +210,8 @@
       'section',
       { class: 'settings-section' },
       aiUi.h('h2', { text: '文本生成' }),
-      modelField.element,
-      view.modelNote ? aiUi.h('p', { class: 'status-warning settings-note', text: view.modelNote }) : null,
-      modelStatus.element,
+      renderEngineSettings(view),
+      aiUi.h('h3', { class: 'settings-subtitle', text: '小说分段（所有文本模型通用）' }),
       splitField.element,
       splitStatus.element,
       charsField.element,
@@ -338,10 +395,25 @@
           const control = aiUi.switchControl({ label: '启用', checked: model.isEnabled });
           nameSwitch(control, `启用模型 ${model.displayName}`);
           control.onChange(async (checked) => {
+            // 启用千问文本模型会关闭 Copilot，先征得用户同意；宿主也会校验，没有同意时拒绝。
+            const closeCopilot = checked && model.kind === 'text' && data.text.copilotEnabled;
+            if (closeCopilot) {
+              const confirmed = await aiUi.confirm({
+                title: '启用千问文本模型',
+                message: `当前使用 Copilot 生成文本。启用“${model.displayName}”会关闭 Copilot，改用千问AI平台生成文本。是否继续？`,
+                confirmText: '关闭 Copilot 并启用',
+                cancelText: '取消'
+              });
+              if (!confirmed) {
+                control.setValue(false);
+                return;
+              }
+            }
             status.show(SAVING_TEXT, false);
             try {
-              await window.hostBridge.request(REQUEST_MODEL_SET_ENABLED, { modelId: model.id, isEnabled: checked });
-              status.show(SAVED_TEXT, false);
+              await window.hostBridge.request(REQUEST_MODEL_SET_ENABLED, { modelId: model.id, isEnabled: checked, closeCopilot });
+              if (closeCopilot) data.text.copilotEnabled = false;
+              status.show(closeCopilot ? '已保存，Copilot 已关闭。' : SAVED_TEXT, false);
             } catch (error) {
               control.setValue(!checked);
               status.show(`保存失败：${errorText(error)}`, true);
@@ -403,7 +475,7 @@
       return aiUi.h(
         'section',
         { class: 'settings-section' },
-        aiUi.h('h2', { text: '图像、音频、视频模型' }),
+        aiUi.h('h2', { text: '模型服务商' }),
         aiUi.h('p', { class: 'description', text: '尚未接入模型。' })
       );
     }
@@ -430,13 +502,23 @@
     return aiUi.h(
       'section',
       { class: 'settings-section settings-section--wide' },
-      aiUi.h('h2', { text: '图像、音频、视频模型' }),
+      aiUi.h('h2', { text: '模型服务商' }),
       aiUi.table({ columns, rows: providers, ariaLabel: '模型服务商' }).element
     );
   }
 
   /** 当前加载的设置数据；尚未加载成功时为 null。 */
   let data = null;
+
+  /** 重新读取设置并渲染整页；失败时在页面顶部显示原因。 */
+  async function reloadPage() {
+    try {
+      data = await window.hostBridge.request(REQUEST_LOAD);
+      renderPage();
+    } catch (error) {
+      root.prepend(aiUi.h('p', { class: 'status-error', text: errorText(error) }));
+    }
+  }
 
   /** 渲染页面：文本生成设置与服务商列表。 */
   function renderPage() {

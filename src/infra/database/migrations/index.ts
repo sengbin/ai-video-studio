@@ -24,6 +24,7 @@ import { assetCategoriesMigration } from './013-asset-categories';
 import { audioModeCleanupMigration } from './014-audio-mode-cleanup';
 import { shotFirstFrameAssetMigration } from './015-shot-first-frame-asset';
 import { promptParamsMigration } from './016-prompt-params';
+import { textModelsMigration } from './017-text-models';
 
 /** 全部数据库迁移，版本号从 1 开始连续递增。 */
 export const MIGRATIONS: readonly Migration[] = [
@@ -42,5 +43,6 @@ export const MIGRATIONS: readonly Migration[] = [
   assetCategoriesMigration,
   audioModeCleanupMigration,
   shotFirstFrameAssetMigration,
-  promptParamsMigration
+  promptParamsMigration,
+  textModelsMigration
 ];

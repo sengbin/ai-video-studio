@@ -1,10 +1,10 @@
 // ------------------------------------------------------------------------
 // 名称：qianwen-api-client.ts
-// 说明：千问AI平台（DashScope 原生接口）的 HTTP 客户端：带鉴权的 JSON 请求，并把网络错误、HTTP 状态和错误码统一转换为 ProviderError；提供测试连接。
+// 说明：千问AI平台（DashScope 原生接口）的 HTTP 客户端：带鉴权的 JSON 请求与 OpenAI 兼容接口的流式请求，并把网络错误、HTTP 状态和错误码统一转换为 ProviderError；提供测试连接。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
-// 备注：fetch 可注入以便测试；错误信息只包含服务端返回的说明，不包含访问密钥。
+// 备注：fetch 可注入以便测试；错误信息只包含服务端返回的说明，不包含访问密钥；兼容接口的地址由原生接口地址推导，用户只需配置一个接口地址。
 // ------------------------------------------------------------------------
 
 import { ProviderError, ProviderFailure } from '../../../domain/errors';
@@ -14,18 +14,24 @@ import { QIANWEN_ENDPOINT_MESSAGE, QIANWEN_ENDPOINT_PATTERN, QIANWEN_ENDPOINT_SE
 /** 可注入的 fetch 函数类型。 */
 export type FetchFunction = typeof fetch;
 
-/** 平台错误响应的结构：错误码与说明。 */
+/** 平台错误响应的结构：错误码与说明；原生接口直接在顶层，OpenAI 兼容接口放在 error 对象里。 */
 interface ErrorBody {
   readonly code?: unknown;
   readonly message?: unknown;
+  readonly error?: unknown;
 }
+
+/** OpenAI 兼容接口的路径前缀，由原生接口地址末尾的 /api/v1 替换而来。 */
+const COMPATIBLE_MODE_PATH = '/compatible-mode/v1';
 
 /** 错误码前缀与失败分类的对应，按顺序匹配。 */
 const ERROR_CODE_CATEGORIES: ReadonlyArray<readonly [prefix: string, category: ProviderFailure]> = [
   ['DataInspectionFailed', 'content_rejected'],
+  ['data_inspection_failed', 'content_rejected'],
   ['IPInfringementSuspect', 'content_rejected'],
   ['Throttling', 'rate_limited'],
   ['InvalidApiKey', 'auth'],
+  ['invalid_api_key', 'auth'],
   ['InvalidParameter', 'invalid_request']
 ];
 
@@ -95,23 +101,86 @@ export class QianwenApiClient {
     }
   }
 
+  /**
+   * 向 OpenAI 兼容接口提交流式请求，逐条产出事件的 data 内容（不含 `[DONE]` 结束标记）。
+   * @param context 调用凭据与设置；兼容接口的地址由原生接口地址末尾的 /api/v1 替换为 /compatible-mode/v1 得到。
+   * @param path 相对兼容接口地址的路径，以 / 开头。
+   * @param body 请求体对象，由调用方设置 stream 为 true。
+   * @throws ProviderError 网络失败、非 2xx 响应，或读取流时中断。
+   */
+  async *postEventStream(context: ProviderCallContext, path: string, body: unknown): AsyncGenerator<string> {
+    const base = readEndpoint(context).replace(new RegExp(QIANWEN_ENDPOINT_PATTERN), COMPATIBLE_MODE_PATH);
+    const response = await this.fetchOrThrow(`${base}${path}`, context, {
+      method: 'POST',
+      body: JSON.stringify(body),
+      extraHeaders: { 'Content-Type': 'application/json', Accept: 'text/event-stream' }
+    });
+    if (!response.ok) {
+      throw buildHttpError(response.status, await readJsonObject(response));
+    }
+    if (response.body === null) {
+      throw new ProviderError('server', '千问AI平台没有返回内容。');
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        buffer += decoder.decode(value, { stream: !done });
+        // 事件以换行分隔，只取 data 行；最后一段没有换行结尾时在流结束后一并处理。
+        const lines = buffer.split('\n');
+        buffer = done ? '' : (lines.pop() ?? '');
+        for (const line of lines) {
+          const data = readDataLine(line);
+          if (data === '[DONE]') {
+            return;
+          }
+          if (data !== null) {
+            yield data;
+          }
+        }
+        if (done) {
+          return;
+        }
+      }
+    } catch (error) {
+      if (error instanceof ProviderError || (error instanceof Error && error.name === 'AbortError')) {
+        throw error;
+      }
+      throw new ProviderError('network', `读取千问AI平台的响应时中断：${error instanceof Error ? error.message : String(error)}`, { cause: error });
+    } finally {
+      await reader.cancel().catch(() => undefined);
+    }
+  }
+
   private async send(
     context: ProviderCallContext,
     path: string,
     request: { readonly method: string; readonly body?: string; readonly extraHeaders: Readonly<Record<string, string>> }
   ): Promise<Record<string, unknown>> {
-    const endpoint = context.settings[QIANWEN_ENDPOINT_SETTING_KEY];
-    if (endpoint === undefined || endpoint === '') {
-      throw new ProviderError('invalid_request', '尚未配置千问AI平台的接口地址。');
+    const endpoint = readEndpoint(context);
+    const response = await this.fetchOrThrow(`${endpoint}${path}`, context, {
+      method: request.method,
+      body: request.body,
+      extraHeaders: request.extraHeaders
+    });
+    const payload = await readJsonObject(response);
+    if (!response.ok) {
+      throw buildHttpError(response.status, payload);
     }
-    // 设置页会校验，这里再检查一次，避免早先保存的错误地址让请求发往错误的路径。
-    if (!new RegExp(QIANWEN_ENDPOINT_PATTERN).test(endpoint)) {
-      throw new ProviderError('invalid_request', QIANWEN_ENDPOINT_MESSAGE);
-    }
+    return payload;
+  }
 
-    let response: Response;
+  /** 发起请求；网络失败转换为 ProviderError，主动取消原样抛出。 */
+  private async fetchOrThrow(
+    url: string,
+    context: ProviderCallContext,
+    request: { readonly method: string; readonly body?: string; readonly extraHeaders: Readonly<Record<string, string>> }
+  ): Promise<Response> {
     try {
-      response = await this.fetchFunction(`${endpoint}${path}`, {
+      return await this.fetchFunction(url, {
         method: request.method,
         headers: { Authorization: `Bearer ${context.apiKey}`, ...request.extraHeaders },
         body: request.body,
@@ -124,17 +193,46 @@ export class QianwenApiClient {
       }
       throw new ProviderError('network', `无法连接千问AI平台：${error instanceof Error ? error.message : String(error)}`, { cause: error });
     }
-
-    const payload = await readJsonObject(response);
-    if (!response.ok) {
-      const { code, message } = payload as ErrorBody;
-      const errorCode = typeof code === 'string' ? code : null;
-      const category = classifyErrorCode(errorCode) ?? classifyStatus(response.status);
-      const detail = typeof message === 'string' && message !== '' ? message : `HTTP ${response.status}`;
-      throw new ProviderError(category, `千问AI平台返回错误${errorCode === null ? '' : `（${errorCode}）`}：${detail}`, { code: errorCode });
-    }
-    return payload;
   }
+}
+
+/** 读取 SSE 的一行；不是非空的 data 行时返回 null。 */
+function readDataLine(line: string): string | null {
+  const trimmed = line.trim();
+  if (!trimmed.startsWith('data:')) {
+    return null;
+  }
+  const data = trimmed.slice('data:'.length).trim();
+  return data === '' ? null : data;
+}
+
+/** 取并校验接口地址；设置页会校验，这里再检查一次，避免早先保存的错误地址让请求发往错误的路径。 */
+function readEndpoint(context: ProviderCallContext): string {
+  const endpoint = context.settings[QIANWEN_ENDPOINT_SETTING_KEY];
+  if (endpoint === undefined || endpoint === '') {
+    throw new ProviderError('invalid_request', '尚未配置千问AI平台的接口地址。');
+  }
+  if (!new RegExp(QIANWEN_ENDPOINT_PATTERN).test(endpoint)) {
+    throw new ProviderError('invalid_request', QIANWEN_ENDPOINT_MESSAGE);
+  }
+  return endpoint;
+}
+
+/** 从错误响应中取出错误码与说明，兼容原生与 OpenAI 兼容两种结构。 */
+function readErrorFields(payload: Record<string, unknown>): { readonly code: string | null; readonly message: string | null } {
+  const body = payload as ErrorBody;
+  const source = typeof body.error === 'object' && body.error !== null ? (body.error as ErrorBody) : body;
+  return {
+    code: typeof source.code === 'string' ? source.code : null,
+    message: typeof source.message === 'string' && source.message !== '' ? source.message : null
+  };
+}
+
+/** 把非 2xx 响应转换为带分类的错误。 */
+function buildHttpError(status: number, payload: Record<string, unknown>): ProviderError {
+  const { code, message } = readErrorFields(payload);
+  const category = classifyErrorCode(code) ?? classifyStatus(status);
+  return new ProviderError(category, `千问AI平台返回错误${code === null ? '' : `（${code}）`}：${message ?? `HTTP ${status}`}`, { code });
 }
 
 /** 读取响应体并解析为 JSON 对象；响应体为空或不是对象时返回空对象。 */

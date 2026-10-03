@@ -37,6 +37,7 @@ import { ProviderService } from './app/services/provider-service';
 import { ScreenplayService } from './app/services/screenplay-service';
 import { StageChange, StageService } from './app/services/stage-service';
 import { StoryboardService } from './app/services/storyboard-service';
+import { TextGenerationRouter } from './app/services/text-generation-router';
 import { TextSettingsService } from './app/services/text-settings-service';
 import { WorkService } from './app/services/work-service';
 import { CreativeWorkflow } from './app/stages/creative-workflow';
@@ -110,7 +111,18 @@ export function activate(context: vscode.ExtensionContext): void {
   const storyboards = new SqliteStoryboardRepository(database);
   const settingsStore = new VsCodeTextGenerationSettings();
   const prompts = new FilePromptTemplates(vscode.Uri.joinPath(context.extensionUri, 'resources', 'prompts').fsPath);
-  const textGeneration = new CopilotTextGeneration(settingsStore);
+  // 提供商服务先于文本生成创建：文本生成按设置在 Copilot 与千问文本模型之间选择。
+  const providerRepository = new SqliteProviderRepository(database);
+  const providerService = new ProviderService({
+    repository: providerRepository,
+    registry: createBuiltinProviderRegistry(),
+    secrets: new VsCodeSecretStore(context.secrets)
+  });
+  const textGeneration = new TextGenerationRouter({
+    settings: settingsStore,
+    copilot: new CopilotTextGeneration(settingsStore),
+    providers: providerService
+  });
 
   // 应用服务。
   const projectService = new ProjectService(new SqliteProjectRepository(database));
@@ -146,16 +158,10 @@ export function activate(context: vscode.ExtensionContext): void {
     runner,
     stages: stageService
   });
-  const textSettingsService = new TextSettingsService(settingsStore, new CopilotModelCatalog());
+  const textSettingsService = new TextSettingsService(settingsStore, new CopilotModelCatalog(), providerService);
   const assetService = new AssetService(assetRepository);
   const assetCategoryService = new AssetCategoryService(new SqliteAssetCategoryRepository(database));
   const bindingService = new BindingService(new SqliteBindingRepository(database), assetRepository);
-  const providerRepository = new SqliteProviderRepository(database);
-  const providerService = new ProviderService({
-    repository: providerRepository,
-    registry: createBuiltinProviderRegistry(),
-    secrets: new VsCodeSecretStore(context.secrets)
-  });
   // 把适配器声明的服务商和模型同步到数据库，设置页和后续的参数选择都从数据库读取。
   providerService.syncCatalog();
 

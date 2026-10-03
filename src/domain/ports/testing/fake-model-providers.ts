@@ -1,13 +1,13 @@
 // ------------------------------------------------------------------------
 // 名称：fake-model-providers.ts
-// 说明：测试用的假模型适配器：一个服务商同时提供视频、图像与音频适配器，请求与调用记录可检查，远端任务状态可脚本化。
+// 说明：测试用的假模型适配器：一个服务商同时提供文本、视频、图像与音频适配器，请求与调用记录可检查，远端任务状态可脚本化。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
 // 备注：仅供测试使用，随 out/**/testing 一起被打包排除；后续生成队列的测试也复用它。
 // ------------------------------------------------------------------------
 
-import { VideoCapability, ImageCapability, AudioCapability } from '../../models/model-capability';
+import { VideoCapability, ImageCapability, AudioCapability, TextCapability } from '../../models/model-capability';
 import { ModelDescriptor, ProviderDescriptor } from '../../models/model-provider';
 import {
   AudioGenerationRequest,
@@ -19,10 +19,12 @@ import {
   ProviderCallContext,
   RemoteJobRef,
   RemoteJobState,
+  TextModelProvider,
   VideoGenerationRequest,
   VideoJobResult,
   VideoModelProvider
 } from '../provider-adapters';
+import { TextGenerationRequest } from '../text-generation-port';
 
 /** 假服务商的代码。 */
 export const FAKE_PROVIDER_CODE = 'fake';
@@ -236,5 +238,32 @@ export class FakeAudioProvider implements AudioModelProvider {
         errorMessage: null
       }
     );
+  }
+}
+
+/** 假文本模型的能力。 */
+export const FAKE_TEXT_CAPABILITY: TextCapability = { contextTokens: 100000, maxOutputTokens: 8000, imageInput: true };
+
+/** 假文本适配器：记录收到的请求，返回固定结果。 */
+export class FakeTextProvider implements TextModelProvider {
+  readonly kind = 'text';
+  readonly provider: ProviderDescriptor = FAKE_PROVIDER;
+  readonly requests: TextGenerationRequest[] = [];
+
+  constructor(private readonly models: readonly ModelDescriptor<'text'>[] = [
+    { code: 'fake-text', displayName: '假文本模型', kind: 'text', capability: FAKE_TEXT_CAPABILITY }
+  ]) {}
+
+  listModels(): readonly ModelDescriptor<'text'>[] {
+    return this.models;
+  }
+
+  getCapability(modelCode: string): TextCapability | undefined {
+    return this.models.find((model) => model.code === modelCode)?.capability;
+  }
+
+  async generate(_modelCode: string, request: TextGenerationRequest): Promise<unknown> {
+    this.requests.push(request);
+    return { title: '假结果' };
   }
 }

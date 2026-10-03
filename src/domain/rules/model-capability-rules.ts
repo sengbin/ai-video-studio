@@ -14,6 +14,7 @@ import {
   ImageCapability,
   ModelCapability,
   ModelKind,
+  TextCapability,
   VIDEO_AUDIO_ELEMENT_LABELS,
   VideoCapability
 } from '../models/model-capability';
@@ -111,6 +112,20 @@ function listLine(label: string, items: readonly (string | number)[]): string[] 
   return items.length === 0 ? [] : [`${label}：${items.join(LIST_SEPARATOR)}`];
 }
 
+/** 把 token 数写成“1M”“128K”这样的短写法。 */
+function formatTokens(tokens: number): string {
+  if (tokens >= 1_000_000) return `${Number((tokens / 1_000_000).toFixed(1))}M`;
+  return `${Math.round(tokens / 1000)}K`;
+}
+
+function summarizeText(capability: TextCapability): string[] {
+  return [
+    `上下文：${formatTokens(capability.contextTokens)}`,
+    `最大输出：${formatTokens(capability.maxOutputTokens)}`,
+    `图片输入：${capability.imageInput ? '支持' : '不支持'}`
+  ];
+}
+
 function summarizeVideo(capability: VideoCapability): string[] {
   const inputs: string[] = [];
   if (capability.firstFrame) inputs.push('首帧');
@@ -156,6 +171,8 @@ function summarizeAudio(capability: AudioCapability): string[] {
  */
 export function summarizeCapability(kind: ModelKind, capability: ModelCapability): string[] {
   switch (kind) {
+    case 'text':
+      return summarizeText(capability as TextCapability);
     case 'video':
       return summarizeVideo(capability as VideoCapability);
     case 'image':
