@@ -34,6 +34,7 @@
     parts.push(`声音：${AUDIO_MODE_LABELS[preview.audioMode] || '默认'}`);
     if (preview.audioMode === 'native' && preview.audioElements !== null) parts.push(`声音内容：${aiProfile.describeElements(preview.audioElements) || '无'}`);
     parts.push(preview.seed === null ? '种子：随机' : `种子：${preview.seed}`);
+    if (preview.promptExtend !== null) parts.push(`提示词改写：${preview.promptExtend ? '开' : '关'}`);
     return parts.join(' · ');
   }
 
@@ -143,6 +144,10 @@
         lines.push(aiUi.h('div', { class: 'description', text: describePreview(preview) }));
         for (const issue of preview.blocking) lines.push(aiUi.h('div', { class: 'status-error', text: `✕ 阻断：${issue}` }));
         for (const warning of preview.warnings) lines.push(aiUi.h('div', { class: 'status-warning', text: `! 提醒：${warning}` }));
+        // 提交前就能看到最终发给模型的提示词，方便检查写法是否符合预期。
+        if (preview.prompt) {
+          lines.push(aiUi.h('details', { class: 'wb-history' }, aiUi.h('summary', { text: '将提交的提示词' }), aiUi.h('div', { class: 'wb-prompt', text: preview.prompt })));
+        }
       } else if (checked && !previewError) {
         lines.push(aiUi.h('div', { class: 'description', text: '正在检查…' }));
       }

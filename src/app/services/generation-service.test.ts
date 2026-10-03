@@ -155,6 +155,7 @@ test('工作台清单：列出有分镜脚本的作品与集，以及可用的�
         audioModes: FAKE_VIDEO_CAPABILITY.audioModes,
         audioElements: FAKE_VIDEO_CAPABILITY.audioElements,
         supportsSeed: true,
+        supportsPromptExtend: false,
         duration: FAKE_VIDEO_CAPABILITY.duration,
         durationText: '2–10 秒',
         maxGroupSeconds: 10
@@ -262,8 +263,11 @@ test('提交：一组生成一条排队中的任务，快照含组内全部镜�
     assert.deepEqual([job.snapshot.params.aspectRatio, job.snapshot.params.resolution, job.snapshot.params.audioMode, job.snapshot.params.durationSeconds], ['16:9', '720P', 'native', 8]);
     assert.equal(job.snapshot.storyboardRunId, fixture.run.id);
     assert.equal(job.snapshot.shotIds.length, 2);
-    assert.match(job.snapshot.prompt, /\(0:00 - 0:04\) .*\n\(0:04 - 0:08\) .*声音：/s);
-    assert.ok(job.snapshot.prompt.includes('背景音乐') === false, '假模型不支持背景音乐，已忽略');
+    assert.match(job.snapshot.prompt, /分镜1（00:00-00:04）：.*\n分镜2（00:04-00:08）：/s);
+    assert.ok(!job.snapshot.prompt.includes('背景音乐：'), '假模型不支持背景音乐，已忽略');
+    assert.ok(job.snapshot.prompt.endsWith('负向清单：不要字幕，不要水印。'), '默认负向清单写在提示词末尾');
+    assert.equal(job.snapshot.promptFormat, 2);
+    assert.equal(fixture.episode().groups[0].jobs[0].promptFormat, 2);
     const warnings = result.submitted[0].warnings;
     assert.ok(warnings.some((warning) => warning.includes('“守夜人”还没有绑定资产')));
     assert.ok(!warnings.some((warning) => warning.includes('尾帧')), '组内第 2 个镜头的尾帧衔接在同一个视频里自然完成');
@@ -420,7 +424,7 @@ test('绑定了形象资产的实体：参考图进入快照并在提示词开�
     assert.equal(result.rejected.length, 0);
     const snapshot = fixture.jobs.listJobsByGroups([view.groups[0].id])[0].snapshot;
     assert.equal(snapshot.referenceImageFileIds.length, 1);
-    assert.ok(snapshot.prompt.startsWith('图1是角色“守夜人”的形象参考。'));
+    assert.ok(snapshot.prompt.includes('守夜人形象参考图1。'));
     assert.ok(!result.submitted[0].warnings.some((warning) => warning.includes('“守夜人”还没有绑定资产')));
   } finally {
     fixture.database.close();
@@ -795,6 +799,50 @@ test('指定图片作首帧：资产已被删除或没有参考图时拒绝并�
   } finally {
     fixture.database.close();
     noFirstFrame.database.close();
+  }
+});
+
+test('提示词参数：负向清单与提示词改写按本组覆盖优先合并；预览带出完整提示词、负向清单与改写开关；不支持改写的模型被阻断；提示词带上分镜脚本的风格', async () => {
+  const fixture = await createFixture({ visualStyle: '35mm 电影胶片' }, { ...FAKE_VIDEO_CAPABILITY, promptExtend: true });
+  try {
+    fixture.approve();
+    const [groupId] = fixture.groupIds();
+    const request = (params: Record<string, unknown>) => ({ workId: fixture.work.id, episodeId: fixture.episodeId, groupIds: [groupId], params: { modelId: fixture.modelId, ...PARAMS, ...params } });
+
+    const plain = (await fixture.generation.previewSubmit(request({}))).groups[0];
+    assert.deepEqual([plain.negativeList, plain.promptExtend], ['不要字幕，不要水印', null]);
+    assert.ok(plain.prompt?.split('\n')[1] === '风格：35mm 电影胶片。', '提示词开头写分镜脚本的整体风格');
+
+    const custom = (await fixture.generation.previewSubmit(request({ negativeList: '不要人脸变形', promptExtend: false }))).groups[0];
+    assert.deepEqual([custom.negativeList, custom.promptExtend], ['不要人脸变形', false]);
+    assert.ok(custom.prompt?.endsWith('负向清单：不要人脸变形。'));
+
+    // 本组覆盖优先于本次提交携带的（本集、作品合并后的）值，空串覆盖表示这一组不要负向清单。
+    saveGroupProfile(fixture, groupId, { negativeList: '', promptExtend: true });
+    const overridden = (await fixture.generation.previewSubmit(request({ negativeList: '不要人脸变形', promptExtend: false }))).groups[0];
+    assert.deepEqual([overridden.negativeList, overridden.promptExtend], [null, true]);
+    assert.ok(!overridden.prompt?.includes('负向清单'));
+    assert.deepEqual(fixture.episode().groups[0].overrides.negativeList, '');
+
+    const result = await fixture.generation.submit(request({}));
+    assert.equal(result.rejected.length, 0);
+    const [job] = fixture.jobs.listJobsByGroups([groupId]);
+    assert.deepEqual(job.snapshot.params.extraParams, { promptExtend: true });
+    assert.equal(job.snapshot.params.negativeList ?? null, null);
+  } finally {
+    fixture.database.close();
+  }
+
+  const unsupported = await createFixture();
+  try {
+    unsupported.approve();
+    const [groupId] = unsupported.groupIds();
+    const preview = await unsupported.generation.previewSubmit({ workId: unsupported.work.id, episodeId: unsupported.episodeId, groupIds: [groupId], params: { modelId: unsupported.modelId, ...PARAMS, promptExtend: false } });
+    assert.match(preview.groups[0].blocking.join(), /不支持提示词改写/);
+    assert.equal(preview.groups[0].prompt, null);
+    assert.equal((await unsupported.generation.getCatalog()).promptDefaults.negativeList, '不要字幕，不要水印');
+  } finally {
+    unsupported.database.close();
   }
 });
 

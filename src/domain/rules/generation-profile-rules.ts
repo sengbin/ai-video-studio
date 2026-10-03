@@ -12,6 +12,7 @@ import {
   EffectiveProfile,
   GROUP_DURATION_MAX_SECONDS,
   GROUP_ONLY_FIELDS,
+  NEGATIVE_LIST_MAX_LENGTH,
   PROFILE_FIELDS,
   ProfileScope,
   ProfileSource,
@@ -27,6 +28,9 @@ const GROUP_ONLY_FIELD_LABELS: Readonly<Record<string, string>> = { durationSeco
 /** 声音内容、随机种子不合法时的说明，提交请求与保存参数共用。 */
 export const AUDIO_ELEMENTS_ERROR_TEXT = '声音内容不合法，请从对白、旁白、音效、配乐中至少选择一项；不需要声音时请把声音模式设为无声。';
 export const SEED_ERROR_TEXT = `随机种子必须是 0 到 ${SEED_MAX} 之间的整数。`;
+/** 负向清单、提示词改写不合法时的说明。 */
+export const NEGATIVE_LIST_ERROR_TEXT = `负向清单必须是不超过 ${NEGATIVE_LIST_MAX_LENGTH} 字的文本。`;
+export const PROMPT_EXTEND_ERROR_TEXT = '提示词改写只能是开启或关闭。';
 
 /** 画幅、分辨率的最大长度。 */
 const PARAM_TEXT_MAX_LENGTH = 20;
@@ -108,6 +112,23 @@ export function readProfileChanges(rawChanges: unknown): ProfileChanges {
       errors.durationSeconds = `生成时长必须是大于 0 且不超过 ${GROUP_DURATION_MAX_SECONDS} 秒的数字。`;
     }
   }
+  if (source.negativeList !== undefined) {
+    // 与其他字段不同，空串是有效值（明确不要负向清单），恢复继承用 null。
+    const list = readNegativeList(source.negativeList);
+    if (list === undefined) {
+      errors.negativeList = NEGATIVE_LIST_ERROR_TEXT;
+    } else {
+      changes.negativeList = list;
+    }
+  }
+  if (source.promptExtend !== undefined) {
+    const extend = emptyToNull(source.promptExtend);
+    if (extend === null || typeof extend === 'boolean') {
+      changes.promptExtend = extend;
+    } else {
+      errors.promptExtend = PROMPT_EXTEND_ERROR_TEXT;
+    }
+  }
   assertNoFieldErrors(errors);
   if (Object.keys(changes).length === 0) {
     throw new ValidationError({ [FORM_LEVEL_ERROR_KEY]: '没有要修改的参数。' });
@@ -126,6 +147,17 @@ export function readAudioElements(value: unknown): readonly VideoAudioElement[] 
     return undefined;
   }
   return VIDEO_AUDIO_ELEMENTS.filter((element) => value.includes(element));
+}
+
+/**
+ * 读取负向清单：null 原样返回（恢复继承）；文本去掉首尾空白，可以为空串，不得超过长度上限。
+ * @returns 规范化后的清单；不合法时为 undefined。
+ */
+export function readNegativeList(value: unknown): string | null | undefined {
+  if (value === null) return null;
+  if (typeof value !== 'string') return undefined;
+  const text = value.trim();
+  return text.length > NEGATIVE_LIST_MAX_LENGTH ? undefined : text;
 }
 
 /** 值是否是合法的随机种子：0 至 SEED_MAX 的整数。 */
@@ -177,6 +209,8 @@ export function resolveProfile(work: ProfileValues, episode: ProfileValues, proj
   const audioMode = pick(episode.audioMode, work.audioMode, null);
   const audioElements = pick(episode.audioElements, work.audioElements, null);
   const seed = pick(episode.seed, work.seed, null);
+  const negativeList = pick(episode.negativeList, work.negativeList, null);
+  const promptExtend = pick(episode.promptExtend, work.promptExtend, null);
   return {
     values: {
       modelId: modelId.value,
@@ -185,7 +219,9 @@ export function resolveProfile(work: ProfileValues, episode: ProfileValues, proj
       audioMode: audioMode.value,
       audioElements: audioElements.value,
       seed: seed.value,
-      durationSeconds: null
+      durationSeconds: null,
+      negativeList: negativeList.value,
+      promptExtend: promptExtend.value
     },
     sources: {
       modelId: modelId.source,
@@ -194,7 +230,9 @@ export function resolveProfile(work: ProfileValues, episode: ProfileValues, proj
       audioMode: audioMode.source,
       audioElements: audioElements.source,
       seed: seed.source,
-      durationSeconds: 'none'
+      durationSeconds: 'none',
+      negativeList: negativeList.source,
+      promptExtend: promptExtend.source
     }
   };
 }

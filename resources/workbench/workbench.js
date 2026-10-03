@@ -299,7 +299,7 @@
   /** 本组覆盖了哪些参数，一行文字；没有覆盖为空串。 */
   function describeOverrides(group) {
     const { overrides } = group;
-    const labels = { modelId: '模型', aspectRatio: '画幅', resolution: '分辨率', audioMode: '声音', audioElements: '声音内容', seed: '种子', durationSeconds: '生成时长' };
+    const labels = { modelId: '模型', aspectRatio: '画幅', resolution: '分辨率', audioMode: '声音', audioElements: '声音内容', seed: '种子', durationSeconds: '生成时长', negativeList: '负向清单', promptExtend: '提示词改写' };
     const parts = Object.keys(labels)
       .filter((field) => overrides[field] !== null)
       .map((field) => {
@@ -310,6 +310,8 @@
         }
         if (field === 'audioElements') return `${labels[field]}：${aiProfile.describeElements(value)}`;
         if (field === 'durationSeconds') return `${labels[field]}：${value} 秒`;
+        if (field === 'promptExtend') return `${labels[field]}：${value ? '开' : '关'}`;
+        if (field === 'negativeList') return `${labels[field]}：${value === '' ? '无' : value}`;
         return `${labels[field]}：${field === 'audioMode' ? AUDIO_MODE_LABELS[value] || value : value}`;
       });
     return parts.join(' · ');
@@ -328,7 +330,9 @@
         resolution: resolved.values.resolution,
         audioMode: resolved.values.audioMode,
         audioElements: resolved.values.audioElements,
-        seed: resolved.values.seed
+        seed: resolved.values.seed,
+        negativeList: resolved.values.negativeList,
+        promptExtend: resolved.values.promptExtend
       }
     };
   }
@@ -533,6 +537,7 @@
       { label: '声音内容', value: params.audioElements ? aiProfile.describeElements(params.audioElements) : '（未指定）' },
       { label: '种子', value: orNone(params.seed) },
       { label: '结果', value: describeResult(job.result) },
+      { label: '提示词格式', value: `第 ${job.promptFormat} 版` },
       { label: '提示词', value: job.prompt, long: true }
     ];
   }

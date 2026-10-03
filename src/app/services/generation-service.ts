@@ -9,7 +9,7 @@
 
 import { FORM_LEVEL_ERROR_KEY, NotFoundError, ProviderError, ValidationError } from '../../domain/errors';
 import { ACTIVE_JOB_STATUSES, GenerationParams, JOB_STATUS_LABELS, JobFailure, JobStatus, VideoJobRecord, VideoResultRecord } from '../../domain/models/generation';
-import { EMPTY_PROFILE, ProfileValues } from '../../domain/models/generation-profile';
+import { DEFAULT_NEGATIVE_LIST, EMPTY_PROFILE, NEGATIVE_LIST_PRESETS, ProfileValues } from '../../domain/models/generation-profile';
 import { DurationCapability, VideoAudioElement, VideoAudioMode, VideoCapability } from '../../domain/models/model-capability';
 import { EntityKind, ENTITY_KIND_LABELS } from '../../domain/models/screenplay';
 import { StageDisplayStatus, StageRun } from '../../domain/models/stage-run';
@@ -52,7 +52,7 @@ import { ChangeNotifier } from './change-notifier';
 import { ProjectService } from './project-service';
 import { ProviderService } from './provider-service';
 import { readGroupLayout, regroupShots, syncShotGroups } from './shot-grouping';
-import { StoryboardService, readStoryboardParams, storyboardTarget } from './storyboard-service';
+import { StoryboardService, readStoryboardParams, readStoryboardStyle, storyboardTarget } from './storyboard-service';
 import { WorkService } from './work-service';
 
 /** 每个镜头组在视图中最多显示的任务数（最新的在前）。 */
@@ -94,6 +94,8 @@ export interface WorkbenchModel {
   readonly audioElements: readonly VideoAudioElement[];
   /** 是否支持随机种子；不支持时参数页签的种子置灰。 */
   readonly supportsSeed: boolean;
+  /** 是否支持提示词改写开关；不支持时参数页签的开关置灰。 */
+  readonly supportsPromptExtend: boolean;
   /** 时长约束，页面据此检查本组指定的生成时长。 */
   readonly duration: DurationCapability;
   /** 时长约束的文字描述，如“2–30 秒，可由模型自动决定”。 */
@@ -106,6 +108,8 @@ export interface WorkbenchModel {
 export interface WorkbenchCatalog {
   readonly works: readonly WorkbenchWork[];
   readonly models: readonly WorkbenchModel[];
+  /** 提示词相关的默认值，参数页签据此说明“当前生效”并提供常用项。 */
+  readonly promptDefaults: { readonly negativeList: string; readonly negativePresets: readonly string[] };
 }
 
 /** 失败原因的界面视图。 */
@@ -158,6 +162,8 @@ export interface JobView {
   readonly usesPreviousTail: boolean;
   /** 是否以指定的图片作首帧。 */
   readonly usesFirstFrameImage: boolean;
+  /** 提示词格式版本，用于区分不同写法编译出的提示词；早期版本提交的任务为 1。 */
+  readonly promptFormat: number;
   /** 等待前序时说明在等什么；其他状态为 null。 */
   readonly waitNote: string | null;
   readonly result: JobResultView | null;
@@ -238,6 +244,12 @@ export interface GroupPreview {
   /** 按模型能力对齐后提交的整组时长（秒）；组不能提交时为 null。 */
   readonly durationSeconds: number | null;
   readonly firstFrame: 'none' | 'previous_tail' | 'image';
+  /** 将要提交的完整提示词；组不能提交时为 null。 */
+  readonly prompt: string | null;
+  /** 实际写在提示词末尾的负向清单；没有或组不能提交时为 null。 */
+  readonly negativeList: string | null;
+  /** 提示词改写开关；null 表示不传，由平台用默认值。 */
+  readonly promptExtend: boolean | null;
   readonly referenceImageCount: number;
   readonly referenceAudioCount: number;
   readonly audioMode: VideoAudioMode | null;
@@ -254,6 +266,13 @@ export interface GroupPreview {
 /** 提交预览：按组序号排列的各镜头组汇总。 */
 export interface SubmitPreview {
   readonly groups: readonly GroupPreview[];
+}
+
+/** 指定图片首帧解析出的资产图片文件及其像素尺寸（未知为 null）。 */
+interface ResolvedFirstFrameImage {
+  readonly fileId: number;
+  readonly width: number | null;
+  readonly height: number | null;
 }
 
 /** 预览时代替真实任务标识，让同一次预览里后一组能接在前一组之后。 */
@@ -289,7 +308,9 @@ function mergeGroupParams(base: GenerationParams, override: ProfileValues | unde
     audioMode: override.audioMode ?? base.audioMode,
     audioElements: override.audioElements ?? base.audioElements,
     seed: override.seed ?? base.seed,
-    durationSeconds: override.durationSeconds ?? base.durationSeconds
+    durationSeconds: override.durationSeconds ?? base.durationSeconds,
+    negativeList: override.negativeList ?? base.negativeList,
+    promptExtend: override.promptExtend ?? base.promptExtend
   };
 }
 
@@ -356,12 +377,13 @@ export class GenerationService {
         audioModes: capability.audioModes,
         audioElements: capability.audioElements,
         supportsSeed: capability.seed,
+        supportsPromptExtend: capability.promptExtend === true,
         duration: capability.duration,
         durationText: describeDuration(capability.duration),
         maxGroupSeconds: maxGroupSeconds(capability.duration)
       };
     });
-    return { works: workItems, models };
+    return { works: workItems, models, promptDefaults: { negativeList: DEFAULT_NEGATIVE_LIST, negativePresets: NEGATIVE_LIST_PRESETS } };
   }
 
   /**
@@ -506,6 +528,9 @@ export class GenerationService {
         totalSeconds: sumSeconds(members),
         durationSeconds: null,
         firstFrame: 'none',
+        prompt: null,
+        negativeList: null,
+        promptExtend: input.params.promptExtend,
         referenceImageCount: 0,
         referenceAudioCount: 0,
         audioMode: input.params.audioMode,
@@ -545,7 +570,7 @@ export class GenerationService {
         continue;
       }
       // 组的第一个镜头指定图片作首帧：取该资产的第一张参考图；模型不支持首帧或图片已不可用时拒绝这一组。
-      let firstFrameFileId: number | null = null;
+      let firstFrameImage: ResolvedFirstFrameImage | null = null;
       if (members[0]?.firstFrameMode === 'asset') {
         if (!capability.firstFrame) {
           reject(groupId, group, ['所选模型不支持首帧输入，无法用指定图片作首帧。请换一个支持首帧的模型，或点“编辑镜头”把首帧来源改为“无”。']);
@@ -556,7 +581,7 @@ export class GenerationService {
           reject(groupId, group, [resolved]);
           continue;
         }
-        firstFrameFileId = resolved;
+        firstFrameImage = resolved;
       }
       // 组的第一个镜头设为“上一镜头尾帧作首帧”时，这一组要接在上一组后面（第一组没有上一组，不适用）。
       let link: FirstFrameLink | undefined;
@@ -582,7 +607,9 @@ export class GenerationService {
         params: groupParams,
         entities: this.collectEntityReferences(input.workId, input.episodeId, [...new Set(members.flatMap((shot) => shot.entityIds))]),
         useFirstFrame: link !== undefined,
-        firstFrameFileId
+        firstFrameFileId: firstFrameImage === null ? null : firstFrameImage.fileId,
+        firstFrameSize: firstFrameImage === null ? null : { width: firstFrameImage.width, height: firstFrameImage.height },
+        style: readStoryboardStyle(run)
       });
       let issues: readonly string[];
       try {
@@ -619,7 +646,10 @@ export class GenerationService {
         shotCount: members.length,
         totalSeconds: total,
         durationSeconds: snapshot.params.durationSeconds,
-        firstFrame: link === undefined ? (firstFrameFileId === null ? 'none' : 'image') : 'previous_tail',
+        firstFrame: link === undefined ? (firstFrameImage === null ? 'none' : 'image') : 'previous_tail',
+        prompt: snapshot.prompt,
+        negativeList: snapshot.params.negativeList ?? null,
+        promptExtend: snapshot.params.extraParams.promptExtend === undefined ? null : snapshot.params.extraParams.promptExtend === true,
         referenceImageCount: snapshot.referenceImageFileIds.length,
         referenceAudioCount: snapshot.referenceAudioFileIds.length,
         audioMode: snapshot.params.audioMode,
@@ -917,18 +947,18 @@ export class GenerationService {
    * 解析指定图片首帧：取资产的第一张参考图。
    * @returns 资产图片文件标识；资产或图片不可用时返回说明原因的文字。
    */
-  private resolveFirstFrameFile(assetId: number | null): number | string {
+  private resolveFirstFrameFile(assetId: number | null): ResolvedFirstFrameImage | string {
     const { assets } = this.dependencies;
     const advice = '请点“编辑镜头”重新选择首帧图片，或把首帧来源改为“无”。';
     if (assetId === null) {
       return `这一组指定了图片作首帧，但指定的资产已被删除。${advice}`;
     }
     const asset = assets.findById(assetId);
-    const fileId = assets.listReferenceFiles(assetId)[0]?.id;
-    if (asset === undefined || fileId === undefined) {
+    const file = assets.listReferenceFiles(assetId)[0];
+    if (asset === undefined || file === undefined) {
       return `这一组指定了“${asset?.name ?? '图片'}”作首帧，但它已没有可用的参考图。${advice}`;
     }
-    return fileId;
+    return { fileId: file.id, width: file.width, height: file.height };
   }
 
   /** 收集出场实体的绑定：每个实体取形象主资产与音色主资产的第一个参考文件，顺序与给定的标识一致。 */
@@ -1008,6 +1038,7 @@ export class GenerationService {
       warnings: job.snapshot.warnings,
       usesPreviousTail: job.prevJobId !== null || job.firstFrameId !== null,
       usesFirstFrameImage: job.snapshot.firstFrameFileId != null,
+      promptFormat: job.snapshot.promptFormat ?? 1,
       waitNote: job.status === 'waiting' ? this.describeWaiting(job) : null,
       result:
         result === undefined

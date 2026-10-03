@@ -345,17 +345,17 @@
           field('画面与动作', action),
           field('时长（秒）', duration, '大于 0，最多 1 位小数'),
           field('场次', sceneLabel),
-          field('景别', shotSize),
-          field('机位与视角', cameraAngle),
-          field('摄影机运动', cameraMovement),
-          field('转场', transition),
+          field('景别', shotSize, '生成视频时自动写在提示词最前面，如“中景”“特写”'),
+          field('机位与视角', cameraAngle, '如“低角度仰拍”“平视”“24mm 广角”'),
+          field('摄影机运动', cameraMovement, '用大白话写，如“固定镜头，摄影机静止”“推近”“手持跟拍”'),
+          field('转场', transition, '与下一镜头的转场，如“叠化”；“切”（硬切）不写进提示词'),
           field('连续性要求', continuityNote),
           field('首帧来源', firstFrame, '以上一镜头尾帧为首帧时，需要等上一镜头生成完成；只在镜头组的第一个镜头上生效'),
           firstFrameAssetField,
           field('出场实体', entities, '对白的说话人会自动加入出场实体'),
           aiUi.h('div', { class: 'ui-field' }, aiUi.h('div', { class: 'ui-field__label', text: '声音' }), sounds.element),
-          field('中文提示词', promptZh),
-          field('英文提示词', promptEn)
+          field('中文提示词', promptZh, '按“主体 + 场景 + 运动”描述画面；景别、机位、运镜在上面的字段里填，台词在声音里填，生成视频时自动合并'),
+          field('英文提示词', promptEn, '只在模型不支持中文时使用，需要自己写上景别、机位和运镜')
         ],
         collect: () => ({
           action: action.getValue(),

@@ -38,6 +38,10 @@ export interface GenerationParams {
   readonly seed: number | null;
   /** 本组指定的生成时长（秒）；null 表示按组内镜头总时长向上对齐到模型支持的取值。只来自镜头组覆盖，提交请求本身不携带。 */
   readonly durationSeconds: number | null;
+  /** 负向清单：null 表示沿用默认清单，空串表示不要负向清单。提交请求携带的是已合并的值；镜头组的覆盖在合并参数时补上。 */
+  readonly negativeList: string | null;
+  /** 是否让平台改写提示词；null 表示不传，由平台用默认值（开启）。 */
+  readonly promptExtend: boolean | null;
 }
 
 /** 任务请求快照中实际使用的参数（组时长已按模型能力调整）。 */
@@ -49,6 +53,8 @@ export interface SnapshotParams {
   /** 实际传给模型的声音内容（已去掉模型不支持的项）；声音模式不是原生生成时为 null。早期版本提交的快照没有这个键。 */
   readonly audioElements?: readonly VideoAudioElement[] | null;
   readonly seed: number | null;
+  /** 实际写在提示词末尾的负向清单原文（已去掉与正向重复的项）；没有时为 null。早期版本提交的快照没有这个键。 */
+  readonly negativeList?: string | null;
   readonly extraParams: Readonly<Record<string, unknown>>;
 }
 
@@ -57,6 +63,8 @@ export interface JobSnapshot {
   readonly storyboardRunId: number;
   /** 本次生成包含的镜头，按序号排列。 */
   readonly shotIds: readonly number[];
+  /** 提示词格式版本：用于区分不同写法编译出的提示词；早期版本提交的快照没有这个键，视为 1。 */
+  readonly promptFormat?: number;
   readonly providerCode: string;
   readonly modelCode: string;
   /** 实际使用的提示词，已包含声音与参考素材的说明。 */

@@ -83,6 +83,10 @@ export interface VideoCapability {
   readonly referenceImagesMax: number;
   /** 是否支持随机种子：为 false 时生成参数不能设置种子；取值范围由适配器校验。 */
   readonly seed: boolean;
+  /** 是否支持让平台改写提示词（prompt_extend）；缺省为不支持。 */
+  readonly promptExtend?: boolean;
+  /** 有首帧时视频画幅是否跟随首帧图片：为 true 时不再传画幅（平台按首帧自适应），提交时给出提醒。 */
+  readonly firstFrameDefinesAspect?: boolean;
   readonly promptLanguages: readonly PromptLanguage[];
   readonly promptMaxLength: number;
 }

@@ -252,6 +252,14 @@
   margin-top: 6px;
 }
 
+/* 负向清单的常用项 */
+.wb-profile__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+
 /* 后续组采用的视频基于上一组旧版本尾帧时的提示 */
 .wb-stale {
   margin: 0 0 6px;

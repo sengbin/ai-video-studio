@@ -742,3 +742,28 @@ test('迁移 015：镜头新增指定首帧的资产列，已有镜头为空，�
     database.close();
   }
 });
+
+test('迁移 016：生成参数新增负向清单与提示词改写列，已有记录为空，空串、开关的开与关都能往返保存，改写开关只允许 0 或 1', () => {
+  const database = new DatabaseSync(IN_MEMORY_DATABASE_PATH);
+  try {
+    database.exec('PRAGMA foreign_keys = ON');
+    runMigrations(database, MIGRATIONS.slice(0, 15));
+    const { workId, episodeId } = seedWorkWithEpisode(database);
+    database.prepare("INSERT INTO generation_profiles (scope, work_id, resolution, seed, updated_at) VALUES ('work', ?, '720P', 5, ?)").run(workId, NOW);
+
+    runMigrations(database, MIGRATIONS);
+    assert.equal(readSchemaVersion(database), MIGRATIONS.length);
+    assert.deepEqual({ ...database.prepare('SELECT resolution, seed, negative_list, prompt_extend FROM generation_profiles').get() }, { resolution: '720P', seed: 5, negative_list: null, prompt_extend: null });
+
+    const profiles = new SqliteGenerationProfileRepository(database);
+    const work = { ...EMPTY_PROFILE, negativeList: '不要字幕，不要水印', promptExtend: false };
+    profiles.save({ scope: 'work', workId }, work, NOW);
+    assert.deepEqual(profiles.find({ scope: 'work', workId }), work, '关闭（0）与 null 不混淆');
+    const episode = { ...EMPTY_PROFILE, negativeList: '', promptExtend: true };
+    profiles.save({ scope: 'episode', episodeId }, episode, NOW);
+    assert.deepEqual(profiles.find({ scope: 'episode', episodeId }), episode, '空串与 null 不混淆');
+    assert.throws(() => database.prepare("UPDATE generation_profiles SET prompt_extend = 2 WHERE scope = 'work'").run());
+  } finally {
+    database.close();
+  }
+});

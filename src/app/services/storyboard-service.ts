@@ -436,6 +436,13 @@ export function storyboardTarget(workId: number, episodeId: number): StageTarget
   return { workId, stage: 'storyboard_script', episodeId };
 }
 
+/** 这一集分镜脚本的整体画面风格：生成时填写的风格，没有则用生成时的项目风格；都没有为 null。 */
+export function readStoryboardStyle(run: StageRun): string | null {
+  const projectStyle = (run.input as { projectStyle?: unknown }).projectStyle;
+  const style = readStoryboardParams(run)?.visualStyle ?? (typeof projectStyle === 'string' ? projectStyle : null);
+  return style === null || style.trim() === '' ? null : style.trim();
+}
+
 /** 从记录的输入快照中取出分镜脚本参数；快照结构不符时返回 null。 */
 export function readStoryboardParams(run: StageRun): StoryboardParams | null {
   const params = (run.input as { params?: unknown }).params;

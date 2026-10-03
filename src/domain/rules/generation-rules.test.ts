@@ -29,7 +29,7 @@ import {
   validateGroupParams
 } from './generation-rules';
 
-const PARAMS: GenerationParams = { modelId: 1, aspectRatio: '16:9', resolution: '720P', audioMode: null, audioElements: null, seed: null, durationSeconds: null };
+const PARAMS: GenerationParams = { modelId: 1, aspectRatio: '16:9', resolution: '720P', audioMode: null, audioElements: null, seed: null, durationSeconds: null, negativeList: null, promptExtend: null };
 
 function sound(overrides: Partial<SoundRecord>): SoundRecord {
   return { id: 1, kind: 'dialogue', speakerEntityId: null, text: '台词', delivery: '', startOffsetSeconds: null, durationSeconds: null, isEnabled: true, ...overrides };
@@ -40,10 +40,10 @@ function shot(overrides: Partial<ShotRecord> = {}): ShotRecord {
     id: 10,
     seq: 1,
     sceneLabel: '第01场',
-    shotSize: '中景',
-    cameraAngle: '平视',
+    shotSize: '',
+    cameraAngle: '',
     action: '守夜人登上灯塔',
-    cameraMovement: '推',
+    cameraMovement: '',
     durationSeconds: 5,
     transition: '',
     continuityNote: '',
@@ -73,7 +73,7 @@ test('读取提交请求：去重镜头组，可选参数为空时取 null', () 
     workId: 1,
     episodeId: 2,
     groupIds: [5, 6],
-    params: { modelId: 3, aspectRatio: null, resolution: '720P', audioMode: null, audioElements: null, seed: null, durationSeconds: null }
+    params: { modelId: 3, aspectRatio: null, resolution: '720P', audioMode: null, audioElements: null, seed: null, negativeList: null, promptExtend: null, durationSeconds: null }
   });
 });
 
@@ -140,12 +140,15 @@ test('模型单次最长时长：取可选值的最大值或范围上限，没�
   assert.equal(maxGroupSeconds({ min: 2 }), null);
 });
 
-test('时间标注：分:秒，小数秒保留 1 位', () => {
-  assert.deepEqual([0, 5, 59, 75, 600].map(formatTimestamp), ['0:00', '0:05', '0:59', '1:15', '10:00']);
-  assert.equal(formatTimestamp(2.5), '0:02.5');
+test('时间标注：分、秒各两位，小数秒保留 1 位', () => {
+  assert.deepEqual([0, 5, 59, 75, 600].map(formatTimestamp), ['00:00', '00:05', '00:59', '01:15', '10:00']);
+  assert.equal(formatTimestamp(2.5), '00:02.5');
 });
 
-test('编译镜头组：多个镜头用时间段依次描述，总时长为各镜头之和，快照记录组内镜头', () => {
+/** 没有台词也没有背景音乐、使用默认负向清单时，提示词末尾固定的两行。 */
+const DEFAULT_TAIL = ['无台词，无背景音乐。', '负向清单：不要字幕，不要水印。'];
+
+test('编译镜头组：多个镜头按“分镜 N（起-止）”依次描述，总时长为各镜头之和，快照记录组内镜头与提示词格式版本', () => {
   const snapshot = planMany([
     shot({ id: 10, durationSeconds: 3, promptZh: '远景，灯塔在暴风雨中' }),
     shot({ id: 11, seq: 2, durationSeconds: 3, promptZh: '中景，守夜人点燃油灯' }),
@@ -153,22 +156,121 @@ test('编译镜头组：多个镜头用时间段依次描述，总时长为各�
   ]);
   assert.equal(
     snapshot.prompt,
-    ['多镜头分镜，共 3 个镜头，按时间段依次呈现，镜头之间自然切换：', '(0:00 - 0:03) 远景，灯塔在暴风雨中', '(0:03 - 0:06) 中景，守夜人点燃油灯', '(0:06 - 0:09) 特写，灯光扫过海面'].join('\n')
+    [
+      '共 3 个镜头，按时间顺序依次呈现，镜头之间自然衔接。',
+      '分镜1（00:00-00:03）：远景，灯塔在暴风雨中。',
+      '分镜2（00:03-00:06）：中景，守夜人点燃油灯。',
+      '分镜3（00:06-00:09）：特写，灯光扫过海面。',
+      ...DEFAULT_TAIL
+    ].join('\n')
   );
   assert.deepEqual(snapshot.shotIds, [10, 11, 12]);
   assert.equal(snapshot.params.durationSeconds, 9);
+  assert.equal(snapshot.promptFormat, 2);
 });
 
-test('编译镜头组：总时长对齐后最后一段补足；单个镜头不加时间段和分镜说明', () => {
+test('编译镜头组：总时长对齐后最后一段补足；单个镜头写“生成单镜头”，不加编号和时间', () => {
   const snapshot = planMany([shot({ id: 10, durationSeconds: 4.2 }), shot({ id: 11, seq: 2, durationSeconds: 3.1, promptZh: '第二个镜头' })]);
   assert.equal(snapshot.params.durationSeconds, 8);
-  assert.ok(snapshot.prompt.endsWith('(0:04.2 - 0:08) 第二个镜头'));
+  assert.ok(snapshot.prompt.includes('分镜2（00:04.2-00:08）：第二个镜头。'));
   assert.match(snapshot.warnings.join(), /共 7.3 秒.*已调整为 8 秒/);
-  assert.ok(!plan({}).prompt.includes('(0:00'));
-  assert.ok(!plan({}).prompt.includes('多镜头'));
+  assert.ok(!snapshot.prompt.includes('生成单镜头'));
+  const single = plan({}).prompt;
+  assert.ok(single.startsWith('生成单镜头。\n'));
+  assert.ok(!single.includes('分镜') && !single.includes('共 '));
 });
 
-test('编译镜头组：组内不同镜头的声音挂在各自的时间段里；参考图按组内实体统一编号，只列一次', () => {
+test('编译镜头组：景别、机位与视角、摄影机运动字段写在镜头画面之前；转场写在镜头末尾，默认的“切”和最后一个镜头的转场不写', () => {
+  const snapshot = planMany([
+    shot({ id: 10, durationSeconds: 3, shotSize: '大远景', cameraAngle: '低角度仰拍', cameraMovement: '固定镜头，摄影机静止', promptZh: '灯塔矗立在悬崖上', transition: '叠化' }),
+    shot({ id: 11, seq: 2, durationSeconds: 3, shotSize: '特写', cameraAngle: '', cameraMovement: '推近', promptZh: '守夜人点燃油灯', transition: '切' }),
+    shot({ id: 12, seq: 3, durationSeconds: 3, shotSize: '', promptZh: '灯光扫过海面', transition: '叠化转场' })
+  ]);
+  assert.deepEqual(snapshot.prompt.split('\n').slice(1, 4), [
+    '分镜1（00:00-00:03）：大远景，低角度仰拍，固定镜头，摄影机静止。灯塔矗立在悬崖上。叠化转场。',
+    '分镜2（00:03-00:06）：特写，推近。守夜人点燃油灯。',
+    '分镜3（00:06-00:09）：灯光扫过海面。'
+  ]);
+  // 只有英文提示词时不拼接中文的镜头语言字段。
+  const english = plan({ shotSize: '特写', promptEn: 'A close-up of the watchman.' }, [], { ...FAKE_VIDEO_CAPABILITY, promptLanguages: ['en'] });
+  assert.ok(english.prompt.includes('A close-up of the watchman.') && !english.prompt.includes('特写'));
+});
+
+test('编译镜头组：整体画面风格写在提示词开头，没有风格时不写', () => {
+  const styled = planGroupRequest({ shots: [shot()], storyboardRunId: 3, providerCode: 'fake', modelCode: 'fake-video', capability: FAKE_VIDEO_CAPABILITY, params: PARAMS, entities: [], style: ' 35mm 电影胶片，青蓝色调 ' });
+  assert.equal(styled.prompt.split('\n')[1], '风格：35mm 电影胶片，青蓝色调。');
+  assert.ok(!plan({}).prompt.includes('风格：'));
+});
+
+test('编译镜头组：没有台词时写“无台词”，没选背景音乐（或模型不支持）时写“无背景音乐”；选了就由模型发挥；无声时都不写', () => {
+  const withMusic = { ...FAKE_VIDEO_CAPABILITY, audioElements: ['dialogue' as const, 'sfx' as const, 'music' as const] };
+  const dialogue = [sound({ kind: 'dialogue', speakerEntityId: 1, text: '要下雨了' })];
+  assert.ok(plan({}, [], withMusic).prompt.includes('无台词。'), '有背景音乐可选且默认全选：只写无台词');
+  assert.ok(!plan({}, [], withMusic).prompt.includes('无背景音乐'));
+  assert.ok(plan({ sounds: dialogue }, [GUARD], withMusic, { ...PARAMS, audioElements: ['dialogue', 'sfx'] }).prompt.includes('无背景音乐。'));
+  const spoken = plan({ sounds: dialogue }, [GUARD]).prompt;
+  assert.ok(!spoken.includes('无台词') && spoken.includes('无背景音乐。'));
+  const narration = plan({ sounds: [sound({ kind: 'narration', text: '夜深了' })] }, [], { ...FAKE_VIDEO_CAPABILITY, audioElements: ['narration' as const] }, { ...PARAMS, audioElements: ['narration'] }).prompt;
+  assert.ok(!narration.includes('无台词'), '旁白也算台词');
+  const silent = plan({}, [], FAKE_VIDEO_CAPABILITY, { ...PARAMS, audioMode: 'none' }).prompt;
+  assert.ok(!silent.includes('无台词') && !silent.includes('无背景音乐'));
+});
+
+test('编译镜头组：负向清单默认“不要字幕，不要水印”；本级设置的清单整理后写在末尾，空串表示不要，与正向重复的项去掉', () => {
+  const lastLine = (prompt: string): string => prompt.split('\n').at(-1) ?? '';
+  assert.equal(lastLine(plan({}).prompt), '负向清单：不要字幕，不要水印。');
+  const custom = plan({}, [], FAKE_VIDEO_CAPABILITY, { ...PARAMS, negativeList: '不要人脸变形，不要多余手指；不要人脸变形、 ' });
+  assert.equal(lastLine(custom.prompt), '负向清单：不要人脸变形，不要多余手指。');
+  assert.equal(custom.params.negativeList, '不要人脸变形，不要多余手指');
+  const none = plan({}, [], FAKE_VIDEO_CAPABILITY, { ...PARAMS, negativeList: '' });
+  assert.ok(!none.prompt.includes('负向清单') && none.params.negativeList === null);
+  const repeated = plan({ promptZh: '画面干净，不要字幕' }, [], FAKE_VIDEO_CAPABILITY, { ...PARAMS, negativeList: '不要字幕，不要水印' });
+  assert.equal(lastLine(repeated.prompt), '负向清单：不要水印。');
+});
+
+test('编译镜头组：有首帧且模型按首帧自适应画幅时不传画幅；指定图片与作品画幅差得多时提醒', () => {
+  const adaptive = { ...FAKE_VIDEO_CAPABILITY, firstFrameDefinesAspect: true };
+  const base = { storyboardRunId: 3, providerCode: 'fake', modelCode: 'fake-video', capability: adaptive, params: PARAMS, entities: [] as EntityReferences[] };
+  const portrait = planGroupRequest({ ...base, shots: [shot({ firstFrameMode: 'asset', firstFrameAssetId: 7 })], firstFrameFileId: 301, firstFrameSize: { width: 750, height: 1000 } });
+  assert.equal(portrait.params.aspectRatio, null);
+  assert.match(portrait.warnings.join(), /比例约为 3:4.*作品画幅 16:9.*按首帧图片的比例生成/);
+  const similar = planGroupRequest({ ...base, shots: [shot({ firstFrameMode: 'asset', firstFrameAssetId: 7 })], firstFrameFileId: 301, firstFrameSize: { width: 1920, height: 1080 } });
+  assert.deepEqual([similar.params.aspectRatio, similar.warnings], [null, []]);
+  const tail = planGroupRequest({ ...base, shots: [shot({ firstFrameMode: 'prev_tail' })], useFirstFrame: true });
+  assert.deepEqual([tail.params.aspectRatio, tail.warnings], [null, []]);
+  const unknownSize = planGroupRequest({ ...base, shots: [shot({ firstFrameMode: 'asset', firstFrameAssetId: 7 })], firstFrameFileId: 301, firstFrameSize: { width: null, height: null } });
+  assert.deepEqual([unknownSize.params.aspectRatio, unknownSize.warnings], [null, []]);
+  assert.equal(planGroupRequest({ ...base, shots: [shot()] }).params.aspectRatio, '16:9', '没有首帧时照常传画幅');
+  assert.equal(plan({ firstFrameMode: 'asset' }, [], FAKE_VIDEO_CAPABILITY).params.aspectRatio, '16:9', '模型没有声明首帧决定画幅时也照常传');
+});
+
+test('编译镜头组：提示词改写只在模型支持时写入快照的专有参数；不支持的模型设置了开关会被阻断', () => {
+  const extend = { ...FAKE_VIDEO_CAPABILITY, promptExtend: true };
+  assert.deepEqual(plan({}, [], extend, { ...PARAMS, promptExtend: false }).params.extraParams, { promptExtend: false });
+  assert.deepEqual(plan({}, [], extend).params.extraParams, {});
+  assert.deepEqual(plan({}, [], FAKE_VIDEO_CAPABILITY, { ...PARAMS, promptExtend: true }).params.extraParams, {});
+  assert.match(validateGroupParams(FAKE_VIDEO_CAPABILITY, { ...PARAMS, promptExtend: true }, 3).join(), /不支持提示词改写/);
+  assert.deepEqual(validateGroupParams(extend, { ...PARAMS, promptExtend: true }, 3), []);
+});
+
+test('读取提交请求：负向清单与提示词改写可选，不合法时指出字段', () => {
+  const read = (params: Record<string, unknown>) => readSubmitInput({ workId: 1, episodeId: 2, groupIds: [5], params: { modelId: 3, ...params } }).params;
+  assert.deepEqual([read({ negativeList: ' 不要字幕 ', promptExtend: false }).negativeList, read({ negativeList: ' 不要字幕 ', promptExtend: false }).promptExtend], ['不要字幕', false]);
+  assert.equal(read({ negativeList: '' }).negativeList, '', '空串表示明确不要负向清单');
+  const fieldOf = (params: Record<string, unknown>): string[] => {
+    try {
+      read(params);
+    } catch (error) {
+      if (error instanceof ValidationError) return Object.keys(error.fieldErrors);
+    }
+    return [];
+  };
+  assert.deepEqual(fieldOf({ negativeList: 5 }), ['negativeList']);
+  assert.deepEqual(fieldOf({ negativeList: 'x'.repeat(301) }), ['negativeList']);
+  assert.deepEqual(fieldOf({ promptExtend: 'yes' }), ['promptExtend']);
+});
+
+test('编译镜头组：组内不同镜头的声音挂在各自的分镜里；参考图按组内实体统一编号，只列一次，对白说话人写成“图N的名字”', () => {
   const snapshot = planMany(
     [
       shot({ id: 10, durationSeconds: 5, promptZh: '镜头一', sounds: [sound({ kind: 'dialogue', speakerEntityId: 1, text: '要下雨了' })] }),
@@ -179,10 +281,12 @@ test('编译镜头组：组内不同镜头的声音挂在各自的时间段里�
   assert.equal(
     snapshot.prompt,
     [
-      '图1是角色“守夜人”的形象参考。',
-      '多镜头分镜，共 2 个镜头，按时间段依次呈现，镜头之间自然切换：',
-      '(0:00 - 0:05) 镜头一 声音：守夜人说：“要下雨了”',
-      '(0:05 - 0:10) 镜头二 声音：音效：雷声'
+      '共 2 个镜头，按时间顺序依次呈现，镜头之间自然衔接。',
+      '守夜人形象参考图1。',
+      '分镜1（00:00-00:05）：镜头一。图1的守夜人说：“要下雨了”。',
+      '分镜2（00:05-00:10）：镜头二。音效：雷声。',
+      '无背景音乐。',
+      '负向清单：不要字幕，不要水印。'
     ].join('\n')
   );
   assert.deepEqual(snapshot.referenceImageFileIds, [101]);
@@ -213,7 +317,7 @@ test('编译镜头组：用上一组尾帧作首帧时不传参考图和音色�
   });
   assert.deepEqual([continued.referenceImageFileIds, continued.referenceAudioFileIds], [[], []]);
   assert.ok(!continued.prompt.includes('图1') && !continued.prompt.includes('音频1'));
-  assert.ok(continued.prompt.includes('守夜人说：“要下雨了”'), '声音提示词仍然保留');
+  assert.ok(continued.prompt.includes('守夜人说：“要下雨了”'), '声音提示词仍然保留，没有参考图时说话人只写名字');
   assert.match(continued.warnings.join(), /尾帧作首帧.*不传参考素材/);
   assert.ok(!continued.warnings.join().includes('没有上一组可用'));
 });
@@ -249,7 +353,7 @@ test('失败说明：本扩展自己产生的错误码有专门的说明，其�
 
 test('编译镜头：使用中文提示词、对齐时长，默认原生声音并记录快照', () => {
   const snapshot = plan({ durationSeconds: 3.6 });
-  assert.equal(snapshot.prompt, '中景，守夜人缓缓登上灯塔');
+  assert.equal(snapshot.prompt, ['生成单镜头。', '中景，守夜人缓缓登上灯塔。', ...DEFAULT_TAIL].join('\n'));
   assert.deepEqual(snapshot.params, {
     aspectRatio: '16:9',
     resolution: '720P',
@@ -257,6 +361,7 @@ test('编译镜头：使用中文提示词、对齐时长，默认原生声音�
     audioMode: 'native',
     audioElements: ['dialogue', 'sfx'],
     seed: null,
+    negativeList: '不要字幕，不要水印',
     extraParams: {}
   });
   assert.deepEqual([snapshot.storyboardRunId, snapshot.providerCode, snapshot.modelCode], [3, 'fake', 'fake-video']);
@@ -265,9 +370,9 @@ test('编译镜头：使用中文提示词、对齐时长，默认原生声音�
 
 test('编译镜头：提示词语言取决于模型，中文为空时退回画面描述', () => {
   const englishOnly = { ...FAKE_VIDEO_CAPABILITY, promptLanguages: ['en' as const] };
-  assert.equal(plan({}, [], englishOnly).prompt, 'A watchman climbs the lighthouse');
-  assert.equal(plan({ promptZh: '  ' }).prompt, '守夜人登上灯塔');
-  assert.equal(plan({ promptZh: '', promptEn: '' }, [], englishOnly).prompt, '守夜人登上灯塔');
+  assert.ok(plan({}, [], englishOnly).prompt.includes('A watchman climbs the lighthouse.'));
+  assert.ok(plan({ promptZh: '  ' }).prompt.includes('守夜人登上灯塔。'));
+  assert.ok(plan({ promptZh: '', promptEn: '' }, [], englishOnly).prompt.includes('守夜人登上灯塔。'));
 });
 
 test('编译镜头：参考图编号写入提示词，未绑定的实体给出提醒，超出上限的忽略', () => {
@@ -275,7 +380,7 @@ test('编译镜头：参考图编号写入提示词，未绑定的实体给出�
   const unbound: EntityReferences = { entityId: 3, name: '旧钥匙', kind: 'prop', visualFileId: null, voiceFileId: null };
   const snapshot = plan({}, [GUARD, lighthouse, unbound]);
   assert.deepEqual(snapshot.referenceImageFileIds, [101, 102]);
-  assert.ok(snapshot.prompt.startsWith('图1是角色“守夜人”的形象参考。图2是场景“灯塔”的形象参考。\n中景'));
+  assert.ok(snapshot.prompt.includes('守夜人形象参考图1，灯塔场景参考图2。\n中景'));
   assert.ok(snapshot.warnings.some((warning) => warning.includes('道具“旧钥匙”还没有绑定资产')));
 
   const tight = { ...FAKE_VIDEO_CAPABILITY, referenceImagesMax: 1 };
@@ -294,7 +399,7 @@ test('编译镜头：原生声音把启用的条目写入提示词，模型不�
   ];
   const snapshot = plan({ sounds }, [GUARD]);
   // 假模型只支持对白和音效。
-  assert.ok(snapshot.prompt.endsWith('声音：守夜人（低声）说：“要下雨了”；音效：海浪声（远处）'));
+  assert.ok(snapshot.prompt.includes('图1的守夜人（低声）说：“要下雨了”。音效：海浪声（远处）。'));
   assert.ok(!snapshot.prompt.includes('已关闭') && !snapshot.prompt.includes('夜深了'));
   assert.ok(snapshot.warnings.includes('模型不支持以下声音内容，已忽略：旁白、配乐。'));
 });
@@ -306,8 +411,9 @@ test('编译镜头：声音内容只传选中的类型；选了模型不支持�
     sound({ id: 3, kind: 'sfx', text: '海浪声' })
   ];
   const onlySfx = plan({ sounds }, [GUARD], FAKE_VIDEO_CAPABILITY, { ...PARAMS, audioElements: ['sfx'] });
-  assert.ok(onlySfx.prompt.endsWith('声音：音效：海浪声'));
+  assert.ok(onlySfx.prompt.includes('音效：海浪声。'));
   assert.ok(!onlySfx.prompt.includes('要下雨了'));
+  assert.ok(onlySfx.prompt.includes('无台词，无背景音乐。'), '没选对白和旁白：明确写无台词');
   assert.deepEqual(onlySfx.params.audioElements, ['sfx']);
   assert.deepEqual(onlySfx.warnings.filter((warning) => warning.includes('声音内容')), []);
 
@@ -332,14 +438,14 @@ test('编译镜头：种子写入快照；本组指定生成时长时直接采�
 test('编译镜头：选择无声时不写声音提示词；音色参考只给有对白的角色且受模型支持', () => {
   const sounds = [sound({ kind: 'dialogue', speakerEntityId: 1, text: '要下雨了' })];
   const silent = plan({ sounds }, [GUARD], FAKE_VIDEO_CAPABILITY, { ...PARAMS, audioMode: 'none' });
-  assert.ok(!silent.prompt.includes('声音：'));
+  assert.ok(!silent.prompt.includes('说：') && !silent.prompt.includes('无台词'));
   assert.equal(silent.params.audioMode, 'none');
 
   const voiced: EntityReferences = { ...GUARD, voiceFileId: 201 };
   const withVoiceModel = { ...FAKE_VIDEO_CAPABILITY, voiceReference: true, audioInputMax: { count: 2, maxSeconds: 15 } };
   const supported = plan({ sounds }, [voiced], withVoiceModel);
   assert.deepEqual(supported.referenceAudioFileIds, [201]);
-  assert.ok(supported.prompt.includes('音频1是角色“守夜人”的音色参考。'));
+  assert.ok(supported.prompt.includes('守夜人形象参考图1，守夜人音色参考音频1。'));
   assert.deepEqual(plan({ sounds }, [voiced]).referenceAudioFileIds, [], '模型不支持参考音频');
   assert.deepEqual(plan({}, [voiced], withVoiceModel).referenceAudioFileIds, [], '没有对白不需要音色参考');
 });

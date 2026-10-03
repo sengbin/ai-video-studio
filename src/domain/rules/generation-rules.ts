@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：generation-rules.ts
-// 说明：视频生成的规则：提交请求的读取与校验、把镜头组的总时长对齐到模型允许的取值（或按本组指定的生成时长）、检查种子与指定时长能否用于所选模型、把一组镜头编译为带时间段的提示词与请求快照（含以上一组尾帧作首帧、按选定的声音内容编译声音）、工作台上传的尾帧图片的校验，以及失败原因的界面说明。
+// 说明：视频生成的规则：提交请求的读取与校验、把镜头组的总时长对齐到模型允许的取值（或按本组指定的生成时长）、检查种子、提示词改写与指定时长能否用于所选模型、按千问官方提示词公式把一组镜头编译为提示词与请求快照（含分镜编号与时间、镜头语言、台词、无台词与无背景音乐、负向清单，以及以上一组尾帧或指定图片作首帧）、工作台上传的尾帧图片的校验，以及失败原因的界面说明。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
@@ -9,13 +9,23 @@
 
 import { FORM_LEVEL_ERROR_KEY, ValidationError } from '../errors';
 import { GenerationParams, JobFailure, JobSnapshot } from '../models/generation';
-import { DurationCapability, VIDEO_AUDIO_ELEMENTS, VIDEO_AUDIO_ELEMENT_LABELS, VideoAudioElement, VideoAudioMode, VideoCapability } from '../models/model-capability';
+import { DEFAULT_NEGATIVE_LIST } from '../models/generation-profile';
+import { DurationCapability, PromptLanguage, VIDEO_AUDIO_ELEMENTS, VIDEO_AUDIO_ELEMENT_LABELS, VideoAudioElement, VideoAudioMode, VideoCapability } from '../models/model-capability';
 import { ENTITY_KIND_LABELS, EntityKind } from '../models/screenplay';
 import { ShotRecord, SoundRecord } from '../models/storyboard';
 import { readRecord } from './field-readers';
-import { AUDIO_ELEMENTS_ERROR_TEXT, SEED_ERROR_TEXT, isValidSeed, readAudioElements } from './generation-profile-rules';
+import {
+  AUDIO_ELEMENTS_ERROR_TEXT,
+  NEGATIVE_LIST_ERROR_TEXT,
+  PROMPT_EXTEND_ERROR_TEXT,
+  SEED_ERROR_TEXT,
+  isValidSeed,
+  readAudioElements,
+  readNegativeList
+} from './generation-profile-rules';
 import { describeDuration, isDurationAllowed } from './model-capability-rules';
 import { sumSeconds } from './shot-group-rules';
+import { VIDEO_PROMPT_FORMAT_VERSION, aspectDiffers, describeCamera, describeImageRatio, describeTransition, endSentence, normalizeNegativeItems } from './video-prompt-rules';
 
 /** 一次提交最多包含的镜头组数。 */
 export const MAX_SUBMIT_GROUPS = 100;
@@ -103,7 +113,7 @@ function readOptionalParam(source: Record<string, unknown>, key: string, label: 
 
 /**
  * 读取并校验提交请求。
- * @param rawInput 界面提交的原始内容：workId、episodeId、groupIds、params（modelId、aspectRatio、resolution、audioMode、audioElements、seed）。
+ * @param rawInput 界面提交的原始内容：workId、episodeId、groupIds、params（modelId、aspectRatio、resolution、audioMode、audioElements、seed、negativeList、promptExtend）。
  * @throws ValidationError 内容不合法。
  */
 export function readSubmitInput(rawInput: unknown): SubmitInput {
@@ -128,6 +138,14 @@ export function readSubmitInput(rawInput: unknown): SubmitInput {
   if (seed !== null && !isValidSeed(seed)) {
     throw new ValidationError({ seed: SEED_ERROR_TEXT });
   }
+  const negativeList = params.negativeList === undefined ? null : readNegativeList(params.negativeList);
+  if (negativeList === undefined) {
+    throw new ValidationError({ negativeList: NEGATIVE_LIST_ERROR_TEXT });
+  }
+  const promptExtend = params.promptExtend === undefined ? null : params.promptExtend;
+  if (promptExtend !== null && typeof promptExtend !== 'boolean') {
+    throw new ValidationError({ promptExtend: PROMPT_EXTEND_ERROR_TEXT });
+  }
   return {
     workId,
     episodeId,
@@ -139,6 +157,8 @@ export function readSubmitInput(rawInput: unknown): SubmitInput {
       audioMode,
       audioElements,
       seed,
+      negativeList,
+      promptExtend,
       // 生成时长只能按镜头组指定，提交请求不携带；镜头组的覆盖在合并参数时补上。
       durationSeconds: null
     }
@@ -248,6 +268,9 @@ export function validateGroupParams(capability: VideoCapability, params: Generat
   if (params.seed !== null && !capability.seed) {
     issues.push('所选模型不支持随机种子，请清除种子设置或换一个模型。');
   }
+  if (params.promptExtend !== null && capability.promptExtend !== true) {
+    issues.push('所选模型不支持提示词改写开关，请清除该设置或换一个模型。');
+  }
   const requested = params.durationSeconds;
   if (requested !== null) {
     // 指定时长小于镜头总时长会让后面的镜头没有时间呈现，直接拒绝而不是静默截断。
@@ -284,6 +307,10 @@ export interface GroupPlanInput {
   readonly useFirstFrame?: boolean;
   /** 组内第一个镜头指定图片作首帧时，已解析出的资产图片文件；没有指定或图片已不可用为 null。同样不再传参考图和音色参考，且不会与 useFirstFrame 同时出现。 */
   readonly firstFrameFileId?: number | null;
+  /** 指定的首帧图片的宽高（像素）；用于和作品画幅比较，不一致时提醒。未知时不传。 */
+  readonly firstFrameSize?: { readonly width: number | null; readonly height: number | null } | null;
+  /** 整体画面风格（分镜脚本的风格或项目风格），写在提示词开头；没有时为 null。 */
+  readonly style?: string | null;
 }
 
 /** 声音条目编译成一句提示词。 */
@@ -302,24 +329,34 @@ function describeSound(sound: SoundRecord, speakerName: string | undefined): str
   }
 }
 
-/** 选择提示词语言：模型支持中文用中文，否则用英文，都没有时用画面描述。 */
-function pickPrompt(shot: ShotRecord, capability: VideoCapability): string {
-  if (capability.promptLanguages.includes('zh') && shot.promptZh.trim() !== '') return shot.promptZh.trim();
-  if (capability.promptLanguages.includes('en') && shot.promptEn.trim() !== '') return shot.promptEn.trim();
-  return shot.action.trim();
+/** 选择提示词语言：模型支持中文用中文，否则用英文，都没有时用画面描述（中文）。 */
+function pickPrompt(shot: ShotRecord, capability: VideoCapability): { readonly text: string; readonly language: PromptLanguage } {
+  if (capability.promptLanguages.includes('zh') && shot.promptZh.trim() !== '') return { text: shot.promptZh.trim(), language: 'zh' };
+  if (capability.promptLanguages.includes('en') && shot.promptEn.trim() !== '') return { text: shot.promptEn.trim(), language: 'en' };
+  return { text: shot.action.trim(), language: 'zh' };
 }
 
-/** 把秒数写成“分:秒”，如 75 秒为 1:15；小数秒保留 1 位。 */
+/** 把秒数写成“分:秒”（分、秒各两位），如 75 秒为 01:15；小数秒保留 1 位。 */
 export function formatTimestamp(seconds: number): string {
   const rounded = Math.round(seconds * 10) / 10;
   const minutes = Math.floor(rounded / 60);
   const rest = Math.round((rounded - minutes * 60) * 10) / 10;
   const text = Number.isInteger(rest) ? String(rest).padStart(2, '0') : rest.toFixed(1).padStart(4, '0');
-  return `${minutes}:${text}`;
+  return `${String(minutes).padStart(2, '0')}:${text}`;
 }
 
+/** 参考图说明里各类实体的称呼：如“守夜人形象参考图1”“灯塔场景参考图2”。 */
+const REFERENCE_KIND_WORDS: Readonly<Record<EntityKind, string>> = {
+  character: '形象',
+  scene: '场景',
+  prop: '道具',
+  effect: '特效'
+};
+
 /**
- * 把一个镜头组编译为任务请求快照：多镜头用“(开始 - 结束)”时间段依次描述，拼上参考素材与声音说明，按模型能力对齐时长与声音，并列出提醒。
+ * 把一个镜头组编译为任务请求快照，写法依据千问AI平台官方提示词指南：
+ * 提示词 = 总体描述（单镜头声明或镜头数）+ 风格 + 参考素材引用 + 分镜 N（起-止）：镜头语言与画面、台词、音效与背景音乐、转场 + 无台词、无背景音乐 + 负向清单。
+ * 镜头的景别、机位与视角、摄影机运动由字段编译，所以镜头的提示词只需描述主体、场景与动作；英文提示词不使用这些字段。
  * 上一组尾帧作首帧由调用方通过 useFirstFrame 告知（尾帧图片不进快照，由任务记录）；指定图片作首帧由调用方解析出资产图片文件后通过 firstFrameFileId 告知（文件标识进快照）；组内其他镜头的首帧设置在同一个视频内自然衔接，不需要处理。
  * 组总时长超过模型单次最长时长的情况由调用方先用 maxGroupSeconds 拒绝；这里对齐后的时长不会超过模型最长时长。本组指定了生成时长（params.durationSeconds）时直接采用，是否合法由调用方先用 validateGroupParams 检查。
  * @param input 镜头组、模型能力、生成参数与出场实体的绑定。
@@ -339,11 +376,20 @@ export function planGroupRequest(input: GroupPlanInput): JobSnapshot {
     warnings.push('这一组设置了“指定图片作首帧”，但指定的图片已不可用，本次不指定首帧。');
   }
 
-  const audioMode: VideoAudioMode | null = params.audioMode ?? (capability.audioModes.includes('native') ? 'native' : capability.audioModes.includes('none') ? 'none' : null);
-  const notes: string[] = [];
+  // 有首帧时，官方建议画幅用 adaptive（按首帧宽高比自动匹配），所以不再传作品画幅；指定的图片与作品画幅差得多时提醒。
+  const followsFirstFrame = hasFirstFrame && capability.firstFrameDefinesAspect === true;
+  const aspectRatio = followsFirstFrame ? null : params.aspectRatio;
+  const frameSize = input.firstFrameSize ?? null;
+  if (followsFirstFrame && !useFirstFrame && frameSize !== null && frameSize.width !== null && frameSize.height !== null && aspectDiffers(frameSize.width, frameSize.height, params.aspectRatio)) {
+    warnings.push(`指定的首帧图片比例约为 ${describeImageRatio(frameSize.width, frameSize.height)}，与作品画幅 ${params.aspectRatio} 不一致；视频会按首帧图片的比例生成，不使用作品画幅。`);
+  }
 
-  // 参考图：按出场实体顺序，每个实体取形象主资产的第一张图；数量受模型上限限制。用上一组尾帧作首帧时不传参考图。
+  const audioMode: VideoAudioMode | null = params.audioMode ?? (capability.audioModes.includes('native') ? 'native' : capability.audioModes.includes('none') ? 'none' : null);
+
+  // 参考图：按出场实体顺序，每个实体取形象主资产的第一张图；数量受模型上限限制。有首帧时不传参考图。
   const referenceImageFileIds: number[] = [];
+  const imageNotes: string[] = [];
+  const imageIndexByEntity = new Map<number, number>();
   if (hasFirstFrame) {
     if (entities.length > 0) {
       warnings.push(`这一组以${useFirstFrame ? '上一组的尾帧' : '指定的图片'}作首帧，首帧不能与参考图、音色参考同时使用，本次不传参考素材（角色、场景的形象由${useFirstFrame ? '尾帧' : '首帧图片'}延续）。`);
@@ -356,14 +402,17 @@ export function planGroupRequest(input: GroupPlanInput): JobSnapshot {
       warnings.push(`模型最多支持 ${capability.referenceImagesMax} 张参考图，“${entity.name}”的参考图已忽略。`);
     } else {
       referenceImageFileIds.push(entity.visualFileId);
-      notes.push(`图${referenceImageFileIds.length}是${ENTITY_KIND_LABELS[entity.kind]}“${entity.name}”的形象参考。`);
+      imageIndexByEntity.set(entity.entityId, referenceImageFileIds.length);
+      imageNotes.push(`${entity.name}${REFERENCE_KIND_WORDS[entity.kind]}参考图${referenceImageFileIds.length}`);
     }
   }
 
   // 声音：只有原生声音模式才编译声音提示词和音色参考；用户选的声音内容（缺省为全部）之外的条目不传，选了但模型不支持的内容忽略并提醒。
   const referenceAudioFileIds: number[] = [];
+  const voiceNotes: string[] = [];
   const soundsByShot = new Map<number, string[]>();
   let usedAudioElements: VideoAudioElement[] | null = null;
+  let spokenLineCount = 0;
   if (audioMode === 'native') {
     const selected = params.audioElements ?? VIDEO_AUDIO_ELEMENTS;
     usedAudioElements = VIDEO_AUDIO_ELEMENTS.filter((element) => selected.includes(element) && capability.audioElements.includes(element));
@@ -377,7 +426,8 @@ export function planGroupRequest(input: GroupPlanInput): JobSnapshot {
           skipped.add(sound.kind);
           continue;
         }
-        lines.push(describeSound(sound, sound.speakerEntityId === null ? undefined : names.get(sound.speakerEntityId)));
+        if (sound.kind === 'dialogue' || sound.kind === 'narration') spokenLineCount += 1;
+        lines.push(describeSound(sound, speakerLabel(sound, names, imageIndexByEntity)));
       }
       soundsByShot.set(shot.id, lines);
     }
@@ -393,7 +443,7 @@ export function planGroupRequest(input: GroupPlanInput): JobSnapshot {
     for (const entity of entities) {
       if (audioLimit === null || entity.voiceFileId === null || !speakerIds.has(entity.entityId) || referenceAudioFileIds.length >= audioLimit.count) continue;
       referenceAudioFileIds.push(entity.voiceFileId);
-      notes.push(`音频${referenceAudioFileIds.length}是角色“${entity.name}”的音色参考。`);
+      voiceNotes.push(`${entity.name}音色参考音频${referenceAudioFileIds.length}`);
     }
   }
 
@@ -405,39 +455,69 @@ export function planGroupRequest(input: GroupPlanInput): JobSnapshot {
     warnings.push(`这一组共 ${total} 秒，不在模型支持的取值内，已调整为 ${duration.seconds} 秒。`);
   }
 
-  // 镜头段：多镜头加时间段标注，最后一段补足到对齐后的总时长；单镜头不加。
+  // 分镜：多镜头写成“分镜 N（起-止）：…”，最后一段补足到对齐后的总时长；单镜头不加编号和时间。
   const isMulti = shots.length > 1;
   let cursor = 0;
   const segments = shots.map((shot, index) => {
     const start = cursor;
     cursor += shot.durationSeconds;
     const end = index === shots.length - 1 ? Math.max(cursor, duration.seconds) : cursor;
-    const sound = soundsByShot.get(shot.id) ?? [];
-    const body = [pickPrompt(shot, capability), sound.length === 0 ? '' : `声音：${sound.join('；')}`].filter((part) => part !== '').join(' ');
-    return isMulti ? `(${formatTimestamp(start)} - ${formatTimestamp(end)}) ${body}` : body;
+    const picked = pickPrompt(shot, capability);
+    const isChinese = picked.language === 'zh';
+    const camera = isChinese ? endSentence(describeCamera(shot)) : '';
+    const sounds = (soundsByShot.get(shot.id) ?? []).map(endSentence).join('');
+    // 最后一个镜头没有组内的下一镜头，它的转场属于组与组之间，不写。
+    const transition = isChinese && index < shots.length - 1 ? endSentence(describeTransition(shot.transition)) : '';
+    const body = `${camera}${endSentence(picked.text)}${sounds}${transition}`;
+    return isMulti ? `分镜${index + 1}（${formatTimestamp(start)}-${formatTimestamp(end)}）：${body}` : body;
   });
 
-  const prompt = [notes.join(''), isMulti ? `多镜头分镜，共 ${shots.length} 个镜头，按时间段依次呈现，镜头之间自然切换：` : '', segments.join('\n')]
-    .filter((part) => part !== '')
-    .join('\n');
+  const sections: string[] = [];
+  sections.push(isMulti ? `共 ${shots.length} 个镜头，按时间顺序依次呈现，镜头之间自然衔接。` : '生成单镜头。');
+  const style = input.style?.trim() ?? '';
+  if (style !== '') sections.push(endSentence(`风格：${style}`));
+  const referenceNotes = [...imageNotes, ...voiceNotes];
+  if (referenceNotes.length > 0) sections.push(`${referenceNotes.join('，')}。`);
+  sections.push(...segments);
+  // 官方：不写台词，模型会自己加台词；不写背景音乐，模型会自己发挥。用户没要的内容要明确写“无”。
+  if (audioMode === 'native') {
+    const absent: string[] = [];
+    if (spokenLineCount === 0) absent.push('无台词');
+    if (usedAudioElements !== null && !usedAudioElements.includes('music')) absent.push('无背景音乐');
+    if (absent.length > 0) sections.push(`${absent.join('，')}。`);
+  }
+  const negativeItems = normalizeNegativeItems(params.negativeList ?? DEFAULT_NEGATIVE_LIST, sections.join('\n'));
+  if (negativeItems.length > 0) sections.push(`负向清单：${negativeItems.join('，')}。`);
+
   return {
     storyboardRunId: input.storyboardRunId,
     shotIds: shots.map((shot) => shot.id),
     providerCode: input.providerCode,
     modelCode: input.modelCode,
-    prompt,
+    prompt: sections.join('\n'),
+    promptFormat: VIDEO_PROMPT_FORMAT_VERSION,
     params: {
-      aspectRatio: params.aspectRatio,
+      aspectRatio,
       resolution: params.resolution,
       durationSeconds: duration.seconds,
       audioMode,
       audioElements: usedAudioElements,
       seed: params.seed,
-      extraParams: {}
+      negativeList: negativeItems.length > 0 ? negativeItems.join('，') : null,
+      extraParams: params.promptExtend !== null && capability.promptExtend === true ? { promptExtend: params.promptExtend } : {}
     },
     referenceImageFileIds,
     referenceAudioFileIds,
     ...(firstFrameFileId === null ? {} : { firstFrameFileId }),
     warnings
   };
+}
+
+/** 对白说话人的称呼：说话人有参考图时写成“图N的名字”（官方写法），否则只写名字；不是对白或没有说话人返回 undefined。 */
+function speakerLabel(sound: SoundRecord, names: ReadonlyMap<number, string>, imageIndexByEntity: ReadonlyMap<number, number>): string | undefined {
+  if (sound.speakerEntityId === null) return undefined;
+  const name = names.get(sound.speakerEntityId);
+  if (name === undefined) return undefined;
+  const index = imageIndexByEntity.get(sound.speakerEntityId);
+  return index === undefined ? name : `图${index}的${name}`;
 }

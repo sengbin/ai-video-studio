@@ -101,13 +101,41 @@ test('合并：本集优先于作品，作品优先于项目默认，并记录�
     audioMode: 'work',
     audioElements: 'none',
     seed: 'none',
-    durationSeconds: 'none'
+    durationSeconds: 'none',
+    negativeList: 'none',
+    promptExtend: 'none'
   });
 
   const none = resolveProfile(EMPTY_PROFILE, EMPTY_PROFILE, { aspectRatio: null, resolution: null });
   assert.deepEqual(none.values, EMPTY_PROFILE);
-  assert.deepEqual(Object.values(none.sources), Array(7).fill('none'));
+  assert.deepEqual(Object.values(none.sources), Array(9).fill('none'));
   assert.deepEqual(applyProfileChanges(work, { resolution: null }), { ...work, resolution: null });
+});
+
+test('负向清单与提示词改写：空串的负向清单是有效值（不要负向清单），null 才是沿用上一级；改写开关为布尔，关闭也是有效值；本集优先于作品', () => {
+  assert.deepEqual(readProfileChanges({ negativeList: '  不要字幕  ', promptExtend: false }), { negativeList: '不要字幕', promptExtend: false });
+  assert.deepEqual(readProfileChanges({ negativeList: '' }), { negativeList: '' }, '空串不会被当成恢复继承');
+  assert.deepEqual(readProfileChanges({ negativeList: null, promptExtend: null }), { negativeList: null, promptExtend: null });
+  assert.deepEqual(readProfileChanges({ promptExtend: '' }), { promptExtend: null }, '改写开关的空串按恢复继承');
+  const fieldErrors = (changes: unknown) => {
+    try {
+      readProfileChanges(changes);
+    } catch (error) {
+      return error instanceof ValidationError ? error.fieldErrors : undefined;
+    }
+    return undefined;
+  };
+  assert.ok(fieldErrors({ negativeList: 3 })?.negativeList);
+  assert.ok(fieldErrors({ negativeList: 'x'.repeat(301) })?.negativeList);
+  assert.ok(fieldErrors({ promptExtend: 'yes' })?.promptExtend);
+
+  const work = { ...EMPTY_PROFILE, negativeList: '不要水印', promptExtend: true };
+  const episode = { ...EMPTY_PROFILE, negativeList: '', promptExtend: false };
+  const effective = resolveProfile(work, episode, { aspectRatio: null, resolution: null });
+  assert.deepEqual([effective.values.negativeList, effective.values.promptExtend], ['', false], '本集的空串与关闭覆盖作品的值');
+  assert.deepEqual([effective.sources.negativeList, effective.sources.promptExtend], ['episode', 'episode']);
+  const inherited = resolveProfile(work, EMPTY_PROFILE, { aspectRatio: null, resolution: null });
+  assert.deepEqual([inherited.values.negativeList, inherited.sources.negativeList], ['不要水印', 'work']);
 });
 
 test('保存与读取：作品与集各自保存，恢复继承后回退到上一级，项目默认作为最后回退', () => {

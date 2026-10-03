@@ -50,12 +50,12 @@ function createSoundSchema(params: StoryboardParams): Record<string, unknown> {
 export function createStoryboardTool(params: StoryboardParams, continuesFromPrevious = false): OutputTool {
   const shotProperties: Record<string, unknown> = {
     sceneLabel: { type: 'string', description: '所属场次，如“第01场”。' },
-    shotSize: { type: 'string', description: '景别，如远景、中景、特写。' },
-    cameraAngle: { type: 'string', description: '机位与视角，如平视、俯拍、过肩。' },
+    shotSize: { type: 'string', description: '景别，用口语写，如大远景、远景、中景、近景、特写。生成视频时程序会把它写在提示词开头。' },
+    cameraAngle: { type: 'string', description: '机位与视角，如平视、低角度仰拍、俯拍、过肩。可带焦段，如“24mm 广角”“85mm 长焦，浅景深”。' },
     action: { type: 'string', description: '画面内容与主体动作。' },
-    cameraMovement: { type: 'string', description: '摄影机运动，如固定、推、拉、摇、跟拍。' },
+    cameraMovement: { type: 'string', description: '摄影机运动，用大白话写，如“固定镜头，摄影机静止”“推近”“拉远”“环绕”“手持跟拍”“缓慢上摇”。' },
     durationSeconds: { type: 'number', exclusiveMinimum: 0, description: '镜头时长（秒）。' },
-    transition: { type: 'string', description: '与下一镜头的转场，没有特别要求时填“切”。' },
+    transition: { type: 'string', description: '与下一镜头的转场，如“切”“叠化”；没有特别要求时填“切”（硬切，不写进提示词）。' },
     continuityNote: { type: 'string', description: '与前后镜头保持一致的要求，如服装、光线、位置。' },
     entities: {
       type: 'array',
@@ -70,10 +70,13 @@ export function createStoryboardTool(params: StoryboardParams, continuesFromPrev
         additionalProperties: false
       }
     },
-    promptZh: { type: 'string', description: '中文视频提示词：只描述画面，正向表达。' },
-    promptEn: { type: 'string', description: '英文视频提示词，与中文提示词含义一致。' }
+    promptZh: {
+      type: 'string',
+      description: '中文视频提示词：按“主体 + 场景 + 运动”描述画面，主体写外观特征，场景写环境与光线，运动写动作的幅度与速度；只写能看到的内容，正向表达；不含景别、机位、运镜（它们在各自字段里）和台词。'
+    },
+    promptEn: { type: 'string', description: '英文视频提示词：与中文含义一致，开头写上景别、机位和运镜（英文提示词不会再拼接上面的字段），不含台词。' }
   };
-  const required = ['action', 'durationSeconds', 'entities', 'promptZh', 'promptEn'];
+  const required = ['shotSize', 'cameraAngle', 'cameraMovement', 'action', 'durationSeconds', 'entities', 'promptZh', 'promptEn'];
   if (params.continuity === 'ai') {
     shotProperties.firstFrameMode = {
       type: 'string',

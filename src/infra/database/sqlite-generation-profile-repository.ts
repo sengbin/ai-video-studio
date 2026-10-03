@@ -22,10 +22,12 @@ interface ProfileRow {
   readonly audio_elements_json: string | null;
   readonly seed: number | null;
   readonly duration_seconds: number | null;
+  readonly negative_list: string | null;
+  readonly prompt_extend: number | null;
 }
 
 /** 本仓库读取的列。 */
-const PROFILE_COLUMNS = 'model_id, aspect_ratio, resolution, audio_mode, audio_elements_json, seed, duration_seconds';
+const PROFILE_COLUMNS = 'model_id, aspect_ratio, resolution, audio_mode, audio_elements_json, seed, duration_seconds, negative_list, prompt_extend';
 
 /** 目标对应的过滤条件、参数与保存时写入的外键列。 */
 function targetFilter(target: ProfileTarget): { readonly where: string; readonly id: number; readonly column: string } {
@@ -48,7 +50,9 @@ function toValues(row: ProfileRow): ProfileValues {
     audioMode: row.audio_mode,
     audioElements: parseAudioElements(row.audio_elements_json),
     seed: row.seed,
-    durationSeconds: row.duration_seconds
+    durationSeconds: row.duration_seconds,
+    negativeList: row.negative_list,
+    promptExtend: row.prompt_extend === null ? null : row.prompt_extend === 1
   };
 }
 
@@ -91,13 +95,15 @@ export class SqliteGenerationProfileRepository implements GenerationProfileRepos
       values.audioMode,
       values.audioElements === null ? null : JSON.stringify(values.audioElements),
       values.seed,
-      values.durationSeconds
+      values.durationSeconds,
+      values.negativeList,
+      values.promptExtend === null ? null : values.promptExtend ? 1 : 0
     ];
     runInTransaction(this.database, () => {
       const updated = this.database
         .prepare(
           `UPDATE generation_profiles
-           SET model_id = ?, aspect_ratio = ?, resolution = ?, audio_mode = ?, audio_elements_json = ?, seed = ?, duration_seconds = ?, updated_at = ?
+           SET model_id = ?, aspect_ratio = ?, resolution = ?, audio_mode = ?, audio_elements_json = ?, seed = ?, duration_seconds = ?, negative_list = ?, prompt_extend = ?, updated_at = ?
            WHERE ${where}`
         )
         .run(...columnValues, timestamp, id);
@@ -107,7 +113,7 @@ export class SqliteGenerationProfileRepository implements GenerationProfileRepos
       this.database
         .prepare(
           `INSERT INTO generation_profiles (scope, ${column}, ${PROFILE_COLUMNS}, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
         .run(target.scope, id, ...columnValues, timestamp);
     });

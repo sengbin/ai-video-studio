@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：profile.js
-// 说明：生成参数（F8）：按“本集 → 作品 → 项目默认”算出生效的模型、画幅、分辨率、声音模式、声音内容与随机种子（镜头组再叠加本组覆盖与本组生成时长），并检查是否落在所选模型的能力范围内；提供检查器“参数”页签的内容，编辑作品默认、本集覆盖与本组覆盖。
+// 说明：生成参数（F8）：按“本集 → 作品 → 项目默认”算出生效的模型、画幅、分辨率、声音模式、声音内容、随机种子、负向清单与提示词改写（镜头组再叠加本组覆盖与本组生成时长），并检查是否落在所选模型的能力范围内；提供检查器“参数”页签的内容，编辑作品默认、本集覆盖与本组覆盖。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-03
@@ -77,7 +77,9 @@
       audioMode: '',
       audioElements: stored.audioElements,
       seed: stored.seed,
-      durationSeconds: stored.durationSeconds
+      durationSeconds: stored.durationSeconds,
+      negativeList: stored.negativeList,
+      promptExtend: stored.promptExtend
     };
     const settle = (field, options, preferred, label) => {
       if (!model || options.length === 0) {
@@ -97,6 +99,9 @@
     settle('resolution', model ? model.resolutions : [], PREFERRED_RESOLUTION, '分辨率');
     settle('audioMode', model ? model.audioModes : [], 'native', '声音模式');
     if (stored.audioElements === null) sources.audioElements = 'default';
+    if (stored.negativeList === null) sources.negativeList = 'default';
+    if (stored.promptExtend === null) sources.promptExtend = 'default';
+    if (model && stored.promptExtend !== null && !model.supportsPromptExtend) issues.promptExtend = '所选模型不支持提示词改写开关，请清除该设置或换一个模型。';
     if (model && stored.seed !== null && !model.supportsSeed) issues.seed = '所选模型不支持随机种子，请清除种子或换一个模型。';
     return { model, values, sources, issues };
   }
@@ -204,6 +209,8 @@
     }
     addAudioElementsField(resolved, values);
     addSeedField(resolved, values);
+    addNegativeListField(resolved, values, catalog.promptDefaults);
+    addPromptExtendField(resolved, values);
     if (scope === 'group') addDurationField(resolved, values, group);
   }
 
@@ -263,6 +270,61 @@
     if (!supported) description = '所选模型不支持随机种子。';
     else description = `${resolved.values.seed === null ? '当前生效：随机' : `当前生效：${resolved.values.seed}`}（${SOURCE_LABELS[resolved.sources.seed]}）；固定种子可让同样的提示词得到相近的结果，留空每次随机。`;
     appendField('随机种子', description, input, resolved.issues.seed, values.seed === null ? null : () => void change('seed', null));
+  }
+
+  /** 负向清单：多行文本，修改后失去焦点时保存；清空表示明确不要负向清单，“恢复沿用上一级”回到上一级或默认清单；下方的常用项点一下就加入清单。 */
+  function addNegativeListField(resolved, values, defaults) {
+    const stored = values.negativeList;
+    const effective = resolved.values.negativeList;
+    const input = aiUi.textArea({ value: stored === null ? '' : stored, minRows: 2, maxRows: 5, placeholder: `留空沿用上一级（默认：${defaults.negativeList}）`, ariaLabel: '负向清单' });
+    input.focusTarget.addEventListener('change', () => {
+      const text = input.getValue().trim();
+      // 本级还没有设置时，留空不算修改；已经设置过再清空，才表示明确不要负向清单。
+      if (text === '' && stored === null) return;
+      void change('negativeList', text);
+    });
+    const effectiveText = effective === null ? defaults.negativeList : effective === '' ? '无' : effective;
+    const description = `当前生效：${effectiveText}（${SOURCE_LABELS[resolved.sources.negativeList]}）；写在提示词末尾，只写不希望出现的内容，不必凑数，也不要重复正向已写的内容；清空表示不要负向清单。`;
+    const base = stored !== null ? stored : effective === null ? defaults.negativeList : effective;
+    const chips = aiUi.h(
+      'div',
+      { class: 'wb-profile__chips' },
+      defaults.negativePresets.map((preset) =>
+        aiUi.button({
+          text: `＋${preset}`,
+          compact: true,
+          disabled: base.split(/[，,、；;\n]+/).map((item) => item.trim()).includes(preset),
+          onClick: () => void change('negativeList', base.trim() === '' ? preset : `${base.trim()}，${preset}`)
+        }).element
+      )
+    );
+    const wrapper = aiUi.field({ label: '负向清单', description, control: input });
+    if (resolved.issues.negativeList) wrapper.setError(resolved.issues.negativeList);
+    wrapper.element.append(chips);
+    if (stored !== null) {
+      wrapper.element.append(aiUi.h('div', { class: 'wb-profile__restore' }, aiUi.button({ text: RESTORE_BUTTON_TEXT, compact: true, onClick: () => void change('negativeList', null) }).element));
+    }
+    panel.fieldsElement.append(wrapper.element);
+  }
+
+  /** 提示词改写：下拉选择开启或关闭；模型不支持时置灰并说明原因。 */
+  function addPromptExtendField(resolved, values) {
+    const supported = resolved.model.supportsPromptExtend;
+    const stored = values.promptExtend;
+    const select = aiUi.select({
+      options: [{ value: 'true', label: '开启' }, { value: 'false', label: '关闭' }],
+      value: stored === null ? '' : String(stored),
+      allowEmpty: true,
+      placeholder: EMPTY_OPTION_TEXT,
+      ariaLabel: '提示词改写',
+      disabled: !supported,
+      onChange: (value) => void change('promptExtend', value === '' ? null : value === 'true')
+    });
+    const effective = resolved.values.promptExtend;
+    let description;
+    if (!supported) description = '所选模型不支持提示词改写开关。';
+    else description = `当前生效：${effective === null ? '平台默认（开启）' : effective ? '开启' : '关闭'}（${SOURCE_LABELS[resolved.sources.promptExtend]}）；开启时平台会改写提示词，对较短的提示词提升明显但耗时更长，关闭则严格按编排好的提示词生成。`;
+    appendField('提示词改写', description, select, resolved.issues.promptExtend, stored === null ? null : () => void change('promptExtend', null));
   }
 
   /** 本组生成时长：整组视频的秒数，留空时按镜头总时长向上对齐到模型支持的取值；是否合法由提交预览按模型能力检查。 */

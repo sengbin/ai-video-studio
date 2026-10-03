@@ -53,7 +53,7 @@ export const WAN3_SEED_MAX = 2147483647;
 /** 提示词长度上限。 */
 const WAN3_PROMPT_MAX_LENGTH = 20000;
 
-/** 万相 3.0 视频生成的能力。画幅不含 adaptive：不指定画幅时模型按输入素材自适应。 */
+/** 万相 3.0 视频生成的能力。画幅不含 adaptive：不指定画幅时模型按输入素材自适应；有首帧时官方建议 ratio 用 adaptive（模型自动匹配首帧宽高比），所以有首帧时不传画幅。 */
 const WAN3_VIDEO_CAPABILITY: VideoCapability = {
   aspectRatios: ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9'],
   resolutions: ['480P', '720P', '1080P'],
@@ -67,6 +67,8 @@ const WAN3_VIDEO_CAPABILITY: VideoCapability = {
   lastFrame: true,
   referenceImagesMax: 10,
   seed: true,
+  promptExtend: true,
+  firstFrameDefinesAspect: true,
   promptLanguages: ['zh', 'en'],
   promptMaxLength: WAN3_PROMPT_MAX_LENGTH
 };
