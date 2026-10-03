@@ -326,7 +326,7 @@ erDiagram
 | `kind` | 文本 | 是 | | `dialogue` 角色对白、`narration` 旁白、`sfx` 音效、`music` 背景音乐 |
 | `speaker_entity_id` | 整数 | 否 | | 说话人，仅 `dialogue` 使用，外键 `script_entities.id`，删除时置空 |
 | `text` | 文本 | 是 | | 对白或旁白的台词；音效、配乐的描述 |
-| `delivery` | 文本 | 是 | 空串 | 说话方式或声音质感，如“低声、急促”“清脆的玻璃破碎声”“紧张的弦乐” |
+| `delivery` | 文本 | 是 | 空串 | 说话方式或声音质感：对白写情绪、语气、语速、音色、口音，如“低声、急促”；音效、背景音乐如“清脆的玻璃破碎声”“紧张的弦乐” |
 | `start_offset_seconds` | 实数 | 否 | | 相对镜头起点的开始时间，空表示由模型自行安排 |
 | `duration_seconds` | 实数 | 否 | | 持续时长，空表示由模型自行安排 |
 | `audio_asset_id` | 整数 | 否 | | 指定使用的音频资产（现成配乐、音效、音色参考），外键 `assets.id`，删除时置空 |

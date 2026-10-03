@@ -30,8 +30,8 @@ function createSoundSchema(params: StoryboardParams): Record<string, unknown> {
           description: params.audioElements.map((kind) => `${kind}：${SOUND_KIND_LABELS[kind]}`).join('；')
         },
         speaker: { type: 'string', description: '说话的角色名称，仅角色对白（dialogue）填写，必须是已有的角色。任何角色（包括动物、拟人角色）说的话都是对白，不能写成旁白。' },
-        text: { type: 'string', description: '对白、旁白的台词；音效、背景音乐的描述。' },
-        delivery: { type: 'string', description: '说话方式或声音质感，如“低声、急促”“紧张的弦乐”。' },
+        text: { type: 'string', description: '对白、旁白的台词；音效按“发声材质 + 动作 + 环境音”描述；背景音乐按“背景音乐/配乐 + 风格”描述。' },
+        delivery: { type: 'string', description: '对白、旁白的情绪、语气、语速、音色、口音，如“轻松的语气、适中的语速、清晰的嗓音”；音效、背景音乐可补充声音质感，如“紧张的弦乐”。' },
         startOffsetSeconds: { type: 'number', minimum: 0, description: '相对镜头起点的开始时间（秒），不确定时不填。' },
         durationSeconds: { type: 'number', exclusiveMinimum: 0, description: '持续时长（秒），不确定时不填。' }
       },
@@ -72,9 +72,9 @@ export function createStoryboardTool(params: StoryboardParams, continuesFromPrev
     },
     promptZh: {
       type: 'string',
-      description: '中文视频提示词：按“主体 + 场景 + 运动”描述画面，主体写外观特征，场景写环境与光线，运动写动作的幅度与速度；只写能看到的内容，正向表达；不含景别、机位、运镜（它们在各自字段里）和台词。'
+      description: '中文视频提示词：按“主体（描述）+ 场景（描述）+ 运动（描述）+ 审美控制”写成连贯短句，主体写外观细节，场景写背景与前景，运动写幅度、速度和效果，审美控制写光线、构图、色调；只写能看到的内容，正向表达；不含景别、机位、运镜（它们在各自字段里）、风格（程序统一写在开头）和台词。以上一镜头尾帧作首帧的镜头重点写运动，主体和场景一句话延续首帧。'
     },
-    promptEn: { type: 'string', description: '英文视频提示词：与中文含义一致，开头写上景别、机位和运镜（英文提示词不会再拼接上面的字段），不含台词。' }
+    promptEn: { type: 'string', description: '英文视频提示词：与中文含义一致，同样按主体描述、场景描述、运动描述、审美控制的公式，开头写上景别、机位和运镜（英文提示词不会再拼接上面的字段），不含台词。' }
   };
   const required = ['shotSize', 'cameraAngle', 'cameraMovement', 'action', 'durationSeconds', 'entities', 'promptZh', 'promptEn'];
   if (params.continuity === 'ai') {
