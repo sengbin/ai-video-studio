@@ -139,9 +139,7 @@
         title: '操作',
         type: 'actions',
         render: (job) => [
-          job.result.isSelected
-            ? null
-            : aiUi.button({ text: '采用此版本', compact: true, variant: 'primary', ariaLabel: `采用第 ${job.attempt} 次的结果`, onClick: () => void adopt(job) }).element,
+          aiUi.button({ text: '采用此版本', compact: true, variant: 'primary', disabled: job.result.isSelected, ariaLabel: `采用第 ${job.attempt} 次的结果`, onClick: () => void adopt(job) }).element,
           aiUi.button({ text: '打开视频', compact: true, onClick: () => void host.openResult(job.result) }).element,
           aiUi.button({ text: '导出…', compact: true, ariaLabel: '导出视频到指定位置', onClick: () => void host.exportResult(job.result) }).element,
           aiUi.button({ text: '在文件夹中显示', compact: true, onClick: () => void host.revealResult(job.result) }).element

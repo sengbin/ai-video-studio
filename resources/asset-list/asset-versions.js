@@ -215,6 +215,12 @@
     return notices;
   }
 
+  /** 当前勾选的结果是否正是这个版本已采用的那几个；是则再次采用没有意义，“采用此版本”置为不可用，换版本或改勾选后恢复。 */
+  function isSelectionAdopted(detail, selectedFileIds) {
+    const adoptedIds = detail.files.filter((file) => file.isAdopted).map((file) => file.id);
+    return adoptedIds.length > 0 && adoptedIds.length === selectedFileIds.size && adoptedIds.every((id) => selectedFileIds.has(id));
+  }
+
   /** 按当前版本与勾选状态刷新按钮的可用性。 */
   function updateButtons() {
     if (!session || !session.list) return;
@@ -234,7 +240,7 @@
     const { version, missingThumbnails } = session.detail;
     const active = version.status === 'queued' || version.status === 'running';
     const ready = version.status === 'succeeded' && missingThumbnails.length === 0 && session.selectedFileIds.size > 0;
-    buttons.adopt.setDisabled(!ready);
+    buttons.adopt.setDisabled(!ready || isSelectionAdopted(session.detail, session.selectedFileIds));
     buttons.remove.setDisabled(active || version.isAdopted);
     buttons.retry.element.hidden = version.status !== 'failed' && version.status !== 'canceled';
   }
