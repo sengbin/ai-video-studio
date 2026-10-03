@@ -6,11 +6,7 @@
 
 ## 界面预览
 
-<p align="center"><img src="readme-images/view1.png" alt="剧本内容与确认状态" width="360"></p>
-
-<p align="center"><img src="readme-images/view2.png" alt="分镜脚本与确认状态" width="360"></p>
-
-<p align="center"><img src="readme-images/view3.png" alt="VS Code 编辑器界面" width="360"></p>
+![界面预览](readme-images/preview-view.gif)
 
 ## 功能一览
 
