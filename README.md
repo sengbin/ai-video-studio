@@ -6,7 +6,7 @@
 
 ## 界面预览
 
-![界面预览](readme-images/preview-view.gif)
+![界面预览](preview-view.gif)
 
 ## 功能一览
 
