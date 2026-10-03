@@ -16,6 +16,7 @@ import { readSchemaVersion, runMigrations } from './migration-runner';
 import { MIGRATIONS } from './migrations';
 import { SqliteGenerationRepository } from './sqlite-generation-repository';
 import { seedGeneration } from './testing/seed-generation';
+import { MemoryAssetFileStore } from '../../domain/ports/testing/memory-asset-file-store';
 
 const T1 = '2026-10-02T01:00:00.000Z';
 const T2 = '2026-10-02T02:00:00.000Z';
@@ -37,9 +38,10 @@ const RESULT = { filePath: 'videos/1/1/1/1-1.mp4', remoteUrl: null, durationSeco
 function createFixture() {
   const database = openDatabase(IN_MEMORY_DATABASE_PATH);
   const seed = seedGeneration(database);
-  const repository = new SqliteGenerationRepository(database);
+  const files = new MemoryAssetFileStore();
+  const repository = new SqliteGenerationRepository(database, files);
   const insert = (groupId = seed.groupIds[0]) => repository.insertJob({ groupId, modelId: seed.modelId, status: 'queued', snapshot: SNAPSHOT, prevJobId: null, firstFrameId: null }, T1);
-  return { database, seed, repository, insert };
+  return { database, seed, repository, insert, files };
 }
 
 test('新增任务：快照往返，同一镜头组的提交次数递增，不同组各自计数', () => {
@@ -143,7 +145,7 @@ test('失败：原因（分类、错误码、原文）往返；取消后不能�
 });
 
 test('镜头组所在位置与素材内容读取', () => {
-  const { database, seed, repository } = createFixture();
+  const { database, seed, repository, files } = createFixture();
   try {
     assert.deepEqual(repository.getGroupLocation(seed.groupIds[0]), { projectId: seed.projectId, workId: seed.workId, episodeId: seed.episodeId });
     assert.equal(repository.getGroupLocation(999), undefined);
@@ -152,8 +154,8 @@ test('镜头组所在位置与素材内容读取', () => {
     const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 1]);
     const fileId = Number(
       database
-        .prepare("INSERT INTO asset_files (asset_id, role, file_name, mime, size_bytes, content, sort_order, created_at) VALUES (1, 'reference', 'a.png', 'image/png', ?, ?, 0, 't')")
-        .run(png.length, png).lastInsertRowid
+        .prepare("INSERT INTO asset_files (asset_id, role, file_name, mime, size_bytes, file_path, sort_order, created_at) VALUES (1, 'reference', 'a.png', 'image/png', ?, ?, 0, 't')")
+        .run(png.length, files.write(png, 'image/png')).lastInsertRowid
     );
     const media = repository.readAssetFile(fileId);
     assert.equal(media?.mimeType, 'image/png');
@@ -366,7 +368,7 @@ test('从版本 18 升级到 19：同一镜头组已有多个进行中的任务�
     assert.deepEqual([rows.get(succeeded)?.status, rows.get(single)?.status, rows.get(earlierFailed)?.status], ['succeeded', 'queued', 'canceled'], '其他任务不变');
     assert.equal((database.prepare('SELECT COUNT(*) AS total FROM video_results').get() as unknown as { total: number }).total, 1, '结果保留');
 
-    const repository = new SqliteGenerationRepository(database);
+    const repository = new SqliteGenerationRepository(database, new MemoryAssetFileStore());
     assert.equal(repository.hasActiveJob(groupA), true);
     assert.throws(() => repository.insertJob({ groupId: groupA, modelId: seed.modelId, status: 'queued', snapshot: SNAPSHOT, prevJobId: null, firstFrameId: null }, T1), ConflictError);
     repository.markFailed(newest, { category: 'server', code: null, message: 'x' }, T2);

@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：asset-list-handlers.test.ts
-// 说明：资产列表页请求处理的自动化测试：读取某类型的资产（含逐条的生成可用性）、取待处理请求、删除前的使用情况与删除。
+// 说明：资产列表页请求处理的自动化测试：读取某类型的资产（含逐条的生成可用性）、取待处理请求、切换文件来源、删除前的使用情况与删除。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
@@ -21,17 +21,19 @@ import { AssetService } from '../services/asset-service';
 import { createAssetGenerationFixture, createAssetWithPrompts } from '../services/testing/asset-generation-fixture';
 import { FILE_PROMPTS, ScriptedText } from '../stages/testing/scripted-text';
 import { ASSET_LIST_REQUESTS, AssetListRequest, AssetListRow, registerAssetListHandlers } from './asset-list-handlers';
+import { MemoryAssetFileStore } from '../../domain/ports/testing/memory-asset-file-store';
 
 function createFixture() {
   const database = openDatabase(IN_MEMORY_DATABASE_PATH);
-  const assetRepository = new SqliteAssetRepository(database);
+  const files = new MemoryAssetFileStore();
+  const assetRepository = new SqliteAssetRepository(database, files);
   const assets = new AssetService(assetRepository);
   const categories = new AssetCategoryService(new SqliteAssetCategoryRepository(database));
   const text = new ScriptedText(() => ({ promptZh: '中文', promptEn: 'english' }));
   const prompts = new AssetPromptService({ text, prompts: FILE_PROMPTS, assets: assetRepository, notify: () => undefined });
   const generation = new AssetGenerationService({
     assets: assetRepository,
-    versions: new SqliteAssetVersionRepository(database),
+    versions: new SqliteAssetVersionRepository(database, files),
     providers: { listUsableModels: async () => [] },
     scheduler: { pump: async () => undefined, cancel: async () => ({ remoteCanceled: false }) },
     notify: () => undefined
@@ -84,12 +86,34 @@ test('取待处理请求：有则返回并只返回一次', async () => {
   }
 });
 
+test('切换文件来源：没有上传的文件时拒绝，有上传的文件时可在上传与生成之间切换，来源参数无效时拒绝', async () => {
+  const { database, assets, send } = createFixture();
+  try {
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
+    const file = { name: 'a.png', mimeType: 'image/png', size: png.length, data: png.toString('base64'), width: 1, height: 1 };
+    const asset = assets.createAsset('scene', { name: '灯塔' });
+    const rejected = await send(ASSET_LIST_REQUESTS.switchSource, { id: asset.id, source: 'upload' });
+    assert.equal(rejected?.ok, false);
+    assert.equal((await send(ASSET_LIST_REQUESTS.switchSource, { id: asset.id, source: 'bogus' }))?.ok, false);
+
+    assets.updateAsset(asset.id, { name: '灯塔', files: JSON.stringify([file]) }, { fileSource: 'upload' });
+    assert.equal((await send(ASSET_LIST_REQUESTS.switchSource, { id: asset.id, source: 'generated' }))?.ok, true);
+    assert.equal(assets.getAsset(asset.id).fileSource, 'generated');
+    const listed = (await send(ASSET_LIST_REQUESTS.load)) as { ok: true; data: { assets: AssetListRow[] } };
+    assert.deepEqual([listed.data.assets[0].fileSource, listed.data.assets[0].fileCount, listed.data.assets[0].uploadFileCount], ['generated', 0, 1]);
+    assert.equal((await send(ASSET_LIST_REQUESTS.switchSource, { id: asset.id, source: 'upload' }))?.ok, true);
+    assert.equal(assets.getAsset(asset.id).fileSource, 'upload');
+  } finally {
+    database.close();
+  }
+});
+
 test('参考原图：返回第一张参考图的类型与内容，没有参考图时返回错误', async () => {
   const { database, assets, send } = createFixture();
   try {
     const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
     const file = { name: 'a.png', mimeType: 'image/png', size: png.length, data: png.toString('base64'), width: 1, height: 1 };
-    const withImage = assets.createAsset('scene', { name: '灯塔', files: JSON.stringify([file]) });
+    const withImage = assets.createAsset('scene', { name: '灯塔', files: JSON.stringify([file]) }, { fileSource: 'upload' });
     const image = await send(ASSET_LIST_REQUESTS.referenceImage, { id: withImage.id });
     assert.deepEqual(image?.ok && image.data, { mime: 'image/png', data: png.toString('base64') });
 
@@ -106,7 +130,7 @@ test('参考音频：返回音频资产的参考音频类型与内容，没有�
   try {
     const wav = Buffer.concat([Buffer.from('RIFF'), Buffer.from([0, 0, 0, 0]), Buffer.from('WAVEfmt ')]);
     const file = { name: 'v.wav', mimeType: 'audio/wav', size: wav.length, data: wav.toString('base64'), durationSeconds: 5 };
-    const voice = assets.createAsset('audio', { name: '林夕的声音', audioKind: 'voice', files: JSON.stringify([file]) });
+    const voice = assets.createAsset('audio', { name: '林夕的声音', audioKind: 'voice', files: JSON.stringify([file]) }, { fileSource: 'upload' });
     const audio = await send(ASSET_LIST_REQUESTS.referenceAudio, { id: voice.id });
     assert.deepEqual(audio?.ok && audio.data, { mime: 'audio/wav', data: wav.toString('base64') });
 

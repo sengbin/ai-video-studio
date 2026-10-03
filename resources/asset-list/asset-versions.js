@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：asset-versions.js
-// 说明：资产版本弹出层（P8）：查看某个资产的图片、音频生成版本，勾选图片后采用为资产的参考文件，删除、取消、重试版本，并补生成缩略图。
+// 说明：资产版本弹出层（P8）：查看某个资产的图片、音频生成版本，勾选图片后采用为资产使用的文件（采用即改用生成来源，上传的文件仍然保留），删除、取消、重试版本，并补生成缩略图。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
@@ -182,13 +182,14 @@
     return aiUi.h('div', { class: 'asset-ver__info' }, aiUi.h('p', { class: 'description', text: lines.join(' · ') }), prompts);
   }
 
-  /** 当前资产参考文件的来源说明。 */
+  /** 资产当前使用的文件来源说明：上传的文件、采用的版本或还没有采用。 */
   function describeCurrent(list) {
+    if (list.fileSource === 'upload') return '当前使用：上传的文件（采用版本后改用生成）';
     if (list.adoptedVersionId !== null) {
       const adopted = list.versions.find((item) => item.id === list.adoptedVersionId);
       return `当前采用：v${adopted ? adopted.version : '?'}`;
     }
-    return list.hasManualFiles ? '当前参考文件：手动上传' : '当前还没有参考文件';
+    return '当前还没有采用的版本';
   }
 
   /** 提示条：有改动未生成、提示词需更新、生成中与失败原因。 */
@@ -215,7 +216,7 @@
     return notices;
   }
 
-  /** 结果文件是否已采用：只有资产当前采用的就是这个版本（version.isAdopted，来自资产的 adoptedVersionId）时，标记过的文件才算；手动改文件清掉采用关系后，旧版本不再显示已采用。 */
+  /** 结果文件是否已采用：只有资产当前采用的就是这个版本（version.isAdopted，来自资产的 adoptedVersionId）时，标记过的文件才算。 */
   function isFileAdopted(detail, file) {
     return detail.version.isAdopted && file.isAdopted;
   }
@@ -335,15 +336,15 @@
     await fillThumbnails(detail);
   }
 
-  /** 采用所选图片（音频）：先确认会替换现有参考文件。 */
+  /** 采用所选图片（音频）：先确认会替换原来采用的文件，或从上传改用生成。 */
   async function adoptSelected() {
     const { detail, list } = session;
     const used = detail.usedByEpisodes > 0 ? `这个资产已被 ${detail.usedByEpisodes} 集使用，之后提交的视频将使用新文件，已提交的不受影响。` : '';
-    const replacing = list.hasManualFiles ? '手动上传的参考文件会被替换。' : list.adoptedVersionId !== null ? '原来采用的文件会被替换。' : '';
+    const replacing = list.fileSource === 'upload' ? '资产现在使用上传的文件，采用后改用生成的文件，上传的文件仍然保留。' : list.adoptedVersionId !== null ? '原来采用的文件会被替换。' : '';
     const noun = list.kind === 'audio' ? '音频' : `所选 ${session.selectedFileIds.size} 张图片`;
     const confirmed = await aiUi.confirm({
       title: `采用 v${detail.version.version}`,
-      message: `将用${noun}作为资产的参考${list.kind === 'audio' ? '音频' : '图'}。${replacing}${used}`,
+      message: `将用${noun}作为资产使用的${list.kind === 'audio' ? '音频' : '图片'}。${replacing}${used}`,
       confirmText: '采用',
       cancelText: '取消'
     });

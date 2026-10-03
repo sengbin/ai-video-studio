@@ -21,6 +21,7 @@ import {
   VideoJobRecord,
   VideoResultRecord
 } from '../../domain/models/generation';
+import { AssetFileStore } from '../../domain/ports/asset-file-store';
 import { GenerationRepository, JobMediaReader } from '../../domain/ports/generation-repository';
 import { MediaInput } from '../../domain/ports/provider-adapters';
 import { runInTransaction } from './transaction';
@@ -108,7 +109,14 @@ function placeholders(count: number): string {
 
 /** 基于 SQLite 的生成任务仓库，同时负责读取任务素材内容。 */
 export class SqliteGenerationRepository implements GenerationRepository, JobMediaReader {
-  constructor(private readonly database: DatabaseSync) {}
+  /**
+   * @param database 数据库连接。
+   * @param assetFiles 资产文件内容的存储，读取资产文件时使用。
+   */
+  constructor(
+    private readonly database: DatabaseSync,
+    private readonly assetFiles: AssetFileStore
+  ) {}
 
   insertJob(job: NewVideoJob, timestamp: string): VideoJobRecord {
     let id: number;
@@ -280,10 +288,10 @@ export class SqliteGenerationRepository implements GenerationRepository, JobMedi
   }
 
   readAssetFile(id: number): MediaInput | undefined {
-    const row = this.database.prepare('SELECT mime, content FROM asset_files WHERE id = ?').get(id) as unknown as
-      | { mime: string; content: Uint8Array }
+    const row = this.database.prepare('SELECT mime, file_path FROM asset_files WHERE id = ?').get(id) as unknown as
+      | { mime: string; file_path: string }
       | undefined;
-    return row === undefined ? undefined : { mimeType: row.mime, data: row.content };
+    return row === undefined ? undefined : { mimeType: row.mime, data: this.assetFiles.read(row.file_path) };
   }
 
   readResultFrame(id: number): MediaInput | undefined {

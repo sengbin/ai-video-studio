@@ -1,10 +1,10 @@
 // ------------------------------------------------------------------------
 // 名称：asset-rules.ts
-// 说明：资产的校验与规范化：名称、按类型区分的描述字段、选项、提示词，以及参考图与参考音频文件的类型、数量、大小和内容检查。
+// 说明：资产的校验与规范化：名称、按类型区分的描述字段、选项、提示词，以及上传的图片与音频文件的类型、数量、大小和内容检查；按文件来源（上传、生成）区分表单包含的字段。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
-// 备注：界面提交的内容不可信，这里按内容再次校验：图片与音频按文件头判断真实格式；图片的缩略图、宽高和音频时长由页面读取后随文件提交，宿主只检查取值范围与缩略图格式；描述字段在库里以 snake_case 键保存。
+// 备注：界面提交的内容不可信，这里按内容再次校验：图片与音频按文件头判断真实格式；图片的缩略图、宽高和音频时长由页面读取后随文件提交，宿主只检查取值范围与缩略图格式；描述字段在库里以 snake_case 键保存；上传来源的表单只含名称、音频的类型与语言描述和文件，生成相关字段不在表单里，更新时由 mergeUploadContent 沿用资产原来的值；生成来源的表单没有文件字段。
 // ------------------------------------------------------------------------
 
 import { FORM_LEVEL_ERROR_KEY, ValidationError } from '../errors';
@@ -13,7 +13,9 @@ import {
   ASSET_KINDS,
   AUDIO_KIND_LABELS,
   AssetContent,
+  AssetFileSource,
   AssetKind,
+  AssetRecord,
   AudioKind,
   NewAssetFile
 } from '../models/asset';
@@ -47,7 +49,8 @@ const IMAGE_SIDE_MAX = 20000;
 /** 校验通过的资产内容与文件。 */
 export interface NormalizedAsset {
   readonly content: AssetContent;
-  readonly files: readonly NewAssetFile[];
+  /** 上传来源的文件（含缩略图）；生成来源的表单没有文件字段，为 null。 */
+  readonly files: readonly NewAssetFile[] | null;
 }
 
 /**
@@ -66,27 +69,47 @@ export function readAssetKind(value: unknown): AssetKind {
  * 校验并规范化资产表单提交的内容（不含所属项目，项目由服务层处理）。
  * @param rawInput 表单提交的原始内容。
  * @param kind 资产类型，由入口决定，编辑时不能修改。
+ * @param fileSource 表单对应的文件来源：上传时必须有文件，且不含生成相关字段；生成时没有文件字段。
  * @throws ValidationError 存在不合法的字段。
  */
-export function normalizeAssetContent(rawInput: unknown, kind: AssetKind): NormalizedAsset {
+export function normalizeAssetContent(rawInput: unknown, kind: AssetKind, fileSource: AssetFileSource): NormalizedAsset {
   const source = readRecord(rawInput);
   const errors: FieldErrors = {};
+  const isUpload = fileSource === 'upload';
 
   const name = readText(source, { key: 'name', label: '名称', required: true, maxLength: ASSET_NAME_MAX_LENGTH }, errors);
-  const extraRequirements = readText(
-    source,
-    { key: 'extra', label: '补充要求', required: false, maxLength: ASSET_EXTRA_MAX_LENGTH },
-    errors
-  );
+  const extraRequirements = isUpload
+    ? ''
+    : readText(source, { key: 'extra', label: '补充要求', required: false, maxLength: ASSET_EXTRA_MAX_LENGTH }, errors);
 
   if (kind === 'audio') {
     const attributes = readAudioAttributes(source, errors);
-    const files = readAudioFile(source[ASSET_FILE_FIELD_KEY], errors);
+    const files = isUpload ? requireFiles(readAudioFile(source[ASSET_FILE_FIELD_KEY], errors), '请上传音频文件。', errors) : null;
     assertNoFieldErrors(errors);
     return {
       content: {
         name,
         attributes,
+        composition: '',
+        style: null,
+        background: '',
+        referenceAspectRatio: null,
+        extraRequirements,
+        promptZh: '',
+        promptEn: ''
+      },
+      files
+    };
+  }
+
+  // 上传来源的图片资产只有名称和图片，其余字段留空，更新时沿用原值。
+  if (isUpload) {
+    const files = requireFiles(readImageFiles(source[ASSET_FILE_FIELD_KEY], errors), '请上传参考图。', errors);
+    assertNoFieldErrors(errors);
+    return {
+      content: {
+        name,
+        attributes: {},
         composition: '',
         style: null,
         background: '',
@@ -118,12 +141,36 @@ export function normalizeAssetContent(rawInput: unknown, kind: AssetKind): Norma
       attributes[field.key] = text;
     }
   }
-  const files = readImageFiles(source[ASSET_FILE_FIELD_KEY], errors);
   assertNoFieldErrors(errors);
   return {
     content: { name, attributes, composition, style, background, referenceAspectRatio, extraRequirements, promptZh: '', promptEn: '' },
-    files
+    files: null
   };
+}
+
+/**
+ * 修改上传来源的资产时，把表单内容与资产原有的内容合并：表单没有的生成相关字段（图片资产的描述字段、画面设置，音频的补充要求）沿用原值。
+ * @param previous 修改前的资产。
+ * @param next 上传来源表单规范化后的内容。
+ */
+export function mergeUploadContent(previous: AssetRecord, next: AssetContent): AssetContent {
+  return {
+    ...next,
+    attributes: previous.kind === 'audio' ? next.attributes : previous.attributes,
+    composition: previous.composition,
+    style: previous.style,
+    background: previous.background,
+    referenceAspectRatio: previous.referenceAspectRatio,
+    extraRequirements: previous.extraRequirements
+  };
+}
+
+/** 上传来源必须至少有一个文件，没有时在文件字段上报错。 */
+function requireFiles(files: NewAssetFile[], message: string, errors: FieldErrors): NewAssetFile[] {
+  if (files.length === 0 && errors[ASSET_FILE_FIELD_KEY] === undefined) {
+    errors[ASSET_FILE_FIELD_KEY] = message;
+  }
+  return files;
 }
 
 /** 校验并规范化手动保存的提示词；两种语言都可以为空。 */
@@ -162,7 +209,7 @@ function readAudioAttributes(source: Record<string, unknown>, errors: FieldError
   return attributes;
 }
 
-/** 读取图片资产的参考图：最多 10 张，按文件头识别格式；页面生成的缩略图和宽高一并读取。 */
+/** 读取图片资产上传的图片：最多 10 张，按文件头识别格式；页面生成的缩略图和宽高一并读取。 */
 function readImageFiles(value: unknown, errors: FieldErrors): NewAssetFile[] {
   const key = ASSET_FILE_FIELD_KEY;
   const uploaded = readUploadedFiles(value, key, '参考图', ASSET_IMAGE_MAX_BYTES, errors);
@@ -199,7 +246,7 @@ function readImageFiles(value: unknown, errors: FieldErrors): NewAssetFile[] {
   return files;
 }
 
-/** 读取音频资产的参考音频：最多 1 个文件（可以暂时没有，之后上传或由模型生成），按文件头识别格式，时长为页面读取的值且不超过上限。 */
+/** 读取音频资产上传的音频：最多 1 个文件，按文件头识别格式，时长为页面读取的值且不超过上限。 */
 function readAudioFile(value: unknown, errors: FieldErrors): NewAssetFile[] {
   const key = ASSET_FILE_FIELD_KEY;
   const uploaded = readUploadedFiles(value, key, '音频文件', ASSET_AUDIO_MAX_BYTES, errors);

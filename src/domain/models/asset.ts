@@ -32,6 +32,9 @@ export const AUDIO_KIND_LABELS: Readonly<Record<AudioKind, string>> = {
   sfx: '音效'
 };
 
+/** 资产当前使用的文件来源：用户上传、模型生成（采用的版本）。两种来源的文件各自保留，切换只改变使用哪一组。 */
+export type AssetFileSource = 'upload' | 'generated';
+
 /** 资产的一个描述字段：库里的键、表单键与界面名称。 */
 export interface AssetAttributeField {
   readonly key: string;
@@ -88,6 +91,8 @@ export interface AssetInput extends AssetContent {
   readonly sourceEntityId: number | null;
   /** 所属分类（asset_categories.id）；null 表示不分类。分类不属于可编辑内容，改分类不影响提示词与生成状态。 */
   readonly categoryId: number | null;
+  /** 当前使用的文件来源；上传时没有提示词与生成入口，绑定与视频生成读取的是这一来源的文件。 */
+  readonly fileSource: AssetFileSource;
 }
 
 /** 已保存的资产。 */
@@ -102,7 +107,7 @@ export interface AssetRecord extends AssetInput {
   readonly promptStatus: PromptStatus;
   /** 提示词生成失败或被中断的原因。 */
   readonly promptError: string | null;
-  /** 当前采用的生成版本（版本记录标识）；手动上传文件或从未采用时为 null。 */
+  /** 当前采用的生成版本（版本记录标识）；从未采用时为 null，与当前使用的文件来源无关。 */
   readonly adoptedVersionId: number | null;
   readonly createdAt: string;
   readonly updatedAt: string;
@@ -111,7 +116,7 @@ export interface AssetRecord extends AssetInput {
 /** 提示词后台生成的状态：没有生成过、生成中、成功、失败、已取消。 */
 export type PromptStatus = 'none' | 'running' | 'succeeded' | 'failed' | 'canceled';
 
-/** 资产文件的用途：参考图（音频资产为参考音频）、缩略图。 */
+/** 资产文件的用途：图片（音频资产为音频文件）、缩略图。 */
 export type AssetFileRole = 'reference' | 'thumbnail';
 
 /** 要写入的资产文件。 */
@@ -142,8 +147,10 @@ export interface AssetThumbnail {
 /** 列表中的一个资产：不含文件内容，只带缩略图与统计。 */
 export interface AssetListItem extends AssetRecord {
   readonly thumbnail: AssetThumbnail | null;
-  /** 参考文件数（参考图或参考音频）。 */
+  /** 当前使用来源的文件数（图片或音频）。 */
   readonly fileCount: number;
+  /** 用户上传的文件数（图片或音频），与当前使用的来源无关，用于判断能否直接改用上传。 */
+  readonly uploadFileCount: number;
   /** 参考音频时长（秒）；图片资产为 null。 */
   readonly durationSeconds: number | null;
   /** 被多少集使用：集内实体绑定，或镜头声音直接指定该音频，同一集只算一次。 */

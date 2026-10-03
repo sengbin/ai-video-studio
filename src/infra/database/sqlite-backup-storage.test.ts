@@ -221,7 +221,7 @@ test('待恢复项的标识：随待恢复文件变化，重新准备后不同',
 test('不带连接（数据库无法打开）：读取状态与导出快照抛出明确错误，检查文件、准备和放弃待恢复仍可用', () => {
   const fixture = createBackupFixture();
   try {
-    const storage = new SqliteBackupStorage(undefined, fixture.paths, join(fixture.directory, 'videos'));
+    const storage = new SqliteBackupStorage(undefined, fixture.paths, join(fixture.directory, 'videos'), join(fixture.directory, 'asset-files'));
     assert.throws(() => storage.readStatus(), /数据库无法打开/);
     assert.throws(() => storage.exportSnapshot(join(fixture.directory, 'out.sqlite')), /数据库无法打开/);
 
@@ -244,7 +244,7 @@ test('数据库文件已损坏打不开：仍可准备恢复，重新启动时�
     writeFileSync(fixture.paths.databasePath, corruptContent);
     assert.throws(() => openDatabase(fixture.paths.databasePath), '损坏的数据库打不开');
 
-    const storage = new SqliteBackupStorage(undefined, fixture.paths, join(fixture.directory, 'videos'));
+    const storage = new SqliteBackupStorage(undefined, fixture.paths, join(fixture.directory, 'videos'), join(fixture.directory, 'asset-files'));
     storage.stageRestore(fixture.createBackupFile('backup.sqlite', ['备份项目']));
 
     const autoBackupPath = applyPendingRestore(fixture.paths, RESTORE_TIME);

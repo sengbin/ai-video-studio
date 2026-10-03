@@ -55,7 +55,7 @@ export interface AssetVersionRepository {
   /** 删除版本及其文件；版本不存在返回 false。 */
   deleteVersion(id: number): boolean;
   /**
-   * 采用版本：把所选结果文件（及对应缩略图）整体替换为资产的参考文件，并记录采用的版本。
+   * 采用版本：把所选结果文件（及对应缩略图）整体替换为资产生成来源的文件（引用同一个磁盘文件，不复制内容），记录采用的版本，并让资产改用生成来源；上传来源的文件不受影响。
    * @param fileIds 要采用的结果文件标识，按此顺序排列。
    */
   adopt(assetId: number, versionId: number, fileIds: readonly number[], timestamp: string): void;

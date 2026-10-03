@@ -16,6 +16,7 @@ import { describeAspectRatio } from '../stages/storyboard-workflow';
 import { Responder, standardResponder } from '../stages/testing/scripted-text';
 import { AssetService } from './asset-service';
 import { createServiceFixture } from './testing/service-fixture';
+import { MemoryAssetFileStore } from '../../domain/ports/testing/memory-asset-file-store';
 
 const CREATIVE_PARAMS = { chapterMinWords: 100, chapterMaxWords: 200, maxChapters: 3 };
 const SCREENPLAY_PARAMS = { maxEpisodeDurationSeconds: '60', maxEpisodes: '3' };
@@ -210,13 +211,13 @@ test('编辑：首帧来源可以指定图片资产；视图只列出带参考�
     const [run] = await fixture.storyboards.start(fixture.work.id, [episodeId], {});
     await fixture.runner.whenIdle();
 
-    const assetRepository = new SqliteAssetRepository(fixture.database);
+    const assetRepository = new SqliteAssetRepository(fixture.database, new MemoryAssetFileStore());
     const assets = new AssetService(assetRepository);
     const image = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
     const scene = assets.createAsset('scene', {
       name: '灯塔远景',
       files: JSON.stringify([{ name: 'a.png', mimeType: 'image/png', size: image.length, data: image.toString('base64'), width: 64, height: 64 }])
-    });
+    }, { fileSource: 'upload' });
     assets.createAsset('character', { name: '没有参考图的角色' });
 
     let view = fixture.storyboards.getView(fixture.work.id, episodeId);

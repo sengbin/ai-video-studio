@@ -16,6 +16,7 @@ import type { ReadableStream as WebReadableStream } from 'node:stream/web';
 import { GroupLocation } from '../../domain/models/generation';
 import { ResultStore, SavedResultFile } from '../../domain/ports/generation-repository';
 import { RESULT_VIDEO_MAX_BYTES } from '../../domain/rules/generation-rules';
+import { resolveInsideRoot } from './relative-path';
 
 /** 下载中的临时文件后缀。 */
 const PARTIAL_SUFFIX = '.part';
@@ -70,14 +71,6 @@ export class LocalResultStore implements ResultStore {
    * @throws Error 路径是绝对路径，或解析后不在存储根目录之内（含 `..` 越界、指向根目录本身）。
    */
   resolvePath(filePath: string): string {
-    if (path.isAbsolute(filePath) || filePath.startsWith('/')) {
-      throw new Error('结果文件路径必须是相对存储目录的路径，不能是绝对路径。');
-    }
-    const absolutePath = path.resolve(this.rootDirectory, ...filePath.split('/'));
-    const relative = path.relative(path.resolve(this.rootDirectory), absolutePath);
-    if (relative === '' || relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
-      throw new Error('结果文件路径超出了存储目录。');
-    }
-    return absolutePath;
+    return resolveInsideRoot(this.rootDirectory, filePath);
   }
 }

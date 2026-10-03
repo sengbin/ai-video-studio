@@ -20,6 +20,9 @@ const NOW = '2026-01-01T00:00:00.000Z';
 /** 夹具中的结果视频目录名，只用于告知用户，不会被创建。 */
 const RESULT_VIDEO_DIRECTORY_NAME = 'videos';
 
+/** 夹具中的资产文件目录名，只用于告知用户，不会被创建。 */
+const ASSET_FILE_DIRECTORY_NAME = 'asset-files';
+
 /** 备份测试夹具。 */
 export interface BackupFixture {
   /** 临时目录，相当于扩展的全局存储目录。 */
@@ -53,7 +56,7 @@ export function createBackupFixture(): BackupFixture {
   const paths = resolveDatabaseFilePaths(directory, 'current.sqlite');
   const database = openDatabase(paths.databasePath);
   insertProject(database, '当前项目');
-  const storage = new SqliteBackupStorage(database, paths, join(directory, RESULT_VIDEO_DIRECTORY_NAME));
+  const storage = new SqliteBackupStorage(database, paths, join(directory, RESULT_VIDEO_DIRECTORY_NAME), join(directory, ASSET_FILE_DIRECTORY_NAME));
   return {
     directory,
     paths,

@@ -19,6 +19,7 @@ import { IN_MEMORY_DATABASE_PATH, openDatabase } from '../../infra/database/data
 import { SqliteGenerationRepository } from '../../infra/database/sqlite-generation-repository';
 import { seedGeneration } from '../../infra/database/testing/seed-generation';
 import { JobChange, JobQueue } from './job-queue';
+import { MemoryAssetFileStore } from '../../domain/ports/testing/memory-asset-file-store';
 
 const SNAPSHOT: JobSnapshot = {
   storyboardRunId: 1,
@@ -73,7 +74,7 @@ class ScriptedVideoProvider extends FakeVideoProvider {
 function createFixture(options: { maxConcurrent?: number; maxSubmitAttempts?: number; maxTransientFailures?: number; maxRunningMs?: number } = {}) {
   const database = openDatabase(IN_MEMORY_DATABASE_PATH);
   const seed = seedGeneration(database, 3);
-  const jobs = new SqliteGenerationRepository(database);
+  const jobs = new SqliteGenerationRepository(database, new MemoryAssetFileStore());
   const provider = new ScriptedVideoProvider();
   const clock = { time: Date.parse('2026-10-02T08:00:00.000Z') };
   const changes: JobChange[] = [];

@@ -12,6 +12,7 @@ import { AssetRecord } from '../../domain/models/asset';
 import { AssetRepository } from '../../domain/ports/asset-repository';
 import { PromptTemplates } from '../../domain/ports/prompt-templates';
 import { ImageInput, TextGenerationPort } from '../../domain/ports/text-generation-port';
+import { UPLOAD_SOURCE_GENERATION_MESSAGE } from '../../domain/rules/asset-generation-rules';
 import {
   ASSET_PROMPT_IMAGE_MAX_BYTES,
   ASSET_PROMPT_MAX_IMAGES,
@@ -81,6 +82,10 @@ export class AssetPromptService {
     const asset = assets.findById(assetId);
     if (asset === undefined) {
       throw new NotFoundError(`资产 ${assetId} 不存在。`);
+    }
+    // 使用上传文件的资产没有生成入口，要生成须先改用生成。
+    if (asset.fileSource === 'upload') {
+      throw new ValidationError({ [FORM_LEVEL_ERROR_KEY]: UPLOAD_SOURCE_GENERATION_MESSAGE });
     }
     const images = this.readImages(asset);
     this.assertCanGenerate(asset.kind, assetToDraftValues(asset), images.length > 0);

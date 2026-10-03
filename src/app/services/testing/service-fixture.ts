@@ -27,6 +27,7 @@ import { ScreenplayService } from '../screenplay-service';
 import { StageChange, StageService } from '../stage-service';
 import { StoryboardService } from '../storyboard-service';
 import { WorkService } from '../work-service';
+import { MemoryAssetFileStore } from '../../../domain/ports/testing/memory-asset-file-store';
 
 /** 服务层夹具。 */
 export interface ServiceFixture {
@@ -87,7 +88,7 @@ export function createServiceFixture(responder: Responder = standardResponder, s
     runs,
     screenplays: screenplayRepository,
     storyboards: storyboardRepository,
-    assets: new SqliteAssetRepository(database),
+    assets: new SqliteAssetRepository(database, new MemoryAssetFileStore()),
     runner,
     stages
   });

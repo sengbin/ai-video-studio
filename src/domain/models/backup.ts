@@ -35,6 +35,8 @@ export interface DatabaseStatus {
   readonly counts: BackupDataCounts;
   /** 结果视频文件所在的目录，不包含在备份中。 */
   readonly resultVideoDirectory: string;
+  /** 资产图片、音频文件所在的目录，不包含在备份中；备份里的资产记录只保存文件路径，换电脑恢复时需要一并复制这个目录。 */
+  readonly assetFileDirectory: string;
 }
 
 /** 对一个待恢复备份文件的检查结果，由基础设施层读取文件得到，是否合法由领域规则判断。 */

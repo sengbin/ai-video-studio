@@ -71,6 +71,7 @@ import { SqliteWorkSourceReader } from './infra/database/sqlite-work-source-read
 import { FilePromptTemplates } from './infra/prompts/file-prompt-templates';
 import { createBuiltinProviderRegistry } from './infra/providers/builtin-providers';
 import { VsCodeSecretStore } from './infra/secrets/vscode-secret-store';
+import { ASSET_FILE_DIRECTORY_NAME, LocalAssetFileStore } from './infra/storage/local-asset-file-store';
 import { LocalResultStore, RESULT_VIDEO_DIRECTORY_NAME } from './infra/storage/local-result-store';
 import { HttpMediaDownloader } from './infra/storage/http-media-downloader';
 import { SidebarActionRegistry } from './sidebar/sidebar-actions';
@@ -173,7 +174,9 @@ export function activate(context: vscode.ExtensionContext): void {
   shutdown.add(() => waitForStageRuns(runner));
   const stageService = new StageService({ works: workService, runs, chapters, screenplays, runner, changes: stageChanges });
   const screenplayService = new ScreenplayService({ works: workService, runs, screenplays, runner, stages: stageService });
-  const assetRepository = new SqliteAssetRepository(database);
+  // 资产的图片、音频保存在全局存储目录下，数据库只记路径。
+  const assetFileStore = new LocalAssetFileStore(path.join(context.globalStorageUri.fsPath, ASSET_FILE_DIRECTORY_NAME));
+  const assetRepository = new SqliteAssetRepository(database, assetFileStore);
   const storyboardService = new StoryboardService({
     works: workService,
     projects: projectService,
@@ -192,7 +195,7 @@ export function activate(context: vscode.ExtensionContext): void {
   providerService.syncCatalog();
 
   // 资产生成：提示词由 Copilot 在后台生成，图片、音频经队列交给图像、音频模型生成；状态变化后通过资产变化事件刷新页面。
-  const assetVersionRepository = new SqliteAssetVersionRepository(database);
+  const assetVersionRepository = new SqliteAssetVersionRepository(database, assetFileStore);
   const notifyAssetsChanged = (): void => assetService.notifyChanged();
   const assetPromptService = new AssetPromptService({
     text: textGeneration,
@@ -220,7 +223,7 @@ export function activate(context: vscode.ExtensionContext): void {
   });
 
   // 视频生成：结果视频保存在全局存储目录；队列启动时先处理上次退出时遗留的任务。
-  const generationRepository = new SqliteGenerationRepository(database);
+  const generationRepository = new SqliteGenerationRepository(database, assetFileStore);
   const resultStore = new LocalResultStore(context.globalStorageUri.fsPath);
   const jobChanges = new ChangeNotifier<JobChange>();
   const generationProfileRepository = new SqliteGenerationProfileRepository(database);
@@ -275,9 +278,14 @@ export function activate(context: vscode.ExtensionContext): void {
     panels
   );
   const settingsPages = new SettingsPages({ text: textSettingsService, providers: providerService }, panels);
-  // 数据备份：备份只含数据库，结果视频文件在存储目录的 videos 子目录，不在备份内；恢复在重新加载窗口时生效。
+  // 数据备份：备份只含数据库，结果视频与资产的图片、音频文件在存储目录的 videos、asset-files 子目录，不在备份内；恢复在重新加载窗口时生效。
   const backupService = new BackupService({
-    storage: new SqliteBackupStorage(database, databasePaths, path.join(context.globalStorageUri.fsPath, RESULT_VIDEO_DIRECTORY_NAME)),
+    storage: new SqliteBackupStorage(
+      database,
+      databasePaths,
+      path.join(context.globalStorageUri.fsPath, RESULT_VIDEO_DIRECTORY_NAME),
+      path.join(context.globalStorageUri.fsPath, ASSET_FILE_DIRECTORY_NAME)
+    ),
     host: createBackupHost(),
     latestSchemaVersion: MIGRATIONS.length
   });
@@ -330,7 +338,12 @@ export function activate(context: vscode.ExtensionContext): void {
  */
 function activateWithoutDatabase(context: vscode.ExtensionContext, paths: DatabaseFilePaths, failure: string): void {
   const backupService = new BackupService({
-    storage: new SqliteBackupStorage(undefined, paths, path.join(context.globalStorageUri.fsPath, RESULT_VIDEO_DIRECTORY_NAME)),
+    storage: new SqliteBackupStorage(
+      undefined,
+      paths,
+      path.join(context.globalStorageUri.fsPath, RESULT_VIDEO_DIRECTORY_NAME),
+      path.join(context.globalStorageUri.fsPath, ASSET_FILE_DIRECTORY_NAME)
+    ),
     host: createBackupHost(),
     latestSchemaVersion: MIGRATIONS.length,
     databaseUnavailableReason: failure

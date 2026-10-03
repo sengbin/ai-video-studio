@@ -23,6 +23,7 @@ import { ProjectService } from '../services/project-service';
 import { FILE_PROMPTS, ScriptedText } from '../stages/testing/scripted-text';
 import { ASSET_FORM_NAMES, createAssetFormCatalog } from './asset-form';
 import { FormDefinition } from './form-definition';
+import { MemoryAssetFileStore } from '../../domain/ports/testing/memory-asset-file-store';
 
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
 const WAV = Buffer.concat([Buffer.from('RIFF'), Buffer.from([0, 0, 0, 0]), Buffer.from('WAVEfmt ')]);
@@ -30,7 +31,7 @@ const WAV = Buffer.concat([Buffer.from('RIFF'), Buffer.from([0, 0, 0, 0]), Buffe
 function createFixture(projectNames: readonly string[] = ['项目甲', '项目乙'], responder?: () => unknown) {
   const database = openDatabase(IN_MEMORY_DATABASE_PATH);
   const projects = new ProjectService(new SqliteProjectRepository(database));
-  const assetRepository = new SqliteAssetRepository(database);
+  const assetRepository = new SqliteAssetRepository(database, new MemoryAssetFileStore());
   const assets = new AssetService(assetRepository);
   const categories = new AssetCategoryService(new SqliteAssetCategoryRepository(database));
   const created = projectNames.map((name) => projects.createProject({ name }));
@@ -68,31 +69,56 @@ async function waitForPrompt(assets: AssetService, id: number): Promise<void> {
   throw new Error('提示词生成没有结束。');
 }
 
-test('新建表单：字段随类型变化，文件字段按类型限制，音频默认选中“音色参考”', () => {
+test('新建表单：生成来源的字段随类型变化且没有文件字段，音频默认选中“音色参考”', () => {
   const { database, open } = createFixture();
   try {
     const keysOf = (kind: string) => open(ASSET_FORM_NAMES.create, { kind }).schema.fields.map((field) => field.key);
     assert.deepEqual(keysOf('character'), [
       'name', 'category', 'composition', 'style', 'background', 'referenceAspectRatio',
-      'characterType', 'appearance', 'clothing', 'expressionPose', 'voiceDescription', 'extra', 'files'
+      'characterType', 'appearance', 'clothing', 'expressionPose', 'voiceDescription', 'extra'
     ]);
     assert.deepEqual(keysOf('prop'), [
-      'name', 'category', 'composition', 'style', 'background', 'referenceAspectRatio', 'appearance', 'state', 'extra', 'files'
+      'name', 'category', 'composition', 'style', 'background', 'referenceAspectRatio', 'appearance', 'state', 'extra'
     ]);
-    assert.deepEqual(keysOf('audio'), ['name', 'category', 'audioKind', 'description', 'language', 'extra', 'files']);
+    assert.deepEqual(keysOf('audio'), ['name', 'category', 'audioKind', 'description', 'language', 'extra']);
 
     const image = open(ASSET_FORM_NAMES.create, { kind: 'scene' });
     assert.equal(image.schema.title, '新建场景');
-    const imageFiles = image.schema.fields.find((field) => field.key === 'files');
-    assert.deepEqual([imageFiles?.multiple, imageFiles?.preview, imageFiles?.derive, imageFiles?.required], [true, 'image', 'image', false]);
     assert.ok(image.schema.fields.find((field) => field.key === 'composition')?.options?.includes('平视广角全景'));
+    assert.equal(image.schema.submitActions?.length, 2);
 
     const audio = open(ASSET_FORM_NAMES.create, { kind: 'audio' });
-    const audioFiles = audio.schema.fields.find((field) => field.key === 'files');
-    assert.deepEqual([audioFiles?.multiple, audioFiles?.derive, audioFiles?.required], [false, 'audio', false]);
     assert.deepEqual(audio.schema.fields.find((field) => field.key === 'audioKind')?.options, ['音色参考', '背景音乐', '音效']);
     assert.equal(audio.initialValues.audioKind, '音色参考');
     assert.equal(audio.schema.fields.find((field) => field.key === 'name')?.checkUnique, true);
+  } finally {
+    database.close();
+  }
+});
+
+test('新建上传表单：图片只有名称、分类与必填的参考图，音频另有类型、描述、语言；没有提示词按钮；来源参数无效时打不开', async () => {
+  const { database, assets, open } = createFixture();
+  try {
+    const keysOf = (kind: string) => open(ASSET_FORM_NAMES.create, { kind, fileSource: 'upload' }).schema.fields.map((field) => field.key);
+    assert.deepEqual(keysOf('character'), ['name', 'category', 'files']);
+    assert.deepEqual(keysOf('audio'), ['name', 'category', 'audioKind', 'description', 'language', 'files']);
+
+    const image = open(ASSET_FORM_NAMES.create, { kind: 'scene', fileSource: 'upload' });
+    assert.deepEqual([image.schema.title, image.schema.submitLabel, image.schema.submitActions], ['上传场景图片', '创建', undefined]);
+    const imageFiles = image.schema.fields.find((field) => field.key === 'files');
+    assert.deepEqual([imageFiles?.multiple, imageFiles?.preview, imageFiles?.derive, imageFiles?.required], [true, 'image', 'image', true]);
+
+    const audio = open(ASSET_FORM_NAMES.create, { kind: 'audio', fileSource: 'upload' });
+    const audioFiles = audio.schema.fields.find((field) => field.key === 'files');
+    assert.deepEqual([audio.schema.title, audioFiles?.multiple, audioFiles?.derive, audioFiles?.required], ['上传音频', false, 'audio', true]);
+    assert.equal(audio.initialValues.audioKind, '音色参考');
+
+    assert.throws(() => open(ASSET_FORM_NAMES.create, { kind: 'scene', fileSource: 'bogus' }), ValidationError);
+    const file = { name: 'a.png', mimeType: 'image/png', size: PNG.length, data: PNG.toString('base64'), width: 10, height: 10 };
+    await assert.rejects(submit(image, { name: '灯塔' }), ValidationError);
+    await submit(image, { name: '灯塔', files: JSON.stringify([file]) });
+    const [item] = assets.listAssets('scene');
+    assert.deepEqual([item.name, item.fileSource, item.fileCount, item.promptStatus], ['灯塔', 'upload', 1, 'none']);
   } finally {
     database.close();
   }
@@ -128,37 +154,54 @@ test('提交新建：创建资产；重名给出冲突错误', async () => {
   }
 });
 
-test('编辑表单：带出已有内容与文件，重名检查排除自身，提交修改并替换文件', async () => {
+test('编辑表单：生成来源带出已有内容、没有文件字段，重名检查排除自身，提交修改不触碰上传的文件', async () => {
   const { database, assets, open } = createFixture();
   try {
-    const file = { name: 'a.png', mimeType: 'image/png', size: PNG.length, data: PNG.toString('base64'), width: 10, height: 10 };
-    const asset = assets.createAsset('character', {
-      name: '林夏',
-      characterType: '人类',
-      style: '水彩插画',
-      referenceAspectRatio: '1:1',
-      files: JSON.stringify([file])
-    });
+    const asset = assets.createAsset('character', { name: '林夏', characterType: '人类', style: '水彩插画', referenceAspectRatio: '1:1' });
     assets.createAsset('character', { name: '周远' });
 
     const form = open(ASSET_FORM_NAMES.edit, { assetId: asset.id });
     assert.equal(form.schema.title, '编辑角色');
     assert.equal(form.schema.fields.find((field) => field.key === 'name')?.checkUnique, true);
+    assert.equal(form.schema.fields.some((field) => field.key === 'files'), false);
     assert.deepEqual(
-      [form.initialValues.name, form.initialValues.characterType, form.initialValues.style, form.initialValues.referenceAspectRatio, form.initialValues.promptZh],
-      ['林夏', '人类', '水彩插画', '1:1', undefined]
+      [form.initialValues.name, form.initialValues.characterType, form.initialValues.style, form.initialValues.referenceAspectRatio, form.initialValues.promptZh, form.initialValues.files],
+      ['林夏', '人类', '水彩插画', '1:1', undefined, undefined]
     );
-    assert.deepEqual(JSON.parse(form.initialValues.files), [{ name: 'a.png', mimeType: 'image/png', size: PNG.length, data: PNG.toString('base64') }]);
 
     assert.equal(form.checkField?.('name', '周远'), DUPLICATE_ASSET_NAME_MESSAGE);
     assert.equal(form.checkField?.('name', '林夏'), undefined);
     assert.equal(form.checkField?.('name', '新名字'), undefined);
 
-    await submit(form, { ...form.initialValues, name: '林夏二', files: '[]' });
+    await submit(form, { ...form.initialValues, name: '林夏二' });
     assert.equal(assets.getAsset(asset.id).name, '林夏二');
-    assert.equal(assets.getReferenceFiles(asset.id).length, 0);
     assert.throws(() => open(ASSET_FORM_NAMES.edit, { assetId: 9999 }), NotFoundError);
     assert.throws(() => open(ASSET_FORM_NAMES.edit, {}), ValidationError);
+  } finally {
+    database.close();
+  }
+});
+
+test('编辑上传表单：带出已上传的文件，替换文件后保存；生成来源的资产用 fileSource=upload 打开，保存后改用上传', async () => {
+  const { database, assets, open } = createFixture();
+  try {
+    const file = { name: 'a.png', mimeType: 'image/png', size: PNG.length, data: PNG.toString('base64'), width: 10, height: 10 };
+    const asset = assets.createAsset('character', { name: '林夏', files: JSON.stringify([file]) }, { fileSource: 'upload' });
+    const form = open(ASSET_FORM_NAMES.edit, { assetId: asset.id });
+    assert.deepEqual([form.schema.title, form.schema.fields.map((field) => field.key)], ['上传角色图片', ['name', 'category', 'files']]);
+    assert.deepEqual(JSON.parse(form.initialValues.files), [{ name: 'a.png', mimeType: 'image/png', size: PNG.length, data: PNG.toString('base64') }]);
+
+    await assert.rejects(submit(form, { ...form.initialValues, files: '[]' }), ValidationError);
+    await submit(form, { ...form.initialValues, name: '林夏二', files: JSON.stringify([{ ...file, name: 'b.png' }]) });
+    assert.deepEqual([assets.getAsset(asset.id).name, assets.getReferenceFiles(asset.id).map((item) => item.fileName)], ['林夏二', ['b.png']]);
+
+    // 切到生成：上传的文件保留；再用 fileSource=upload 打开编辑表单，带出保留的文件，保存后改用上传。
+    assets.switchFileSource(asset.id, 'generated');
+    const reopened = open(ASSET_FORM_NAMES.edit, { assetId: asset.id, fileSource: 'upload' });
+    assert.equal((JSON.parse(reopened.initialValues.files) as unknown[]).length, 1);
+    await submit(reopened, { ...reopened.initialValues });
+    assert.equal(assets.getAsset(asset.id).fileSource, 'upload');
+    assert.throws(() => open(ASSET_FORM_NAMES.edit, { assetId: asset.id, fileSource: 'bogus' }), ValidationError);
   } finally {
     database.close();
   }
@@ -232,15 +275,23 @@ test('编辑音频的表单带所属分类字段，选项取自音频分类', ()
   }
 });
 
-test('编辑音频：初始值使用界面文字，已有音频随表单带出', () => {
+test('编辑音频：生成来源初始值使用界面文字、没有文件字段；上传来源已有音频随表单带出', () => {
   const { database, assets, open } = createFixture();
   try {
-    const audio = assets.createAsset('audio', {
-      name: '配乐',
-      audioKind: '背景音乐',
-      description: '紧张',
-      files: JSON.stringify([{ name: 'm.wav', mimeType: 'audio/wav', size: WAV.length, data: WAV.toString('base64'), durationSeconds: 5 }])
-    });
+    const generated = assets.createAsset('audio', { name: '雨声', audioKind: '音效', description: '细雨' });
+    const generatedForm = open(ASSET_FORM_NAMES.edit, { assetId: generated.id });
+    assert.deepEqual([generatedForm.initialValues.audioKind, generatedForm.initialValues.description, generatedForm.initialValues.files], ['音效', '细雨', undefined]);
+
+    const audio = assets.createAsset(
+      'audio',
+      {
+        name: '配乐',
+        audioKind: '背景音乐',
+        description: '紧张',
+        files: JSON.stringify([{ name: 'm.wav', mimeType: 'audio/wav', size: WAV.length, data: WAV.toString('base64'), durationSeconds: 5 }])
+      },
+      { fileSource: 'upload' }
+    );
     const form = open(ASSET_FORM_NAMES.edit, { assetId: audio.id });
     assert.deepEqual([form.initialValues.audioKind, form.initialValues.description, form.initialValues.language], ['背景音乐', '紧张', '']);
     assert.equal((JSON.parse(form.initialValues.files) as unknown[]).length, 1);
@@ -273,12 +324,11 @@ test('提交按钮：新建与编辑表单各有两个按钮，主按钮生成�
   }
 });
 
-test('创建并生成提示词：先保存资产，后台用已保存内容和参考图生成，写入提示词；仅创建不生成', async () => {
+test('创建并生成提示词：先保存资产，后台用已保存内容生成，写入提示词；仅创建不生成', async () => {
   const { database, assets, text, notifications, open } = createFixture();
   try {
-    const image = { name: 'a.png', mimeType: 'image/png', size: PNG.length, data: PNG.toString('base64'), width: 10, height: 10 };
     const form = open(ASSET_FORM_NAMES.create, { kind: 'character' });
-    await submit(form, { name: '林夏', style: '写实摄影', appearance: '短发', files: JSON.stringify([image]) }, 'createAndPrompt');
+    await submit(form, { name: '林夏', style: '写实摄影', appearance: '短发' }, 'createAndPrompt');
 
     const [asset] = assets.listAssets('character');
     assert.equal(asset.promptStatus, 'running', '资产已入库，提示词在后台生成');
@@ -292,7 +342,7 @@ test('创建并生成提示词：先保存资产，后台用已保存内容和�
     assert.match(request.user, /角色名称：林夏/);
     assert.match(request.user, /角色外观：短发/);
     assert.match(request.user, /画面风格：写实摄影/);
-    assert.equal(request.images?.length, 1);
+    assert.equal(request.images?.length ?? 0, 0, '生成来源的新建表单没有图片');
     assert.equal(request.tool.name, 'submit_asset_prompts');
     assert.ok(notifications.length >= 2, '开始和结束都通知界面刷新');
 

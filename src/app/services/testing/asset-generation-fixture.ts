@@ -27,6 +27,7 @@ import { AssetGenerationService } from '../asset-generation-service';
 import { AssetService } from '../asset-service';
 import { ProjectService } from '../project-service';
 import { ProviderService } from '../provider-service';
+import { MemoryAssetFileStore } from '../../../domain/ports/testing/memory-asset-file-store';
 
 /** 最小的有效 PNG 文件头（含几个多余字节）。 */
 export const PNG_BYTES = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
@@ -50,8 +51,10 @@ export async function createAssetGenerationFixture(
 ) {
   const database = openDatabase(IN_MEMORY_DATABASE_PATH);
   const projects = new ProjectService(new SqliteProjectRepository(database));
-  const assetRepository = new SqliteAssetRepository(database);
-  const versions = new SqliteAssetVersionRepository(database);
+  // 资产仓库与版本仓库共用一个文件存储：采用版本时两边引用同一个文件。
+  const files = new MemoryAssetFileStore();
+  const assetRepository = new SqliteAssetRepository(database, files);
+  const versions = new SqliteAssetVersionRepository(database, files);
   const assets = new AssetService(assetRepository);
   const image = new FakeImageProvider([
     { code: 'fake-image', displayName: '假图像模型', kind: 'image', capability: FAKE_ASSET_IMAGE_CAPABILITY }
@@ -104,5 +107,5 @@ export async function createAssetGenerationFixture(
     now: () => new Date(clock.time)
   });
   const project = projects.createProject({ name: '项目甲' });
-  return { database, projects, project, assets, assetRepository, versions, providerService, image, audio, downloads, clock, changes, notifications, queue, generation };
+  return { database, files, projects, project, assets, assetRepository, versions, providerService, image, audio, downloads, clock, changes, notifications, queue, generation };
 }

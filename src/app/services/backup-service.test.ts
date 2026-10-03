@@ -304,7 +304,7 @@ test('降级模式：数据库无法打开时概览不读取数据库状态，�
   const fixture = createBackupFixture();
   try {
     // 用不带连接的存储，模拟数据库无法打开。
-    const storage = new SqliteBackupStorage(undefined, fixture.paths, join(fixture.directory, 'videos'));
+    const storage = new SqliteBackupStorage(undefined, fixture.paths, join(fixture.directory, 'videos'), join(fixture.directory, 'asset-files'));
     const host = new FakeBackupHost();
     const service = new BackupService({ storage, host, latestSchemaVersion: LATEST_VERSION, databaseUnavailableReason: '文件已损坏' });
 

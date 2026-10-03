@@ -16,11 +16,12 @@ import { MessageRouter } from '../messaging/message-router';
 import { AssetCategoryService } from '../services/asset-category-service';
 import { AssetService } from '../services/asset-service';
 import { ASSET_CATEGORY_REQUESTS, registerAssetCategoryHandlers } from './asset-category-handlers';
+import { MemoryAssetFileStore } from '../../domain/ports/testing/memory-asset-file-store';
 
 function createFixture() {
   const database = openDatabase(IN_MEMORY_DATABASE_PATH);
   const categories = new AssetCategoryService(new SqliteAssetCategoryRepository(database));
-  const assets = new AssetService(new SqliteAssetRepository(database));
+  const assets = new AssetService(new SqliteAssetRepository(database, new MemoryAssetFileStore()));
   const router = new MessageRouter();
   registerAssetCategoryHandlers(router, categories);
   const send = (name: string, payload?: unknown) => router.handle({ type: 'request', requestId: 1, name, payload });

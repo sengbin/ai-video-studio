@@ -4,7 +4,7 @@
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
-// 备注：列表只读取缩略图；描述字段以 JSON 保存在 attributes_json；新增与修改在事务内同时写资产与文件。
+// 备注：文件内容保存在磁盘（AssetFileStore），表里只记路径；列表只读取缩略图；描述字段以 JSON 保存在 attributes_json；新增与修改在事务内同时写资产与文件记录，删除记录后再清理不再被引用的磁盘文件；上传与生成两种来源的文件各自保留，读取只取资产当前使用来源的文件。
 // ------------------------------------------------------------------------
 
 import type { DatabaseSync } from 'node:sqlite';
@@ -12,6 +12,7 @@ import {
   AssetContent,
   AssetFileRecord,
   AssetFileRole,
+  AssetFileSource,
   AssetGenerationSummary,
   AssetInput,
   AssetKind,
@@ -23,8 +24,10 @@ import {
   NewAssetFile,
   PromptStatus
 } from '../../domain/models/asset';
+import { AssetFileStore } from '../../domain/ports/asset-file-store';
 import { AssetRepository, GeneratedPrompts } from '../../domain/ports/asset-repository';
 import { AssetRevisionUpdate, PromptRevisionUpdate } from '../../domain/rules/asset-generation-rules';
+import { collectAssetFilePaths, removeUnreferencedFiles } from './asset-file-cleanup';
 import { runInTransaction } from './transaction';
 
 /** assets 表的一行。 */
@@ -48,6 +51,7 @@ interface AssetRow {
   readonly prompt_status: PromptStatus;
   readonly prompt_error: string | null;
   readonly adopted_version_id: number | null;
+  readonly file_source: AssetFileSource;
   readonly created_at: string;
   readonly updated_at: string;
 }
@@ -55,17 +59,18 @@ interface AssetRow {
 /** 列表查询的一行：资产加统计与缩略图。 */
 interface AssetListRow extends AssetRow {
   readonly file_count: number;
+  readonly upload_file_count: number;
   readonly duration_seconds: number | null;
   readonly episode_count: number;
   readonly thumb_mime: string | null;
-  readonly thumb_content: Uint8Array | null;
+  readonly thumb_path: string | null;
   readonly version_count: number;
   readonly latest_json: string | null;
   readonly latest_succeeded: number | null;
   readonly adopted_version: number | null;
 }
 
-/** asset_files 表的一行（含内容）。 */
+/** asset_files 表的一行（内容在磁盘文件里，路径见 file_path）。 */
 interface AssetFileRow {
   readonly id: number;
   readonly asset_id: number;
@@ -75,7 +80,7 @@ interface AssetFileRow {
   readonly width: number | null;
   readonly height: number | null;
   readonly duration_seconds: number | null;
-  readonly content: Uint8Array;
+  readonly file_path: string;
   readonly sort_order: number;
 }
 
@@ -100,6 +105,7 @@ function toRecord(row: AssetRow): AssetRecord {
     promptStatus: row.prompt_status,
     promptError: row.prompt_error,
     adoptedVersionId: row.adopted_version_id,
+    fileSource: row.file_source,
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };
@@ -117,14 +123,22 @@ function toGenerationSummary(row: AssetListRow): AssetGenerationSummary {
 
 /** 基于 SQLite 的资产仓库。 */
 export class SqliteAssetRepository implements AssetRepository {
-  constructor(private readonly database: DatabaseSync) {}
+  /**
+   * @param database 数据库连接。
+   * @param files 资产文件内容的存储。
+   */
+  constructor(
+    private readonly database: DatabaseSync,
+    private readonly files: AssetFileStore
+  ) {}
 
   list(kind: AssetKind): AssetListItem[] {
     const rows = this.database
       .prepare(
         `SELECT a.*,
-           (SELECT COUNT(*) FROM asset_files f WHERE f.asset_id = a.id AND f.role = 'reference') AS file_count,
-           (SELECT f.duration_seconds FROM asset_files f WHERE f.asset_id = a.id AND f.role = 'reference'
+           (SELECT COUNT(*) FROM asset_files f WHERE f.asset_id = a.id AND f.role = 'reference' AND f.source = a.file_source) AS file_count,
+           (SELECT COUNT(*) FROM asset_files f WHERE f.asset_id = a.id AND f.role = 'reference' AND f.source = 'upload') AS upload_file_count,
+           (SELECT f.duration_seconds FROM asset_files f WHERE f.asset_id = a.id AND f.role = 'reference' AND f.source = a.file_source
              ORDER BY f.sort_order, f.id LIMIT 1) AS duration_seconds,
            (SELECT COUNT(*) FROM episodes e
              WHERE EXISTS (SELECT 1 FROM entity_bindings b WHERE b.episode_id = e.id AND b.asset_id = a.id)
@@ -132,10 +146,10 @@ export class SqliteAssetRepository implements AssetRepository {
                              JOIN shots sh ON sh.id = s.shot_id
                              JOIN storyboard_scripts ss ON ss.id = sh.storyboard_script_id
                             WHERE ss.episode_id = e.id AND s.audio_asset_id = a.id)) AS episode_count,
-           (SELECT t.mime FROM asset_files t WHERE t.asset_id = a.id AND t.role = 'thumbnail'
+           (SELECT t.mime FROM asset_files t WHERE t.asset_id = a.id AND t.role = 'thumbnail' AND t.source = a.file_source
              ORDER BY t.sort_order, t.id LIMIT 1) AS thumb_mime,
-           (SELECT t.content FROM asset_files t WHERE t.asset_id = a.id AND t.role = 'thumbnail'
-             ORDER BY t.sort_order, t.id LIMIT 1) AS thumb_content,
+           (SELECT t.file_path FROM asset_files t WHERE t.asset_id = a.id AND t.role = 'thumbnail' AND t.source = a.file_source
+             ORDER BY t.sort_order, t.id LIMIT 1) AS thumb_path,
            (SELECT COUNT(*) FROM asset_versions v WHERE v.asset_id = a.id) AS version_count,
            (SELECT json_object('id', v.id, 'version', v.version, 'status', v.status, 'contentRevision', v.content_revision,
                                'promptRevision', v.prompt_revision, 'errorMessage', v.error_message)
@@ -149,10 +163,11 @@ export class SqliteAssetRepository implements AssetRepository {
     return rows.map((row) => ({
       ...toRecord(row),
       thumbnail:
-        row.thumb_mime === null || row.thumb_content === null
+        row.thumb_mime === null || row.thumb_path === null
           ? null
-          : { mime: row.thumb_mime, data: Buffer.from(row.thumb_content).toString('base64') },
+          : { mime: row.thumb_mime, data: this.files.read(row.thumb_path).toString('base64') },
       fileCount: row.file_count,
+      uploadFileCount: row.upload_file_count,
       durationSeconds: row.duration_seconds,
       episodeCount: row.episode_count,
       generation: toGenerationSummary(row)
@@ -178,28 +193,55 @@ export class SqliteAssetRepository implements AssetRepository {
   }
 
   listReferenceFiles(assetId: number): AssetFileRecord[] {
-    return this.listFiles(assetId, 'reference');
+    return this.listActiveFiles(assetId, 'reference');
   }
 
   listThumbnailFiles(assetId: number): AssetFileRecord[] {
-    return this.listFiles(assetId, 'thumbnail');
+    return this.listActiveFiles(assetId, 'thumbnail');
+  }
+
+  listUploadFiles(assetId: number): AssetFileRecord[] {
+    const rows = this.database
+      .prepare(
+        `SELECT id, asset_id, role, file_name, mime, width, height, duration_seconds, file_path, sort_order
+           FROM asset_files WHERE asset_id = ? AND role = 'reference' AND source = 'upload' ORDER BY sort_order, id`
+      )
+      .all(assetId) as unknown as AssetFileRow[];
+    return rows.map((row) => this.toFileRecord(row));
   }
 
   countReferenceFiles(assetId: number): number {
     const row = this.database
-      .prepare("SELECT COUNT(*) AS total FROM asset_files WHERE asset_id = ? AND role = 'reference'")
+      .prepare(
+        `SELECT COUNT(*) AS total FROM asset_files f JOIN assets a ON a.id = f.asset_id
+          WHERE f.asset_id = ? AND f.role = 'reference' AND f.source = a.file_source`
+      )
       .get(assetId) as unknown as { total: number };
     return row.total;
   }
 
-  private listFiles(assetId: number, role: AssetFileRole): AssetFileRecord[] {
+  countFiles(assetId: number, source: AssetFileSource): number {
+    const row = this.database
+      .prepare("SELECT COUNT(*) AS total FROM asset_files WHERE asset_id = ? AND role = 'reference' AND source = ?")
+      .get(assetId, source) as unknown as { total: number };
+    return row.total;
+  }
+
+  /** 读取资产当前使用来源的某种用途的文件（含内容）。 */
+  private listActiveFiles(assetId: number, role: AssetFileRole): AssetFileRecord[] {
     const rows = this.database
       .prepare(
-        `SELECT id, asset_id, role, file_name, mime, width, height, duration_seconds, content, sort_order
-           FROM asset_files WHERE asset_id = ? AND role = ? ORDER BY sort_order, id`
+        `SELECT f.id, f.asset_id, f.role, f.file_name, f.mime, f.width, f.height, f.duration_seconds, f.file_path, f.sort_order
+           FROM asset_files f JOIN assets a ON a.id = f.asset_id
+          WHERE f.asset_id = ? AND f.role = ? AND f.source = a.file_source ORDER BY f.sort_order, f.id`
       )
       .all(assetId, role) as unknown as AssetFileRow[];
-    return rows.map((row) => ({
+    return rows.map((row) => this.toFileRecord(row));
+  }
+
+  /** 把一行文件记录连同磁盘上的内容转换为资产文件。 */
+  private toFileRecord(row: AssetFileRow): AssetFileRecord {
+    return {
       id: row.id,
       assetId: row.asset_id,
       role: row.role,
@@ -208,9 +250,9 @@ export class SqliteAssetRepository implements AssetRepository {
       width: row.width,
       height: row.height,
       durationSeconds: row.duration_seconds,
-      content: Buffer.from(row.content),
+      content: this.files.read(row.file_path),
       sortOrder: row.sort_order
-    }));
+    };
   }
 
   insert(input: AssetInput, files: readonly NewAssetFile[], timestamp: string): number {
@@ -219,8 +261,8 @@ export class SqliteAssetRepository implements AssetRepository {
         .prepare(
           `INSERT INTO assets (kind, name, source_entity_id, category_id, attributes_json, composition, style, background,
              reference_aspect_ratio, extra_requirements, prompt_zh, prompt_en, prompt_revision, prompt_content_revision,
-             created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+             file_source, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
         .run(
           input.kind,
@@ -237,6 +279,7 @@ export class SqliteAssetRepository implements AssetRepository {
           input.promptEn,
           input.promptZh !== '' || input.promptEn !== '' ? 1 : 0,
           input.promptZh !== '' || input.promptEn !== '' ? 1 : 0,
+          input.fileSource,
           timestamp,
           timestamp
         );
@@ -250,17 +293,18 @@ export class SqliteAssetRepository implements AssetRepository {
     id: number,
     content: AssetContent,
     categoryId: number | null,
-    files: readonly NewAssetFile[],
+    files: readonly NewAssetFile[] | null,
+    fileSource: AssetFileSource,
     timestamp: string,
     revision: AssetRevisionUpdate
   ): boolean {
-    return runInTransaction(this.database, () => {
+    let replacedPaths: string[] = [];
+    const updated = runInTransaction(this.database, () => {
       const result = this.database
         .prepare(
           `UPDATE assets SET name = ?, category_id = ?, attributes_json = ?, composition = ?, style = ?, background = ?,
              reference_aspect_ratio = ?, extra_requirements = ?, prompt_zh = ?, prompt_en = ?,
-             content_revision = ?, prompt_revision = ?, prompt_content_revision = ?,
-             adopted_version_id = CASE WHEN ? = 1 THEN NULL ELSE adopted_version_id END, updated_at = ?
+             content_revision = ?, prompt_revision = ?, prompt_content_revision = ?, file_source = ?, updated_at = ?
            WHERE id = ?`
         )
         .run(
@@ -277,23 +321,28 @@ export class SqliteAssetRepository implements AssetRepository {
           revision.contentRevision,
           revision.promptRevision,
           revision.promptContentRevision,
-          revision.clearAdopted ? 1 : 0,
+          fileSource,
           timestamp,
           id
         );
       if (Number(result.changes) === 0) {
         return false;
       }
-      this.database.prepare('DELETE FROM asset_files WHERE asset_id = ?').run(id);
-      this.insertFiles(id, files, timestamp);
-      if (revision.clearAdopted) {
-        // 参考文件被手动改动，不再对应任何版本：采用关系的两处记录（assets.adopted_version_id 与版本文件的 is_adopted）必须同时清除。
-        this.database
-          .prepare('UPDATE asset_version_files SET is_adopted = 0 WHERE is_adopted = 1 AND version_id IN (SELECT id FROM asset_versions WHERE asset_id = ?)')
-          .run(id);
+      // 只替换上传来源的文件；生成来源的文件由采用版本维护，不受表单保存影响。
+      if (files !== null) {
+        replacedPaths = this.listUploadPaths(id);
+        this.database.prepare("DELETE FROM asset_files WHERE asset_id = ? AND source = 'upload'").run(id);
+        this.insertFiles(id, files, timestamp);
       }
       return true;
     });
+    removeUnreferencedFiles(this.database, this.files, replacedPaths);
+    return updated;
+  }
+
+  setFileSource(id: number, source: AssetFileSource, timestamp: string): boolean {
+    const result = this.database.prepare('UPDATE assets SET file_source = ?, updated_at = ? WHERE id = ?').run(source, timestamp, id);
+    return Number(result.changes) > 0;
   }
 
   updatePrompts(id: number, prompts: GeneratedPrompts, revision: PromptRevisionUpdate, timestamp: string): boolean {
@@ -338,7 +387,10 @@ export class SqliteAssetRepository implements AssetRepository {
   }
 
   remove(id: number): boolean {
+    // 删除前先记下引用的文件路径（删除后无法再查），提交后清理不再被引用的磁盘文件。
+    const paths = collectAssetFilePaths(this.database, id);
     const result = this.database.prepare('DELETE FROM assets WHERE id = ?').run(id);
+    removeUnreferencedFiles(this.database, this.files, paths);
     return Number(result.changes) > 0;
   }
 
@@ -388,11 +440,19 @@ export class SqliteAssetRepository implements AssetRepository {
     };
   }
 
-  /** 写入资产的文件；调用方负责事务。 */
+  /** 资产上传来源的文件路径（含缩略图）。 */
+  private listUploadPaths(assetId: number): string[] {
+    const rows = this.database.prepare("SELECT file_path FROM asset_files WHERE asset_id = ? AND source = 'upload'").all(assetId) as unknown as Array<{
+      file_path: string;
+    }>;
+    return rows.map((row) => row.file_path);
+  }
+
+  /** 把内容写入磁盘并登记为资产的上传文件；调用方负责事务。 */
   private insertFiles(assetId: number, files: readonly NewAssetFile[], timestamp: string): void {
     const insert = this.database.prepare(
-      `INSERT INTO asset_files (asset_id, role, file_name, mime, width, height, duration_seconds, size_bytes, content, sort_order, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO asset_files (asset_id, role, source, file_name, mime, width, height, duration_seconds, size_bytes, file_path, sort_order, created_at)
+       VALUES (?, ?, 'upload', ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
     for (const file of files) {
       insert.run(
@@ -404,7 +464,7 @@ export class SqliteAssetRepository implements AssetRepository {
         file.height,
         file.durationSeconds,
         file.content.length,
-        file.content,
+        this.files.write(file.content, file.mime),
         file.sortOrder,
         timestamp
       );

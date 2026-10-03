@@ -554,9 +554,9 @@ test('从版本 9 升级到 10：资产脱离项目，重名资产加项目名�
     legacy.prepare('INSERT INTO entity_bindings (episode_id, entity_id, asset_id, created_at) VALUES (1, 1, 2, ?)').run(NOW);
     legacy.close();
 
-    const database = openDatabase(filePath);
+    const database = openDatabase(filePath, MIGRATIONS.slice(0, 10));
     try {
-      assert.equal(readSchemaVersion(database), MIGRATIONS.length);
+      assert.equal(readSchemaVersion(database), 10);
       const rows = database.prepare('SELECT id, kind, name, style FROM assets ORDER BY id').all() as Array<Record<string, unknown>>;
       assert.deepEqual(rows.map((row) => Object.values(row)), [
         [1, 'character', '林夏', '写实摄影'],
@@ -574,6 +574,40 @@ test('从版本 9 升级到 10：资产脱离项目，重名资产加项目名�
       database.prepare('DELETE FROM assets WHERE id = 2').run();
       assert.equal(countRows(database, 'asset_files'), 0, '外键关系重建后仍然有效');
       assert.equal(countRows(database, 'entity_bindings'), 0);
+    } finally {
+      database.close();
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+test('从版本 19 升级到 20：旧的图片、音频内容与生成版本被丢弃，资产的文字内容和绑定保留，新增来源与路径字段', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'aigc-video-studio-test-'));
+  const filePath = join(directory, 'upgrade-v19.sqlite');
+  try {
+    const legacy = openDatabase(filePath, MIGRATIONS.slice(0, 19));
+    seedWorkWithEpisode(legacy);
+    legacy.prepare("INSERT INTO script_entities (work_id, kind, name, created_at, updated_at) VALUES (1, 'character', '林夏', ?, ?)").run(NOW, NOW);
+    legacy.prepare("INSERT INTO assets (kind, name, prompt_zh, created_at, updated_at) VALUES ('character', '林夏', '提示词', ?, ?)").run(NOW, NOW);
+    legacy
+      .prepare("INSERT INTO asset_files (asset_id, mime, file_name, size_bytes, content, created_at) VALUES (1, 'image/png', 'a.png', 1, x'00', ?)")
+      .run(NOW);
+    legacy.prepare('INSERT INTO entity_bindings (episode_id, entity_id, asset_id, created_at) VALUES (1, 1, 1, ?)').run(NOW);
+    legacy.close();
+
+    const database = openDatabase(filePath);
+    try {
+      assert.equal(readSchemaVersion(database), MIGRATIONS.length);
+      assert.equal(countRows(database, 'asset_files'), 0, '旧文件内容直接丢弃');
+      assert.equal(countRows(database, 'asset_versions'), 0);
+      assert.equal(countRows(database, 'asset_version_files'), 0);
+      assert.deepEqual(database.prepare('SELECT name, prompt_zh, file_source FROM assets').all().map((row) => Object.values(row)), [['林夏', '提示词', 'generated']]);
+      assert.equal(countRows(database, 'entity_bindings'), 1, '绑定保留');
+      const columnsOf = (table: string) => (database.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((column) => column.name);
+      assert.ok(!columnsOf('asset_files').includes('content') && columnsOf('asset_files').includes('file_path') && columnsOf('asset_files').includes('source'));
+      assert.ok(!columnsOf('asset_version_files').includes('content') && columnsOf('asset_version_files').includes('file_path'));
+      assert.throws(() => database.prepare("INSERT INTO asset_files (asset_id, source, file_name, mime, size_bytes, file_path, created_at) VALUES (1, 'bogus', 'a.png', 'image/png', 1, 'x', ?)").run(NOW));
+      assert.deepEqual(database.prepare('PRAGMA foreign_key_check').all(), []);
     } finally {
       database.close();
     }

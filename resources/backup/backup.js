@@ -127,7 +127,8 @@
       ['文件大小', formatBytes(database.sizeBytes)],
       ['结构版本', `${database.schemaVersion}（当前扩展支持到 ${latestSchemaVersion}）`],
       ['数据量', counts],
-      ['结果视频', `${database.resultVideoDirectory}（不包含在备份中）`]
+      ['结果视频', `${database.resultVideoDirectory}（不包含在备份中）`],
+      ['资产文件', `${database.assetFileDirectory}（图片、音频，不包含在备份中）`]
     ];
     const list = aiUi.h('dl', { class: 'backup-facts' });
     for (const [label, value] of rows) {

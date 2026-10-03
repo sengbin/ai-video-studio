@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：asset-list.js
-// 说明：资产列表页脚本：列出某种资产类型的全部资产（资产不属于项目），按名称关键字和分类（全部、未分类、各分类）筛选，表格带分类列，工具栏的“分类管理”弹出分类管理页，在页内弹出页面中新建、编辑资产，显示提示词与图片（音频）生成状态，发起提示词生成、图片（音频）生成并打开版本层，带使用情况提示地删除资产。
+// 说明：资产列表页脚本：列出某种资产类型的全部资产（资产不属于项目），按名称关键字和分类（全部、未分类、各分类）筛选，表格带分类列，工具栏的“分类管理”弹出分类管理页，新建资产时先选择上传还是 AI 生成并进入对应表单，在页内弹出页面中编辑资产，显示资产使用的文件来源（上传、生成的版本）并可在两者间切换，生成来源的资产显示提示词与图片（音频）生成状态、发起提示词生成与图片（音频）生成并打开版本层，上传来源的资产没有这些入口，带使用情况提示地删除资产。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
@@ -14,6 +14,7 @@
   const REQUEST_TAKE_PENDING = 'assets.takePending';
   const REQUEST_PREPARE_DELETE = 'assets.prepareDelete';
   const REQUEST_DELETE = 'assets.delete';
+  const REQUEST_SWITCH_SOURCE = 'assets.switchSource';
   const REQUEST_GENERATE_PROMPT = 'assets.generatePrompt';
   const REQUEST_CANCEL_PROMPT = 'assets.cancelPrompt';
   const REQUEST_REFERENCE_IMAGE = 'assets.referenceImage';
@@ -25,6 +26,9 @@
   const FORM_EDIT = 'asset.edit';
   const FORM_PROMPT = 'asset.prompt';
   const KIND_AUDIO = 'audio';
+  /** 资产使用的文件来源：用户上传、模型生成（采用的版本）。 */
+  const SOURCE_UPLOAD = 'upload';
+  const SOURCE_GENERATED = 'generated';
   /** 分类筛选的两个固定取值：全部、未分类；其余取值为分类标识的文本。 */
   const FILTER_ALL = 'all';
   const FILTER_NONE = 'none';
@@ -119,14 +123,63 @@
     }
   }
 
-  /** 弹出“新建资产”表单。 */
-  function openCreateForm() {
-    void showForm({ form: FORM_CREATE, params: { kind } });
+  /** 弹出“添加方式”选择：直接上传文件，或填写设定后由模型生成；返回所选的文件来源，取消返回空串。 */
+  async function chooseCreateSource() {
+    const label = KIND_LABELS[kind];
+    const isAudio = kind === KIND_AUDIO;
+    const noun = isAudio ? '音频' : '图片';
+    const question = isAudio ? '要直接上传已有的音频，还是填写描述后由 AI 生成音频？' : `要直接上传${label}的参考图，还是填写设定后由 AI 生成参考图？`;
+    const handle = aiUi.openDialog({
+      title: `添加${label}`,
+      role: 'alertdialog',
+      content: aiUi.h('div', { class: 'ui-message' }, aiUi.h('p', { text: question })),
+      buttons: [
+        { id: SOURCE_UPLOAD, text: `上传${noun}` },
+        { id: SOURCE_GENERATED, text: 'AI 生成', variant: 'primary', isDefault: true },
+        { id: 'cancel', text: '取消', isCancel: true }
+      ]
+    });
+    const result = await handle.closed;
+    return result.buttonId === SOURCE_UPLOAD || result.buttonId === SOURCE_GENERATED ? result.buttonId : '';
   }
 
-  /** 弹出“编辑资产”表单。 */
+  /** 新建资产：先选择上传还是 AI 生成，再弹出对应的表单；已有表单或选择框打开时忽略，避免重复点击叠出多个。 */
+  async function openCreateForm() {
+    if (isFormOpen) return;
+    isFormOpen = true;
+    try {
+      const fileSource = await chooseCreateSource();
+      if (fileSource) await aiForm.open({ form: FORM_CREATE, params: { kind, fileSource } });
+    } finally {
+      isFormOpen = false;
+    }
+  }
+
+  /** 弹出“编辑资产”表单：表单随资产当前使用的来源（上传、生成）而不同。 */
   function openEditForm(asset) {
     void showForm({ form: FORM_EDIT, params: { assetId: asset.id } });
+  }
+
+  /** 弹出上传表单：用于生成来源的资产上传文件，保存后资产改用上传。 */
+  function openUploadForm(asset) {
+    void showForm({ form: FORM_EDIT, params: { assetId: asset.id, fileSource: SOURCE_UPLOAD } });
+  }
+
+  /** 切换资产使用的文件来源；还没有上传过文件时改为打开上传表单；资产已被使用时先确认。 */
+  async function switchSource(asset, source) {
+    if (source === SOURCE_UPLOAD && asset.uploadFileCount === 0) {
+      openUploadForm(asset);
+      return;
+    }
+    if (asset.episodeCount > 0) {
+      const confirmed = await aiUi.confirm({
+        title: source === SOURCE_UPLOAD ? '改用上传' : '改用生成',
+        message: `已被 ${asset.episodeCount} 集使用，之后提交的视频将使用新来源的文件，已提交的不受影响。`,
+        confirmText: '改用'
+      });
+      if (!confirmed) return;
+    }
+    await runAction(REQUEST_SWITCH_SOURCE, { id: asset.id, source });
   }
 
   /** 弹出“提示词”表单：查看、手动修改或重新生成。 */
@@ -222,8 +275,14 @@
     return [asset.composition, asset.style].filter(Boolean).join(' · ');
   }
 
+  /** 上传来源的资产没有提示词与生成状态，状态列显示占位。 */
+  function renderNotApplicable() {
+    return aiUi.h('span', { class: 'description', text: '—' });
+  }
+
   /** 提示词列：生成中、失败、已取消、未生成、已生成（可能需更新）。 */
   function renderPromptStatus(asset) {
+    if (asset.fileSource === SOURCE_UPLOAD) return renderNotApplicable();
     const hasPrompt = Boolean(asset.promptZh || asset.promptEn);
     if (asset.promptStatus === 'running') return aiUi.h('span', { class: 'description', text: '生成中…' });
     if (asset.promptStatus === 'failed') {
@@ -237,6 +296,7 @@
 
   /** 图片（音频）列：未生成、生成中、失败、最新的成功版本，以及“有改动未生成”。 */
   function renderGenerationStatus(asset) {
+    if (asset.fileSource === SOURCE_UPLOAD) return renderNotApplicable();
     const { latest, latestSucceeded } = asset.generation;
     const parts = [];
     if (latest === null) {
@@ -252,18 +312,39 @@
     return aiUi.h('div', { class: 'asset-status' }, parts);
   }
 
-  /** 当前采用列：采用的版本、手动上传或无；有更新的版本未采用时一眼可见。 */
-  function renderAdopted(asset) {
+  /** 使用的文件列：上传，或生成采用的版本（有更新的版本未采用时一眼可见）；下方的按钮在上传与生成之间切换，两种来源的文件都保留。 */
+  function renderFileSource(asset) {
+    const isUpload = asset.fileSource === SOURCE_UPLOAD;
     const { adoptedVersion, latestSucceeded } = asset.generation;
-    if (adoptedVersion !== null) {
+    let current;
+    if (isUpload) {
+      current = aiUi.h('span', { text: '上传' });
+    } else if (adoptedVersion !== null) {
       const newer = latestSucceeded !== null && latestSucceeded > adoptedVersion;
-      return aiUi.h('div', { class: 'asset-status' }, aiUi.h('span', { text: `v${adoptedVersion}` }), newer ? aiUi.h('span', { class: 'description', text: `最新 v${latestSucceeded} 未采用` }) : null);
+      current = aiUi.h('div', { class: 'asset-status' }, aiUi.h('span', { text: `生成 v${adoptedVersion}` }), newer ? aiUi.h('span', { class: 'description', text: `最新 v${latestSucceeded} 未采用` }) : null);
+    } else {
+      current = aiUi.h('span', { class: 'description', text: '无' });
     }
-    return aiUi.h('span', { class: 'description', text: asset.fileCount > 0 ? '手动上传' : '无' });
+    const target = isUpload ? SOURCE_GENERATED : SOURCE_UPLOAD;
+    const text = isUpload ? '改用生成' : '改用上传';
+    const toggle = aiUi.button({ text, compact: true, ariaLabel: `${text}：${asset.name}`, onClick: () => void switchSource(asset, target) });
+    return aiUi.h('div', { class: 'asset-status' }, current, toggle.element);
   }
 
-  /** 操作列：两行按钮。第一行是生成相关（提示词生成、重试、取消，生成图片（音频），提示词），第二行是版本、修改、删除；图片生成无法取消，提示词或图片生成中“提示词”“生成”按钮不可用。 */
+  /** 操作列：生成来源的资产有两行按钮，第一行是生成相关（提示词生成、重试、取消，生成图片（音频），提示词），第二行是版本、修改、删除；图片生成无法取消，提示词或图片生成中“提示词”“生成”按钮不可用。上传来源的资产没有生成相关的入口，只有修改、删除。 */
   function renderActions(asset) {
+    if (asset.fileSource === SOURCE_UPLOAD) {
+      return aiUi.h(
+        'div',
+        { class: 'asset-actions' },
+        aiUi.h(
+          'div',
+          { class: 'asset-actions__row' },
+          aiUi.button({ kind: 'edit', compact: true, ariaLabel: `修改：${asset.name}`, onClick: () => openEditForm(asset) }).element,
+          aiUi.button({ kind: 'delete', compact: true, ariaLabel: `删除：${asset.name}`, onClick: () => void deleteAsset(asset) }).element
+        )
+      );
+    }
     const buttons = [];
     const hasPrompt = Boolean(asset.promptZh || asset.promptEn);
     if (asset.promptStatus === 'running') {
@@ -330,7 +411,7 @@
       { title: '分类', width: 100, minWidth: 80, emptyText: '未分类', render: (asset) => categoryNames.get(asset.categoryId) },
       { title: '提示词', width: 110, minWidth: 90, render: renderPromptStatus },
       { title: kind === KIND_AUDIO ? '音频' : '图片', width: 130, minWidth: 100, render: renderGenerationStatus },
-      { title: '当前采用', width: 100, minWidth: 80, render: renderAdopted },
+      { title: '使用的文件', width: 120, minWidth: 100, render: renderFileSource },
       {
         title: '使用',
         width: 70,

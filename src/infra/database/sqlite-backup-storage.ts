@@ -31,11 +31,13 @@ export class SqliteBackupStorage implements BackupStorage {
    * @param database 当前正在使用的数据库连接；数据库无法打开时为 undefined，此时只能检查备份文件、准备与放弃待恢复，读取状态和导出快照会抛出错误。
    * @param paths 数据库相关文件的路径。
    * @param resultVideoDirectory 结果视频文件所在的目录，仅用于告知用户这些文件不在备份内。
+   * @param assetFileDirectory 资产图片、音频文件所在的目录，仅用于告知用户这些文件不在备份内。
    */
   constructor(
     private readonly database: DatabaseSync | undefined,
     private readonly paths: DatabaseFilePaths,
-    private readonly resultVideoDirectory: string
+    private readonly resultVideoDirectory: string,
+    private readonly assetFileDirectory: string
   ) {}
 
   get databasePath(): string {
@@ -56,7 +58,8 @@ export class SqliteBackupStorage implements BackupStorage {
       sizeBytes: statSync(this.paths.databasePath).size,
       schemaVersion: readSchemaVersion(database),
       counts,
-      resultVideoDirectory: this.resultVideoDirectory
+      resultVideoDirectory: this.resultVideoDirectory,
+      assetFileDirectory: this.assetFileDirectory
     };
   }
 

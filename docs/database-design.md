@@ -15,7 +15,7 @@
 | 布尔 | 整数 0 或 1，字段名用 `is_` 开头 |
 | 枚举 | 文本，用 CHECK 约束限定取值 |
 | JSON | 文本，用 `json_valid()` 校验；只存无需查询和关联的内容 |
-| 二进制 | 只存图片和音频（资产图、资产音频、资产生成版本的文件、尾帧）；视频结果存文件，库中只存相对路径 |
+| 二进制 | 只存作品的灵感图片与文本素材（`work_sources`）和视频结果的尾帧（`result_frames`）；资产的图片、音频（上传文件、生成版本的结果文件）和视频结果存磁盘文件，库中只存相对路径（迁移 020） |
 | 密钥 | 不入库，存 VS Code `SecretStorage` |
 | 空值 | 参数类字段为空表示“沿用上一级”，不表示 0 或空串；可选的外键为空（`NULL`）表示“没有关联”（如资产不分类、镜头未分组），不用 0 表示“无”，0 违反外键约束 |
 
@@ -38,9 +38,9 @@
 | | `shot_sounds` | 镜头的声音条目：对白、旁白、音效、配乐 |
 | 资产 | `assets` | 全局资产，不属于项目，所有项目共用 |
 | | `asset_categories` | 资产分类：属于某个资产类型，同类型内名称唯一（迁移 013） |
-| | `asset_files` | 资产图片 |
+| | `asset_files` | 资产使用的图片、音频文件记录（上传与生成两种来源，内容在磁盘文件里） |
 | | `asset_versions` | 资产的生成版本：每次提交给图像、音频模型产生一个，同时记录任务状态（迁移 009） |
-| | `asset_version_files` | 版本的生成结果文件：图片或音频（迁移 009） |
+| | `asset_version_files` | 版本的生成结果文件记录：图片或音频，内容在磁盘文件里（迁移 009） |
 | | `entity_bindings` | 集内“脚本实体与资产”的绑定 |
 | 模型与参数 | `providers` | 模型服务商 |
 | | `models` | 模型 |
@@ -364,7 +364,8 @@ erDiagram
 | `prompt_content_revision` | 整数 | 是 | 0 | 当前提示词依据的 `content_revision`（迁移 009 新增） |
 | `prompt_status` | 文本 | 是 | `none` | 提示词后台生成的状态：`none`、`running`、`succeeded`、`failed`、`canceled`（迁移 009 新增） |
 | `prompt_error` | 文本 | 否 | | 提示词生成失败或被中断的原因（迁移 009 新增） |
-| `adopted_version_id` | 整数 | 否 | | 当前采用的生成版本，外键 `asset_versions.id`，删除时置空（迁移 009 新增） |
+| `adopted_version_id` | 整数 | 否 | | 当前采用的生成版本，外键 `asset_versions.id`，删除时置空；与当前使用的文件来源无关，改用上传不会清除（迁移 009 新增） |
+| `file_source` | 文本 | 是 | `generated` | 当前使用的文件来源：`upload` 上传、`generated` 生成（采用的版本）；绑定与视频生成读取的是这一来源的文件；使用上传时没有提示词与生成入口（迁移 020 新增，已有资产默认 `generated`） |
 | `created_at` | 文本 | 是 | | |
 | `updated_at` | 文本 | 是 | | |
 
@@ -386,26 +387,27 @@ erDiagram
 
 约束：`(kind, name)` 唯一；列表按创建顺序（`id`）排列。删除分类时，归入该分类的资产自动变为不分类（`assets.category_id` 置空），资产本身保留。
 
-#### `asset_files` 资产图片
+#### `asset_files` 资产图片与音频文件记录
 
 | 字段 | 类型 | 必填 | 默认 | 说明 |
 |---|---|---|---|---|
 | `id` | 整数 | 是 | 自增 | |
 | `asset_id` | 整数 | 是 | | 外键 `assets.id`，级联删除 |
-| `role` | 文本 | 是 | `reference` | `reference` 参考图或参考音频、`thumbnail` 缩略图；音频资产只用 `reference` |
+| `role` | 文本 | 是 | `reference` | `reference` 图片或音频文件、`thumbnail` 缩略图；音频资产只用 `reference` |
+| `source` | 文本 | 是 | `upload` | 文件来源：`upload` 用户上传、`generated` 采用的生成版本；资产读取的是与 `assets.file_source` 一致的那一组（迁移 020 新增） |
 | `file_name` | 文本 | 是 | | |
 | `mime` | 文本 | 是 | | 图片仅允许 `image/png`、`image/jpeg`、`image/webp`；音频仅允许 `audio/mpeg`、`audio/wav`、`audio/mp4` |
 | `width` | 整数 | 否 | | 图片像素宽，音频为空 |
 | `height` | 整数 | 否 | | 图片像素高，音频为空 |
 | `duration_seconds` | 实数 | 否 | | 音频时长，图片为空 |
 | `size_bytes` | 整数 | 是 | | |
-| `content` | 二进制 | 是 | | 图片或音频内容 |
+| `file_path` | 文本 | 是 | | 内容所在磁盘文件的相对路径（相对扩展全局存储目录下的 `asset-files`），如 `ab/ab12….png`；由内容的 SHA-256 决定，相同内容只存一份，采用版本时记录与版本文件共用同一个磁盘文件（迁移 020 替换原 `content` 二进制列） |
 | `sort_order` | 整数 | 是 | 0 | 同一资产内的顺序 |
 | `created_at` | 文本 | 是 | | |
 
-列表查询只读取缩略图，不读取参考图的 `content`。
+列表查询只读取缩略图文件，不读取图片、音频文件。
 
-实现约定：图片资产的每张参考图对应一条 `role = thumbnail` 的缩略图记录（`sort_order` 与参考图一致，由页面用 canvas 生成 256px 的 JPEG，随表单提交）；列表取 `sort_order` 最小的一条。资产编辑时文件整体替换（先删后写），采用资产版本时同样整体替换（见 4.8）；表单里手动改动了文件时，`assets.adopted_version_id` 置空，同一事务内该资产各版本文件的 `is_adopted` 也清零。被角色绑定为音色参考（`entity_bindings.purpose = voice`）的音频资产不能清空文件（校验错误挂在文件字段：“该音频已被 N 个角色用作音色参考，请先解除绑定或替换文件。”）。音频资产没有缩略图，`duration_seconds` 由页面解码读取。
+实现约定：图片资产的每张参考图对应一条 `role = thumbnail` 的缩略图记录（`sort_order` 与参考图一致，由页面用 canvas 生成 256px 的 JPEG，随表单提交）；列表取 `sort_order` 最小的一条。上传表单保存时只整体替换 `source = upload` 的记录（先删后写），采用资产版本时只整体替换 `source = generated` 的记录（见 4.8），两种来源互不影响，切换 `assets.file_source` 只改使用哪一组，不删除任何文件。记录删除后，磁盘文件仅在没有任何 `asset_files`、`asset_version_files` 记录再引用同一路径时才删除（事务提交之后清理，删除失败只会留下无人引用的文件）。上传来源必须至少有一个文件（图片最多 10 张，音频 1 个）；被角色绑定为音色参考（`entity_bindings.purpose = voice`）的音频资产不能改用没有文件的来源（校验错误：“该音频已被 N 个角色用作音色参考，改用的来源还没有音频文件，请先解除绑定或准备好文件。”）。音频资产没有缩略图，`duration_seconds` 由页面解码读取。
 
 #### `entity_bindings` 实体与资产绑定
 
@@ -705,9 +707,9 @@ erDiagram
 | `width`、`height` | 整数 | 否 | | 图片像素，音频为空 |
 | `duration_seconds` | 实数 | 否 | | 音频时长 |
 | `size_bytes` | 整数 | 是 | | |
-| `content` | 二进制 | 是 | | 内容 |
+| `file_path` | 文本 | 是 | | 内容所在磁盘文件的相对路径，规则同 `asset_files.file_path`（迁移 020 替换原 `content` 二进制列） |
 | `sort_order` | 整数 | 是 | 0 | 同一版本内的顺序；缩略图与对应结果的 `sort_order` 一致 |
-| `is_adopted` | 整数 | 是 | 0 | 该结果文件是否已被采用到 `asset_files`；界面上是否“已采用”以 `assets.adopted_version_id` 为准（只有被采用的版本里标记过的文件才算已采用） |
+| `is_adopted` | 整数 | 是 | 0 | 该结果文件是否已被采用为资产的生成来源文件；界面上是否“已采用”以 `assets.adopted_version_id` 为准（只有被采用的版本里标记过的文件才算已采用） |
 | `created_at` | 文本 | 是 | | |
 
 缩略图与资产文件一样由页面用 canvas 生成（宿主不引入图像库）：版本弹出层显示某个版本时，发现缺少缩略图就生成并回传保存；列表只读缩略图。
@@ -724,7 +726,7 @@ erDiagram
 - **提示词的依据**：`prompt_content_revision` 记录当前提示词依据的 `content_revision`。后台生成成功时取“生成开始时”的 `content_revision`；用户保存表单时修改了提示词，视为已确认，取保存后的 `content_revision`；只改了表单字段而没改提示词，不更新它。
 - **提示词需更新**：有提示词，且 `prompt_content_revision < content_revision`。
 - **图片/音频有改动未生成**：资产至少有一个版本，且最新的版本（不含已取消）满足 `content_revision < assets.content_revision` 或 `prompt_revision < assets.prompt_revision`。生成进行中修改表单或提示词，该版本完成时自然显示为有改动未生成。
-- **采用版本与手动文件**：采用版本时写入 `adopted_version_id`；表单提交的文件与现有文件（名称、大小、内容）不一致时，视为手动修改，`adopted_version_id` 置空，并在同一事务内把该资产各版本文件的 `is_adopted` 清零。
+- **采用版本与上传文件**：采用版本时写入 `adopted_version_id` 并把 `file_source` 置为 `generated`；上传、替换上传文件不影响采用关系（两种来源的文件各自保留），改用上传只切换 `file_source`，`adopted_version_id` 与各版本文件的 `is_adopted` 保持不变，改回生成后采用的文件原样回来。上传文件的改动不加 `content_revision`。
 
 ## 5. 索引
 
@@ -802,8 +804,9 @@ erDiagram
    - 下游阶段只能选择已确认（`is_current = 1`）的上游记录作为输入。
 10. **资产提示词不建阶段记录、不做版本管理。** 文本模型在后台生成中英文提示词，状态与结果直接保存在 `assets`（`prompt_status`、`prompt_zh`、`prompt_en`），用户可随时修改；重新生成直接覆盖。提示词的历史不保留，版本只保存当时使用的提示词快照（见 4.8）。
 11. **资产修订号与“有改动未生成”。** 见 4.8：改表单内容、改提示词只修改修订号，不创建空版本；版本号只在真正提交生成时加 1。
-12. **采用资产版本。** 只有成功的版本可以采用，采用时把所选的结果文件（默认全部，最多 10 张）复制为 `asset_files`（整体替换原有的参考文件和缩略图），并记录 `adopted_version_id`。绑定和视频生成只读 `asset_files`，因此未采用的版本不影响任何下游；已提交的视频任务有请求快照，采用新版本不改变它们。
-13. **音频资产的文件可以暂时为空。** 音频资产可先创建、再生成或上传文件；没有文件的音频资产不能绑定为音色参考。
+12. **采用资产版本。** 只有成功的版本可以采用，采用时把所选的结果文件（默认全部，最多 10 张）登记为 `source = generated` 的 `asset_files`（整体替换原有的生成来源文件和缩略图，引用同一个磁盘文件，不复制内容；上传来源的文件保留），记录 `adopted_version_id`，并把 `file_source` 置为 `generated`。绑定和视频生成只读资产当前使用来源的 `asset_files`，因此未采用的版本不影响任何下游；已提交的视频任务有请求快照，采用新版本不改变它们。
+13. **音频资产的文件可以暂时为空。** 生成来源的音频资产可先创建、再由模型生成文件；上传来源必须有文件；当前来源没有文件的音频资产不能绑定为音色参考。
+14. **上传与生成两种文件来源。** 添加资产时先选择上传还是生成：上传的表单只有名称、分类和必填的文件（音频另有类型、描述、语言），创建后 `file_source = upload`，没有提示词与生成入口；生成的表单是原来的设定表单，不含文件字段。资产可随时在两种来源间切换（`switchFileSource`）：改用上传要求已有上传的文件，没有时打开上传表单，保存后同时改用上传；被角色绑定为音色参考的音频不能改用没有文件的来源。上传来源的资产不能生成提示词，也不能提交图片（音频）生成。
 
 ## 8. 迁移计划
 
@@ -830,6 +833,7 @@ erDiagram
 | 17 | `017-text-models` | 重建 `models`，`kind` 的 CHECK 增加 `text`（文本模型，用于千问AI平台的文本生成模型）；全部行原样搬迁，标识不变（使用 `rebuildsReferencedTables`，结束后检查外键完整性并确认外键已重新开启） | 已实现 |
 | 18 | `018-work-text-models` | 新增 `work_text_models`（作品单独选择的文本模型键，随作品级联删除）；只加表，已有数据不变 | 已实现 |
 | 19 | `019-active-job-unique` | 给 `video_jobs` 新增部分唯一索引 `video_jobs_active_group_unique_idx`（`(group_id) WHERE status IN ('waiting', 'queued', 'running')`），表结构不变；升级时同一镜头组有多个进行中的任务，只保留 `id` 最大的一个，其余记为 `failed`（`error_category = invalid_request`，`error_code = DuplicateActiveJob`） | 已实现 |
+| 20 | `020-asset-files-on-disk` | 资产的图片、音频内容改存磁盘文件：`asset_files`、`asset_version_files` 删除 `content` 列、新增 `file_path`；`asset_files` 新增 `source`（`upload`、`generated`）；`assets` 新增 `file_source`（默认 `generated`）。产品尚未正式发布，旧的图片、音频内容按要求直接丢弃：升级时清空 `asset_files` 与全部 `asset_versions`（版本文件级联删除），资产的文字内容、分类和绑定保留 | 已实现 |
 
 拆分说明：镜头引用资产文件，因此资产在分镜之前建立；前五个迁移创建了 22 张表，迁移 8 再增加镜头组表，各功能的仓库随功能实现逐步补全。
 

@@ -83,9 +83,14 @@ test('图片：提示词语言选英文时发送英文提示词；勾选参考�
       name: '林夏',
       appearance: '短发',
       promptZh: '中文',
-      promptEn: 'english',
-      files: JSON.stringify([{ name: 'a.png', mimeType: 'image/png', size: PNG_BYTES.length, data: PNG_BYTES.toString('base64'), width: 1, height: 1 }])
+      promptEn: 'english'
     });
+    // 参考图是资产当前使用来源的图片：这里是已采用的生成结果，直接写入一条生成来源的文件记录。
+    fixture.database
+      .prepare(
+        "INSERT INTO asset_files (asset_id, role, source, file_name, mime, width, height, size_bytes, file_path, sort_order, created_at) VALUES (?, 'reference', 'generated', 'a.png', 'image/png', 1, 1, ?, ?, 0, 't')"
+      )
+      .run(asset.id, PNG_BYTES.length, fixture.files.write(PNG_BYTES, 'image/png'));
     await submitVersion(fixture, asset, { promptLanguage: 'en', useReferenceImages: true });
     await fixture.queue.pump();
     const request = fixture.image.submitted[0];

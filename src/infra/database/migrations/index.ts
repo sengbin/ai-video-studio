@@ -27,6 +27,7 @@ import { promptParamsMigration } from './016-prompt-params';
 import { textModelsMigration } from './017-text-models';
 import { workTextModelsMigration } from './018-work-text-models';
 import { activeJobUniqueMigration } from './019-active-job-unique';
+import { assetFilesOnDiskMigration } from './020-asset-files-on-disk';
 
 /** 全部数据库迁移，版本号从 1 开始连续递增。 */
 export const MIGRATIONS: readonly Migration[] = [
@@ -48,5 +49,6 @@ export const MIGRATIONS: readonly Migration[] = [
   promptParamsMigration,
   textModelsMigration,
   workTextModelsMigration,
-  activeJobUniqueMigration
+  activeJobUniqueMigration,
+  assetFilesOnDiskMigration
 ];

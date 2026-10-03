@@ -7,16 +7,17 @@
 // 备注：规则见 docs/database-design.md 4.9；修改表单或提示词只改修订号，不创建空版本；纯函数，不依赖数据库。
 // ------------------------------------------------------------------------
 
-import { AssetContent, AssetFileRecord, AssetGenerationSummary, AssetKind, AssetRecord, AssetUsageSummary, NewAssetFile } from '../models/asset';
+import { AssetContent, AssetGenerationSummary, AssetKind, AssetRecord, AssetUsageSummary } from '../models/asset';
 import { ModelKind } from '../models/model-capability';
+
+/** 资产使用上传文件时不能生成提示词和图片（音频）的提示。 */
+export const UPLOAD_SOURCE_GENERATION_MESSAGE = '当前使用的是上传的文件，请先改用生成。';
 
 /** 保存资产时要写入的修订信息。 */
 export interface AssetRevisionUpdate {
   readonly contentRevision: number;
   readonly promptRevision: number;
   readonly promptContentRevision: number;
-  /** 手动改动了参考文件，不再对应任何生成版本。 */
-  readonly clearAdopted: boolean;
 }
 
 /** 资产类型对应的生成模型类型：音频资产用音频模型，其余用图像模型。 */
@@ -41,28 +42,18 @@ export function contentFieldsChanged(previous: AssetRecord, next: AssetContent):
   );
 }
 
-/** 提交的参考文件与已保存的是否一致（顺序、名称、大小和内容都相同）。 */
-export function sameReferenceFiles(existing: readonly AssetFileRecord[], incoming: readonly NewAssetFile[]): boolean {
-  const next = incoming.filter((file) => file.role === 'reference');
-  return (
-    existing.length === next.length &&
-    existing.every((file, index) => file.fileName === next[index].fileName && file.content.equals(next[index].content))
-  );
-}
 
 /**
  * 计算保存时的修订信息。
  * @param previous 保存前的资产。
  * @param next 提交的新内容。
- * @param filesChanged 参考文件是否被手动改动。
  */
-export function computeRevisionUpdate(previous: AssetRecord, next: AssetContent, filesChanged: boolean): AssetRevisionUpdate {
+export function computeRevisionUpdate(previous: AssetRecord, next: AssetContent): AssetRevisionUpdate {
   // 提示词不随表单保存而改变，修订号保持原样；手动改提示词见 computePromptRevision。
   return {
     contentRevision: previous.contentRevision + (contentFieldsChanged(previous, next) ? 1 : 0),
     promptRevision: previous.promptRevision,
-    promptContentRevision: previous.promptContentRevision,
-    clearAdopted: filesChanged
+    promptContentRevision: previous.promptContentRevision
   };
 }
 
@@ -131,11 +122,15 @@ export interface GenerationAvailability {
  * @param hasUsableModel 是否有可用的同类型模型。
  */
 export function checkGenerationAvailability(
-  asset: Pick<AssetRecord, 'kind' | 'promptZh' | 'promptEn' | 'promptStatus'>,
+  asset: Pick<AssetRecord, 'kind' | 'promptZh' | 'promptEn' | 'promptStatus' | 'fileSource'>,
   summary: AssetGenerationSummary,
   hasUsableModel: boolean
 ): GenerationAvailability {
   const noun = asset.kind === 'audio' ? '音频' : '图像';
+  // 使用上传文件的资产没有生成入口，要生成须先改用生成。
+  if (asset.fileSource === 'upload') {
+    return { available: false, reason: UPLOAD_SOURCE_GENERATION_MESSAGE };
+  }
   if (asset.promptStatus === 'running') {
     return { available: false, reason: '提示词生成中，完成后才能生成。' };
   }

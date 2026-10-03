@@ -17,6 +17,7 @@ import { SqliteAssetRepository } from '../../infra/database/sqlite-asset-reposit
 import { FilePromptTemplates } from '../../infra/prompts/file-prompt-templates';
 import { AssetPromptService } from './asset-prompt-service';
 import { AssetService } from './asset-service';
+import { MemoryAssetFileStore } from '../../domain/ports/testing/memory-asset-file-store';
 
 const PROMPTS_DIRECTORY = join(resolve(__dirname, '..', '..', '..'), 'resources', 'prompts');
 const GENERATED = { promptZh: '中文提示词', promptEn: 'english prompt' };
@@ -55,7 +56,7 @@ class FakeTextPort implements TextGenerationPort {
 /** 创建内存数据库、资产服务、提示词服务与一个可生成提示词的资产。 */
 function createFixture(abortRejects: boolean) {
   const database = openDatabase(IN_MEMORY_DATABASE_PATH);
-  const repository = new SqliteAssetRepository(database);
+  const repository = new SqliteAssetRepository(database, new MemoryAssetFileStore());
   const assets = new AssetService(repository);
   const text = new FakeTextPort(abortRejects);
   let notifications = 0;
@@ -90,6 +91,23 @@ test('生成成功：提示词写回资产，状态为成功', async () => {
     await done;
     const saved = assets.getAsset(asset.id);
     assert.deepEqual([saved.promptStatus, saved.promptZh, saved.promptEn, saved.promptError], ['succeeded', GENERATED.promptZh, GENERATED.promptEn, null]);
+  } finally {
+    database.close();
+  }
+});
+
+test('使用上传文件的资产不能生成提示词，改用生成后可以', () => {
+  const { database, service, assets, asset } = createFixture(true);
+  try {
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
+    const file = { name: 'a.png', mimeType: 'image/png', size: png.length, data: png.toString('base64'), width: 1, height: 1 };
+    assets.updateAsset(asset.id, { name: '林夏', files: JSON.stringify([file]) }, { fileSource: 'upload' });
+    assert.throws(() => service.start(asset.id), /改用生成/);
+    assert.equal(assets.getAsset(asset.id).promptStatus, 'none');
+
+    assets.switchFileSource(asset.id, 'generated');
+    service.start(asset.id);
+    assert.equal(assets.getAsset(asset.id).promptStatus, 'running');
   } finally {
     database.close();
   }

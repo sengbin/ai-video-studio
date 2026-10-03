@@ -9,7 +9,7 @@
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { AssetContent, AssetFileRecord, AssetGenerationSummary, AssetRecord, NewAssetFile } from '../models/asset';
+import { AssetContent, AssetGenerationSummary, AssetRecord } from '../models/asset';
 import {
   checkGenerationAvailability,
   computePromptRevision,
@@ -18,15 +18,14 @@ import {
   countUsedEpisodes,
   hasUngeneratedChanges,
   isPromptOutdated,
-  modelKindOfAsset,
-  sameReferenceFiles
+  modelKindOfAsset
 } from './asset-generation-rules';
 
 function asset(overrides: Partial<AssetRecord> = {}): AssetRecord {
   return {
     id: 1, kind: 'character', name: '林夏', sourceEntityId: null, categoryId: null, attributes: { appearance: '短发' }, composition: '半身像', style: null,
     background: '', referenceAspectRatio: '1:1', extraRequirements: '', promptZh: '提示', promptEn: 'prompt', contentRevision: 2, promptRevision: 3,
-    promptContentRevision: 2, promptStatus: 'succeeded', promptError: null, adoptedVersionId: null, createdAt: 't', updatedAt: 't', ...overrides
+    promptContentRevision: 2, promptStatus: 'succeeded', promptError: null, adoptedVersionId: null, fileSource: 'generated', createdAt: 't', updatedAt: 't', ...overrides
   };
 }
 
@@ -59,11 +58,10 @@ test('影响生成的字段：名称、提示词不算；描述、构图、风�
   }
 });
 
-test('修订号：改表单加内容修订号，提示词修订号不变；改参考文件清除采用', () => {
+test('修订号：改表单加内容修订号，提示词修订号不变', () => {
   const base = asset();
-  assert.deepEqual(computeRevisionUpdate(base, content(base), false), { contentRevision: 2, promptRevision: 3, promptContentRevision: 2, clearAdopted: false });
-  assert.deepEqual(computeRevisionUpdate(base, content(base, { composition: '全身像' }), false), { contentRevision: 3, promptRevision: 3, promptContentRevision: 2, clearAdopted: false });
-  assert.deepEqual(computeRevisionUpdate(base, content(base), true), { contentRevision: 2, promptRevision: 3, promptContentRevision: 2, clearAdopted: true });
+  assert.deepEqual(computeRevisionUpdate(base, content(base)), { contentRevision: 2, promptRevision: 3, promptContentRevision: 2 });
+  assert.deepEqual(computeRevisionUpdate(base, content(base, { composition: '全身像' })), { contentRevision: 3, promptRevision: 3, promptContentRevision: 2 });
 });
 
 test('手动保存提示词：文本变化加提示词修订号，保存即确认基于当前表单内容（文本没变也一样），清空没有依据', () => {
@@ -87,23 +85,11 @@ test('有改动未生成：没有版本不算；最新版本的任一修订号�
   assert.equal(hasUngeneratedChanges(current, summary(2, 2)), true);
 });
 
-test('参考文件比较：数量、顺序、名称与内容都一致才算没改', () => {
-  const stored = (name: string, bytes: number[]): AssetFileRecord => ({
-    id: 1, assetId: 1, role: 'reference', fileName: name, mime: 'image/png', width: 1, height: 1, durationSeconds: null, content: Buffer.from(bytes), sortOrder: 0
-  });
-  const incoming = (name: string, bytes: number[], role: NewAssetFile['role'] = 'reference'): NewAssetFile => ({
-    role, fileName: name, mime: 'image/png', width: 1, height: 1, durationSeconds: null, content: Buffer.from(bytes), sortOrder: 0
-  });
-  assert.equal(sameReferenceFiles([], []), true);
-  assert.equal(sameReferenceFiles([stored('a.png', [1])], [incoming('a.png', [1]), incoming('t.png', [9], 'thumbnail')]), true, '缩略图不参与比较');
-  assert.equal(sameReferenceFiles([stored('a.png', [1])], [incoming('b.png', [1])]), false);
-  assert.equal(sameReferenceFiles([stored('a.png', [1])], [incoming('a.png', [2])]), false);
-  assert.equal(sameReferenceFiles([stored('a.png', [1])], []), false);
-});
 
-test('能否生成：提示词生成中、没有提示词、已有进行中的版本、没有可用模型依次给出原因', () => {
+test('能否生成：使用上传文件、提示词生成中、没有提示词、已有进行中的版本、没有可用模型依次给出原因', () => {
   const ok = checkGenerationAvailability(asset(), EMPTY_SUMMARY, true);
   assert.deepEqual(ok, { available: true, reason: null });
+  assert.match(checkGenerationAvailability(asset({ fileSource: 'upload' }), EMPTY_SUMMARY, true).reason ?? '', /改用生成/);
   assert.match(checkGenerationAvailability(asset({ promptStatus: 'running' }), EMPTY_SUMMARY, true).reason ?? '', /提示词生成中/);
   assert.match(checkGenerationAvailability(asset({ promptZh: '', promptEn: '' }), EMPTY_SUMMARY, true).reason ?? '', /先生成或填写提示词/);
   assert.match(checkGenerationAvailability(asset(), summary(2, 3, 'running'), true).reason ?? '', /正在生成/);

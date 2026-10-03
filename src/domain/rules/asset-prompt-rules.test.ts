@@ -38,7 +38,7 @@ function record(overrides: Partial<AssetRecord>): AssetRecord {
   return {
     id: 1, kind: 'character', name: '林夏', sourceEntityId: null, categoryId: null, attributes: {}, composition: '', style: null,
     background: '', referenceAspectRatio: null, extraRequirements: '', promptZh: '', promptEn: '', contentRevision: 1, promptRevision: 0,
-    promptContentRevision: 0, promptStatus: 'none', promptError: null, adoptedVersionId: null, createdAt: 't', updatedAt: 't', ...overrides
+    promptContentRevision: 0, promptStatus: 'none', promptError: null, adoptedVersionId: null, fileSource: 'generated', createdAt: 't', updatedAt: 't', ...overrides
   };
 }
 

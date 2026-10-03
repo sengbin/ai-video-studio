@@ -16,12 +16,13 @@ import { SqliteAssetCategoryRepository } from '../../infra/database/sqlite-asset
 import { SqliteAssetRepository } from '../../infra/database/sqlite-asset-repository';
 import { AssetCategoryService, DUPLICATE_ASSET_CATEGORY_NAME_MESSAGE } from './asset-category-service';
 import { AssetService } from './asset-service';
+import { MemoryAssetFileStore } from '../../domain/ports/testing/memory-asset-file-store';
 
 /** 创建分类服务、资产服务与内存数据库。 */
 function createFixture() {
   const database = openDatabase(IN_MEMORY_DATABASE_PATH);
   const categories = new AssetCategoryService(new SqliteAssetCategoryRepository(database));
-  const assets = new AssetService(new SqliteAssetRepository(database));
+  const assets = new AssetService(new SqliteAssetRepository(database, new MemoryAssetFileStore()));
   return { database, categories, assets };
 }
 

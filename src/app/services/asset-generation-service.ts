@@ -8,7 +8,7 @@
 // ------------------------------------------------------------------------
 
 import { FORM_LEVEL_ERROR_KEY, NotFoundError, ValidationError } from '../../domain/errors';
-import { AssetGenerationSummary, AssetRecord } from '../../domain/models/asset';
+import { AssetFileSource, AssetGenerationSummary, AssetRecord } from '../../domain/models/asset';
 import {
   AssetGenerationParams,
   AssetVersionRecord,
@@ -128,8 +128,8 @@ export interface AssetVersionList {
   readonly kind: AssetRecord['kind'];
   readonly versions: readonly AssetVersionView[];
   readonly adoptedVersionId: number | null;
-  /** 资产现在有参考文件但不对应任何版本（手动上传）。 */
-  readonly hasManualFiles: boolean;
+  /** 资产当前使用的文件来源；使用上传文件时不能生成，采用版本会改用生成。 */
+  readonly fileSource: AssetFileSource;
   readonly isPromptOutdated: boolean;
   /** 提示词正在后台生成。 */
   readonly isPromptRunning: boolean;
@@ -320,7 +320,7 @@ export class AssetGenerationService {
       kind: asset.kind,
       versions: versions.map((version) => toView(version, asset)),
       adoptedVersionId: asset.adoptedVersionId,
-      hasManualFiles: asset.adoptedVersionId === null && this.dependencies.assets.countReferenceFiles(assetId) > 0,
+      fileSource: asset.fileSource,
       isPromptOutdated: asset.promptContentRevision < asset.contentRevision && (asset.promptZh !== '' || asset.promptEn !== ''),
       isPromptRunning: asset.promptStatus === 'running',
       hasUngeneratedChanges: hasUngeneratedChanges(asset, summary),
@@ -424,7 +424,7 @@ export class AssetGenerationService {
   }
 
   /**
-   * 采用版本：把所选结果文件整体替换为资产的参考文件。
+   * 采用版本：把所选结果文件整体替换为资产生成来源的文件，并改用生成来源；上传的文件保留。
    * @param rawInput `{ versionId, fileIds? }`，fileIds 缺省为版本的全部结果文件。
    * @throws NotFoundError 版本不存在。
    * @throws ValidationError 版本未成功、所选文件不属于该版本或超出限制、缩略图尚未就绪。

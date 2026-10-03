@@ -1,10 +1,10 @@
 // ------------------------------------------------------------------------
 // 名称：asset-form.ts
-// 说明：资产表单（F6）的定义：新建与编辑角色、场景、道具、特效、音频资产；字段、选项与上传限制随类型变化；同一目录还登记提示词表单（F14，见 asset-prompt-form.ts）。
+// 说明：资产表单（F6）的定义：新建与编辑角色、场景、道具、特效、音频资产；字段、选项与上传限制随类型和文件来源（上传、生成）变化；同一目录还登记提示词表单（F14，见 asset-prompt-form.ts）。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
-// 备注：类型由入口决定、创建后不能修改，资产不属于项目；字段约束取自领域规则常量，保证界面与宿主校验一致；表单引擎不支持字段联动和折叠，风格留空表示不指定风格，语言仅对音色参考有效；“所属分类”是下拉，选项为该类型已有的分类名称，不选（空串）表示不分类，提交时由分类服务解析为分类标识（null 为不分类）；提交按钮区分“仅保存”与“保存并生成提示词”，后者在保存后启动后台提示词生成；从实体新建（参数带 episodeId、entityId）时按实体设定预填，画面风格预填为作品所在项目的视觉风格，保存后自动绑定为形象。
+// 备注：类型由入口决定、创建后不能修改，资产不属于项目；文件来源由入口参数 fileSource 决定（缺省为生成）：上传表单只有名称、分类、必填的文件（音频另有类型、描述、语言），没有提示词按钮；生成表单没有文件字段；编辑时可用 fileSource=upload 打开上传表单，保存后资产改用上传；字段约束取自领域规则常量，保证界面与宿主校验一致；表单引擎不支持字段联动和折叠，风格留空表示不指定风格，语言仅对音色参考有效；“所属分类”是下拉，选项为该类型已有的分类名称，不选（空串）表示不分类，提交时由分类服务解析为分类标识（null 为不分类）；提交按钮区分“仅保存”与“保存并生成提示词”，后者在保存后启动后台提示词生成；从实体新建（参数带 episodeId、entityId）时按实体设定预填，画面风格预填为作品所在项目的视觉风格，保存后自动绑定为形象。
 // ------------------------------------------------------------------------
 
 import { FORM_LEVEL_ERROR_KEY, ValidationError } from '../../domain/errors';
@@ -13,6 +13,7 @@ import {
   ASSET_KIND_LABELS,
   AUDIO_KIND_LABELS,
   AssetFileRecord,
+  AssetFileSource,
   AssetKind,
   AssetRecord,
   AudioKind
@@ -67,6 +68,9 @@ const ATTRIBUTE_MAX_ROWS = 4;
 
 /** 所属分类下拉里表示“不分类”的文字：选项为空值时显示，提交的值为空串。 */
 const NO_CATEGORY_LABEL = '不分类';
+
+/** 上传来源表单的提交按钮文字：只有一个按钮，没有提示词。 */
+const UPLOAD_SUBMIT_LABELS = { create: '创建', save: '保存' } as const;
 
 /** 新建表单的提交按钮：仅创建，或创建后在后台生成提示词（主按钮）。 */
 const CREATE_SUBMIT_ACTIONS: readonly FormSubmitActionSchema[] = [
@@ -193,91 +197,125 @@ function createImageFields(kind: Exclude<AssetKind, 'audio'>): FormFieldSchema[]
               maxRows: ATTRIBUTE_MAX_ROWS
             }
     ),
-    createExtraField(),
-    {
-      key: ASSET_FILE_FIELD_KEY,
-      label: '参考图',
-      description: `最多 ${ASSET_IMAGE_MAX_FILES} 张；PNG、JPEG、WebP，每张不超过 ${ASSET_IMAGE_MAX_BYTES / MEGABYTE} MB，点击缩略图查看原图，可调整顺序；保存时自动生成缩略图`,
-      control: 'file',
-      required: false,
-      accept: ASSET_IMAGE_EXTENSIONS,
-      multiple: true,
-      maxFiles: ASSET_IMAGE_MAX_FILES,
-      maxFileBytes: ASSET_IMAGE_MAX_BYTES,
-      preview: 'image',
-      derive: 'image'
-    }
+    createExtraField()
   ];
   return fields;
 }
 
-/** 音频资产的字段；音频文件可以暂时为空（之后上传或由模型生成）。 */
+/** 上传来源的图片字段：参考图，至少 1 张。 */
+function createImageFileField(): FormFieldSchema {
+  return {
+    key: ASSET_FILE_FIELD_KEY,
+    label: '参考图',
+    description: `至少 1 张，最多 ${ASSET_IMAGE_MAX_FILES} 张；PNG、JPEG、WebP，每张不超过 ${ASSET_IMAGE_MAX_BYTES / MEGABYTE} MB，点击缩略图查看原图，可调整顺序；保存时自动生成缩略图`,
+    control: 'file',
+    required: true,
+    accept: ASSET_IMAGE_EXTENSIONS,
+    multiple: true,
+    maxFiles: ASSET_IMAGE_MAX_FILES,
+    maxFileBytes: ASSET_IMAGE_MAX_BYTES,
+    preview: 'image',
+    derive: 'image'
+  };
+}
+
+/** 上传来源的音频字段：音频文件，必须有 1 个。 */
+function createAudioFileField(): FormFieldSchema {
+  return {
+    key: ASSET_FILE_FIELD_KEY,
+    label: '音频文件',
+    description: `MP3、WAV、M4A，不超过 ${ASSET_AUDIO_MAX_BYTES / MEGABYTE} MB，时长不超过 ${ASSET_AUDIO_MAX_SECONDS} 秒；保存时读取时长，无法解码的文件会提示`,
+    control: 'file',
+    required: true,
+    accept: ASSET_AUDIO_EXTENSIONS,
+    multiple: false,
+    maxFileBytes: ASSET_AUDIO_MAX_BYTES,
+    derive: 'audio'
+  };
+}
+
+/** 音频类型字段。 */
+function createAudioKindField(): FormFieldSchema {
+  return {
+    key: 'audioKind',
+    label: '音频类型',
+    description: '被绑定或引用后不能再修改',
+    control: 'radio',
+    required: true,
+    options: Object.values(AUDIO_KIND_LABELS)
+  };
+}
+
+/** 音频描述字段。 */
+function createAudioDescriptionField(): FormFieldSchema {
+  return {
+    key: 'description',
+    label: '描述',
+    description: `描述风格、情绪或适用场景，最多 ${ASSET_ATTRIBUTE_MAX_LENGTH} 字`,
+    control: 'textarea',
+    required: false,
+    maxLength: ASSET_ATTRIBUTE_MAX_LENGTH,
+    maxRows: ATTRIBUTE_MAX_ROWS
+  };
+}
+
+/** 音频语言字段。 */
+function createAudioLanguageField(): FormFieldSchema {
+  return {
+    key: 'language',
+    label: '语言',
+    description: '仅对“音色参考”有效，其他类型会忽略',
+    control: 'select',
+    required: false,
+    options: AUDIO_LANGUAGE_OPTIONS
+  };
+}
+
+/** 生成来源的音频字段。 */
 function createAudioFields(): FormFieldSchema[] {
-  return [
-    {
-      key: 'audioKind',
-      label: '音频类型',
-      description: '被绑定或引用后不能再修改',
-      control: 'radio',
-      required: true,
-      options: Object.values(AUDIO_KIND_LABELS)
-    },
-    {
-      key: 'description',
-      label: '描述',
-      description: `描述风格、情绪或适用场景，最多 ${ASSET_ATTRIBUTE_MAX_LENGTH} 字`,
-      control: 'textarea',
-      required: false,
-      maxLength: ASSET_ATTRIBUTE_MAX_LENGTH,
-      maxRows: ATTRIBUTE_MAX_ROWS
-    },
-    {
-      key: 'language',
-      label: '语言',
-      description: '仅对“音色参考”有效，其他类型会忽略',
-      control: 'select',
-      required: false,
-      options: AUDIO_LANGUAGE_OPTIONS
-    },
-    createExtraField(),
-    {
-      key: ASSET_FILE_FIELD_KEY,
-      label: '音频文件',
-      description: `可选，也可以之后由音频模型生成；MP3、WAV、M4A，不超过 ${ASSET_AUDIO_MAX_BYTES / MEGABYTE} MB，时长不超过 ${ASSET_AUDIO_MAX_SECONDS} 秒；保存时读取时长，无法解码的文件会提示`,
-      control: 'file',
-      required: false,
-      accept: ASSET_AUDIO_EXTENSIONS,
-      multiple: false,
-      maxFileBytes: ASSET_AUDIO_MAX_BYTES,
-      derive: 'audio'
-    }
-  ];
+  return [createAudioKindField(), createAudioDescriptionField(), createAudioLanguageField(), createExtraField()];
 }
 
-/** 按类型组装表单字段：名称之后是所属分类，选项取自该类型当前的分类。 */
-function createFields(kind: AssetKind, categories: AssetCategoryService): FormFieldSchema[] {
+/** 上传来源的字段：图片资产只有参考图，音频资产是类型、描述、语言和音频文件。 */
+function createUploadFields(kind: AssetKind): FormFieldSchema[] {
+  return kind === 'audio'
+    ? [createAudioKindField(), createAudioDescriptionField(), createAudioLanguageField(), createAudioFileField()]
+    : [createImageFileField()];
+}
+
+/** 按类型和文件来源组装表单字段：名称之后是所属分类，选项取自该类型当前的分类。 */
+function createFields(kind: AssetKind, categories: AssetCategoryService, fileSource: AssetFileSource): FormFieldSchema[] {
   const categoryNames = categories.listCategories(kind).map((category) => category.name);
-  return [
-    createNameField(kind),
-    createCategoryField(kind, categoryNames),
-    ...(kind === 'audio' ? createAudioFields() : createImageFields(kind))
-  ];
+  const sourceFields = fileSource === 'upload' ? createUploadFields(kind) : kind === 'audio' ? createAudioFields() : createImageFields(kind);
+  return [createNameField(kind), createCategoryField(kind, categoryNames), ...sourceFields];
 }
 
-/** 已保存的参考文件转文件字段的初始值（与界面提交的格式一致：JSON 文本，Base64 内容）。 */
+/** 读取表单参数里的文件来源：只接受 upload、generated，不传返回 undefined。 */
+function readOptionalFileSource(value: unknown): AssetFileSource | undefined {
+  if (value === undefined || value === 'generated' || value === 'upload') {
+    return value;
+  }
+  throw new ValidationError({ [FORM_LEVEL_ERROR_KEY]: '文件来源无效。' });
+}
+
+/** 读取新建表单参数里的文件来源：缺省为生成。 */
+function readFileSource(value: unknown): AssetFileSource {
+  return readOptionalFileSource(value) ?? 'generated';
+}
+
+/** 已保存的上传文件转文件字段的初始值（与界面提交的格式一致：JSON 文本，Base64 内容）。 */
 function filesToValue(files: readonly AssetFileRecord[]): string {
   return JSON.stringify(
     files.map((file) => ({ name: file.fileName, mimeType: file.mime, size: file.content.length, data: file.content.toString('base64') }))
   );
 }
 
-/** 资产转表单初始值：未设置的选项为空串。 */
-function toFormValues(asset: AssetRecord, files: readonly AssetFileRecord[]): FormValues {
-  const values: Record<string, string> = {
-    name: asset.name,
-    extra: asset.extraRequirements,
-    [ASSET_FILE_FIELD_KEY]: filesToValue(files)
-  };
+/** 资产转表单初始值：未设置的选项为空串；上传来源的表单带上已上传的文件，生成来源的表单没有文件字段。 */
+function toFormValues(asset: AssetRecord, fileSource: AssetFileSource, uploadFiles: readonly AssetFileRecord[]): FormValues {
+  const values: Record<string, string> = { name: asset.name, extra: asset.extraRequirements };
+  if (fileSource === 'upload') {
+    values[ASSET_FILE_FIELD_KEY] = filesToValue(uploadFiles);
+  }
   if (asset.kind === 'audio') {
     const audioKind = asset.attributes.audio_kind as AudioKind | undefined;
     values.audioKind = audioKind === undefined ? '' : AUDIO_KIND_LABELS[audioKind];
@@ -295,14 +333,9 @@ function toFormValues(asset: AssetRecord, files: readonly AssetFileRecord[]): Fo
   return values;
 }
 
-/** 提交内容里是否带有参考图（文件字段不是空数组）。 */
-function hasFiles(values: FormValues): boolean {
-  try {
-    const parsed: unknown = JSON.parse(values[ASSET_FILE_FIELD_KEY] || '[]');
-    return Array.isArray(parsed) && parsed.length > 0;
-  } catch {
-    return false;
-  }
+/** 上传来源表单的标题：音频叫“上传音频”，其余叫“上传角色图片”等。 */
+function createUploadTitle(kind: AssetKind): string {
+  return kind === 'audio' ? '上传音频' : `上传${ASSET_KIND_LABELS[kind]}图片`;
 }
 
 /** 新建资产表单依赖的服务。 */
@@ -325,7 +358,7 @@ export interface AssetEntitySource {
 
 /**
  * 创建“新建资产”表单的定义。
- * @param params `{ kind }`；或 `{ episodeId, entityId }`，从实体预填并在保存后绑定。
+ * @param params `{ kind, fileSource? }`（fileSource 为 upload 打开上传表单，缺省为生成）；或 `{ episodeId, entityId }`，从实体预填并在保存后绑定。
  */
 function createNewAssetForm(dependencies: AssetFormDependencies, params: unknown): FormDefinition {
   const source = readRecord(params ?? {});
@@ -334,12 +367,14 @@ function createNewAssetForm(dependencies: AssetFormDependencies, params: unknown
   }
   const { assets, prompts, categories } = dependencies;
   const kind = readAssetKind(source.kind);
+  const fileSource = readFileSource(source.fileSource);
+  const isUpload = fileSource === 'upload';
   return {
     schema: {
-      title: `新建${ASSET_KIND_LABELS[kind]}`,
-      submitLabel: CREATE_SUBMIT_ACTIONS[1].label,
-      fields: createFields(kind, categories),
-      submitActions: CREATE_SUBMIT_ACTIONS
+      title: isUpload ? createUploadTitle(kind) : `新建${ASSET_KIND_LABELS[kind]}`,
+      submitLabel: isUpload ? UPLOAD_SUBMIT_LABELS.create : CREATE_SUBMIT_ACTIONS[1].label,
+      fields: createFields(kind, categories, fileSource),
+      ...(isUpload ? {} : { submitActions: CREATE_SUBMIT_ACTIONS })
     },
     initialValues: kind === 'audio' ? { audioKind: AUDIO_KIND_LABELS.voice } : {},
     checkField: (key, value) => (key === 'name' && !assets.isNameAvailable(kind, value) ? DUPLICATE_ASSET_NAME_MESSAGE : undefined),
@@ -348,9 +383,9 @@ function createNewAssetForm(dependencies: AssetFormDependencies, params: unknown
       const categoryId = categories.resolveCategoryId(kind, values[ASSET_CATEGORY_FIELD_KEY] ?? '');
       const generate = submitKey === ASSET_SUBMIT_KEYS.createAndPrompt;
       if (generate) {
-        prompts.assertCanGenerate(kind, values, hasFiles(values));
+        prompts.assertCanGenerate(kind, values, false);
       }
-      const asset = assets.createAsset(kind, values, { categoryId });
+      const asset = assets.createAsset(kind, values, { categoryId, fileSource });
       if (generate) {
         prompts.start(asset.id);
       }
@@ -376,7 +411,7 @@ function createEntityAssetForm(dependencies: AssetFormDependencies, source: Reco
     schema: {
       title: `新建${ASSET_KIND_LABELS[kind]}`,
       submitLabel: CREATE_SUBMIT_ACTIONS[1].label,
-      fields: createFields(kind, categories),
+      fields: createFields(kind, categories, 'generated'),
       submitActions: CREATE_SUBMIT_ACTIONS
     },
     initialValues: { ...(projectStyle === null ? {} : { style: projectStyle }), ...buildAssetPrefill(entity) },
@@ -385,7 +420,7 @@ function createEntityAssetForm(dependencies: AssetFormDependencies, source: Reco
       const categoryId = categories.resolveCategoryId(kind, values[ASSET_CATEGORY_FIELD_KEY] ?? '');
       const generate = submitKey === ASSET_SUBMIT_KEYS.createAndPrompt;
       if (generate) {
-        dependencies.prompts.assertCanGenerate(kind, values, hasFiles(values));
+        dependencies.prompts.assertCanGenerate(kind, values, false);
       }
       const asset = assets.createAsset(kind, values, { sourceEntityId: entityId, categoryId });
       try {
@@ -402,24 +437,33 @@ function createEntityAssetForm(dependencies: AssetFormDependencies, source: Reco
   };
 }
 
-/** 创建“编辑资产”表单的定义；类型不能修改，所属分类已被删除时显示为不分类。 */
+/**
+ * 创建“编辑资产”表单的定义；类型不能修改，所属分类已被删除时显示为不分类。
+ * @param fileSource 表单对应的文件来源：缺省取资产当前的来源；传 upload 且资产当前使用生成时，保存后资产改用上传。
+ */
 function createEditAssetForm(
   assets: AssetService,
   prompts: AssetPromptService,
   categories: AssetCategoryService,
-  assetId: number
+  assetId: number,
+  fileSource: AssetFileSource | undefined
 ): FormDefinition {
   const asset = assets.getAsset(assetId);
+  const mode = fileSource ?? asset.fileSource;
+  const isUpload = mode === 'upload';
   const editActions = createEditSubmitActions(hasPrompt(asset));
   const categoryName = asset.categoryId === null ? '' : categories.getCategory(asset.categoryId).name;
   return {
     schema: {
-      title: `编辑${ASSET_KIND_LABELS[asset.kind]}`,
-      submitLabel: editActions[1].label,
-      fields: createFields(asset.kind, categories),
-      submitActions: editActions
+      title: isUpload ? createUploadTitle(asset.kind) : `编辑${ASSET_KIND_LABELS[asset.kind]}`,
+      submitLabel: isUpload ? UPLOAD_SUBMIT_LABELS.save : editActions[1].label,
+      fields: createFields(asset.kind, categories, mode),
+      ...(isUpload ? {} : { submitActions: editActions })
     },
-    initialValues: { ...toFormValues(asset, assets.getReferenceFiles(assetId)), [ASSET_CATEGORY_FIELD_KEY]: categoryName },
+    initialValues: {
+      ...toFormValues(asset, mode, isUpload ? assets.getUploadFiles(assetId) : []),
+      [ASSET_CATEGORY_FIELD_KEY]: categoryName
+    },
     checkField: (key, value) =>
       key === 'name' && !assets.isNameAvailable(asset.kind, value, asset.id) ? DUPLICATE_ASSET_NAME_MESSAGE : undefined,
     submit: (values, submitKey) => {
@@ -429,9 +473,10 @@ function createEditAssetForm(
         if (assets.getAsset(asset.id).promptStatus === 'running') {
           throw new ValidationError({ [FORM_LEVEL_ERROR_KEY]: PROMPT_RUNNING_MESSAGE });
         }
-        prompts.assertCanGenerate(asset.kind, values, hasFiles(values));
+        // 生成来源的表单没有文件字段，是否有图片可供生成提示词看资产当前使用的文件。
+        prompts.assertCanGenerate(asset.kind, values, assets.getReferenceFiles(asset.id).length > 0);
       }
-      assets.updateAsset(asset.id, values, { categoryId });
+      assets.updateAsset(asset.id, values, { categoryId, fileSource: mode });
       if (regenerate) {
         prompts.start(asset.id);
       }
@@ -440,7 +485,7 @@ function createEditAssetForm(
 }
 
 /**
- * 创建资产表单目录：新建的参数为 `{ kind }` 或 `{ episodeId, entityId }`（从实体新建），编辑的参数为 `{ assetId }`。
+ * 创建资产表单目录：新建的参数为 `{ kind, fileSource? }` 或 `{ episodeId, entityId }`（从实体新建），编辑的参数为 `{ assetId, fileSource? }`。
  * @param dependencies 项目、资产、分类与提示词生成服务，以及可选的实体来源。
  */
 export function createAssetFormCatalog(dependencies: AssetFormDependencies): SyncFormCatalog {
@@ -453,7 +498,8 @@ export function createAssetFormCatalog(dependencies: AssetFormDependencies): Syn
           dependencies.assets,
           dependencies.prompts,
           dependencies.categories,
-          readEntityId({ id: readRecord(params ?? {}).assetId }, '资产')
+          readEntityId({ id: readRecord(params ?? {}).assetId }, '资产'),
+          readOptionalFileSource(readRecord(params ?? {}).fileSource)
         )
     ],
     [ASSET_FORM_NAMES.prompt, (params) => createAssetPromptForm(dependencies.assets, dependencies.prompts, readEntityId({ id: readRecord(params ?? {}).assetId }, '资产'))]

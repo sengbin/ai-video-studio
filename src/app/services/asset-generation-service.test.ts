@@ -182,15 +182,20 @@ test('版本号只在提交时加 1；修改提示词或表单后显示“有改
   }
 });
 
-test('缩略图补存与采用：缩略图未就绪不能采用；可勾选部分图片，整体替换参考文件并记录采用的版本', async () => {
+test('缩略图补存与采用：缩略图未就绪不能采用；可勾选部分图片，替换生成来源的文件并记录采用的版本，上传的文件保留', async () => {
   const fixture = await createAssetGenerationFixture();
   try {
     const second = 'https://fake.example.com/image-2.png';
     fixture.downloads.set(second, PNG_BYTES);
     fixture.image.queryStates.push({ status: 'succeeded', result: { imageUrls: [IMAGE_URL, second] }, errorCategory: null, errorCode: null, errorMessage: null });
-    const asset = createCharacter(fixture, {
-      files: JSON.stringify([{ name: 'manual.png', mimeType: 'image/png', size: PNG_BYTES.length, data: PNG_BYTES.toString('base64'), width: 1, height: 1 }])
-    });
+    const asset = createCharacter(fixture, {});
+    const uploaded = JSON.stringify([{ name: 'manual.png', mimeType: 'image/png', size: PNG_BYTES.length, data: PNG_BYTES.toString('base64'), width: 1, height: 1 }]);
+    // 先上传一张图：上传来源的文件与生成来源互不影响，改回生成后资产仍然可以生成。
+    fixture.assets.updateAsset(asset.id, { name: '林夏', files: uploaded }, { fileSource: 'upload' });
+    assert.deepEqual(fixture.assets.getReferenceFiles(asset.id).map((file) => file.fileName), ['manual.png']);
+    const uploadCatalog = await fixture.generation.getCatalog(asset.id);
+    assert.deepEqual([uploadCatalog.availability.available, /改用生成/.test(uploadCatalog.availability.reason ?? '')], [false, true], '使用上传文件时不能生成');
+    fixture.assets.switchFileSource(asset.id, 'generated');
     const versionId = await generate(fixture, asset, { count: 2 });
     let detail = fixture.generation.getVersion(versionId);
     assert.deepEqual([detail.files.length, detail.missingThumbnails, detail.usedByEpisodes], [2, [0, 1], 0]);
@@ -210,23 +215,28 @@ test('缩略图补存与采用：缩略图未就绪不能采用；可勾选部�
     const adopted = fixture.assets.getAsset(asset.id);
     assert.equal(adopted.adoptedVersionId, versionId);
     const references = fixture.assets.getReferenceFiles(asset.id);
-    assert.deepEqual(references.map((file) => [file.fileName, file.sortOrder]), [['v1-2.png', 0]], '手动上传的参考图被整体替换');
+    assert.deepEqual(references.map((file) => [file.fileName, file.sortOrder]), [['v1-2.png', 0]], '采用后使用生成来源的文件');
+    assert.deepEqual(fixture.assets.getUploadFiles(asset.id).map((file) => file.fileName), ['manual.png'], '上传的文件不受采用影响');
     assert.equal(fixture.assetRepository.listThumbnailFiles(asset.id).length, 1);
     detail = fixture.generation.getVersion(versionId);
     assert.deepEqual(detail.files.map((file) => file.isAdopted), [false, true]);
     const list = await fixture.generation.listVersions(asset.id);
-    assert.deepEqual([list.adoptedVersionId, list.versions[0].isAdopted, list.hasManualFiles], [versionId, true, false]);
+    assert.deepEqual([list.adoptedVersionId, list.versions[0].isAdopted, list.fileSource], [versionId, true, 'generated']);
     assert.equal(fixture.assets.listAssets('character')[0].generation.adoptedVersion, 1);
 
-    // 保存表单时文件不变，仍然对应采用的版本；换了文件则不再对应任何版本。
-    assert.equal(fixture.assets.updateAsset(asset.id, { name: '林夏', appearance: '短发', promptZh: '短发的年轻女子', promptEn: 'a young woman with short hair', referenceAspectRatio: '16:9', files: JSON.stringify(references.map((file) => ({ name: file.fileName, mimeType: file.mime, size: file.content.length, data: file.content.toString('base64') }))) }).adoptedVersionId, versionId);
-    const manual = fixture.assets.updateAsset(asset.id, { name: '林夏', appearance: '短发', promptZh: '短发的年轻女子', promptEn: 'a young woman with short hair', referenceAspectRatio: '16:9', files: JSON.stringify([{ name: 'other.png', mimeType: 'image/png', size: PNG_BYTES.length, data: PNG_BYTES.toString('base64'), width: 1, height: 1 }]) });
-    assert.equal(manual.adoptedVersionId, null);
-    assert.equal((await fixture.generation.listVersions(asset.id)).hasManualFiles, true);
-    // 采用关系的两处记录同时清除：库里旧版本文件的已采用标记，以及界面视图里的已采用。
-    assert.equal(fixture.versions.listFiles(versionId).some((file) => file.isAdopted), false);
-    assert.deepEqual(fixture.generation.getVersion(versionId).files.map((file) => file.isAdopted), [false, false]);
-    assert.equal((await fixture.generation.listVersions(asset.id)).versions[0].isAdopted, false);  } finally {
+    // 改用上传：采用关系保持不变，资产读取的是上传的文件；换一张上传图也不影响采用的版本。
+    const switched = fixture.assets.switchFileSource(asset.id, 'upload');
+    assert.deepEqual([switched.fileSource, switched.adoptedVersionId], ['upload', versionId]);
+    assert.deepEqual(fixture.assets.getReferenceFiles(asset.id).map((file) => file.fileName), ['manual.png']);
+    fixture.assets.updateAsset(asset.id, { name: '林夏', files: JSON.stringify([{ name: 'other.png', mimeType: 'image/png', size: PNG_BYTES.length, data: PNG_BYTES.toString('base64'), width: 1, height: 1 }]) });
+    assert.deepEqual(fixture.assets.getReferenceFiles(asset.id).map((file) => file.fileName), ['other.png']);
+    assert.equal(fixture.assets.getAsset(asset.id).adoptedVersionId, versionId);
+    assert.deepEqual(fixture.generation.getVersion(versionId).files.map((file) => file.isAdopted), [false, true]);
+    assert.equal((await fixture.generation.listVersions(asset.id)).fileSource, 'upload');
+    // 改回生成：采用的文件原样回来。
+    fixture.assets.switchFileSource(asset.id, 'generated');
+    assert.deepEqual(fixture.assets.getReferenceFiles(asset.id).map((file) => file.fileName), ['v1-2.png']);
+  } finally {
     fixture.database.close();
   }
 });

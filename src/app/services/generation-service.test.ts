@@ -32,6 +32,7 @@ import { ChangeNotifier } from './change-notifier';
 import { GenerationService } from './generation-service';
 import { ProviderService } from './provider-service';
 import { createServiceFixture } from './testing/service-fixture';
+import { MemoryAssetFileStore } from '../../domain/ports/testing/memory-asset-file-store';
 
 const CREATIVE_PARAMS = { chapterMinWords: 100, chapterMaxWords: 200, maxChapters: 3 };
 const SCREENPLAY_PARAMS = { maxEpisodeDurationSeconds: '60', maxEpisodes: '3' };
@@ -64,9 +65,10 @@ async function createFixture(storyboardParams: Record<string, unknown> = {}, cap
   await fixture.runner.whenIdle();
 
   const { database } = fixture;
-  const assetRepository = new SqliteAssetRepository(database);
+  const files = new MemoryAssetFileStore();
+  const assetRepository = new SqliteAssetRepository(database, files);
   const providerRepository = new SqliteProviderRepository(database);
-  const jobs = new SqliteGenerationRepository(database);
+  const jobs = new SqliteGenerationRepository(database, files);
   const provider = new StrictFakeProvider([
     { code: 'fake-video', displayName: '假视频模型', kind: 'video', capability },
     ...(withSecondModel ? [{ code: 'fake-video-2', displayName: '第二个假视频模型', kind: 'video' as const, capability }] : [])
@@ -449,7 +451,7 @@ test('绑定了形象资产的实体：参考图进入快照并在提示词开�
     const asset = assets.createAsset('character', {
       name: '守夜人形象',
       files: JSON.stringify([{ name: 'a.png', mimeType: 'image/png', size: PNG.length, data: PNG.toString('base64'), width: 64, height: 64 }])
-    });
+    }, { fileSource: 'upload' });
     bindings.bind({ episodeId: fixture.episodeId, entityId: guard?.id, assetId: asset.id });
 
     const view = fixture.episode();
@@ -814,7 +816,7 @@ function useAssetFirstFrame(fixture: Fixture): number {
   const asset = assets.createAsset('scene', {
     name: '灯塔远景',
     files: JSON.stringify([{ name: 'a.png', mimeType: 'image/png', size: PNG.length, data: PNG.toString('base64'), width: 64, height: 64 }])
-  });
+  }, { fileSource: 'upload' });
   const first = fixture.storyboards.getView(fixture.work.id, fixture.episodeId).shots[0];
   fixture.storyboards.saveShot(fixture.run.id, {
     ref: first.id,

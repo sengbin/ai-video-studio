@@ -19,6 +19,7 @@ import { BINDING_REQUESTS, registerBindingHandlers } from '../pages/binding-hand
 import { AssetService } from './asset-service';
 import { BindingService } from './binding-service';
 import { ProjectService } from './project-service';
+import { MemoryAssetFileStore } from '../../domain/ports/testing/memory-asset-file-store';
 
 const WAV = Buffer.concat([Buffer.from('RIFF'), Buffer.from([0, 0, 0, 0]), Buffer.from('WAVEfmt ')]);
 const AUDIO_FILES = JSON.stringify([{ name: 'v.wav', mimeType: 'audio/wav', size: WAV.length, data: WAV.toString('base64'), durationSeconds: 3 }]);
@@ -26,7 +27,7 @@ const AUDIO_FILES = JSON.stringify([{ name: 'v.wav', mimeType: 'audio/wav', size
 function createFixture() {
   const database = openDatabase(IN_MEMORY_DATABASE_PATH);
   const projects = new ProjectService(new SqliteProjectRepository(database));
-  const assetRepository = new SqliteAssetRepository(database);
+  const assetRepository = new SqliteAssetRepository(database, new MemoryAssetFileStore());
   const assets = new AssetService(assetRepository);
   const service = new BindingService(new SqliteBindingRepository(database), assetRepository);
   projects.createProject({ name: '项目甲' });
@@ -93,8 +94,8 @@ test('绑定校验：类型、用途、重复、不存在与标识无效', () =>
   const { database, assets, service, episode1, guard, lighthouse, otherEntity } = createFixture();
   try {
     const character = assets.createAsset('character', { name: '甲角色' });
-    const voice = assets.createAsset('audio', { name: '音色', audioKind: '音色参考', files: AUDIO_FILES });
-    const music = assets.createAsset('audio', { name: '配乐', audioKind: 'music', files: AUDIO_FILES });
+    const voice = assets.createAsset('audio', { name: '音色', audioKind: '音色参考', files: AUDIO_FILES }, { fileSource: 'upload' });
+    const music = assets.createAsset('audio', { name: '配乐', audioKind: 'music', files: AUDIO_FILES }, { fileSource: 'upload' });
     const base = { episodeId: episode1, entityId: guard };
     const fieldError = (input: object) => {
       try {
@@ -178,8 +179,8 @@ test('绑定界面视图：只含启用的实体，可选资产不区分项目�
     const day = assets.createAsset('character', { name: '守夜人·日常' });
     const rain = assets.createAsset('character', { name: '守夜人·雨天' });
     assets.createAsset('scene', { name: '灯塔' });
-    const voice = assets.createAsset('audio', { name: '低沉嗓音', audioKind: '音色参考', files: AUDIO_FILES });
-    assets.createAsset('audio', { name: '配乐', audioKind: 'music', files: AUDIO_FILES });
+    const voice = assets.createAsset('audio', { name: '低沉嗓音', audioKind: '音色参考', files: AUDIO_FILES }, { fileSource: 'upload' });
+    assets.createAsset('audio', { name: '配乐', audioKind: 'music', files: AUDIO_FILES }, { fileSource: 'upload' });
 
     service.bind({ episodeId: episode1, entityId: guard, assetId: day.id });
     const second = service.bind({ episodeId: episode1, entityId: guard, assetId: rain.id });
@@ -213,7 +214,7 @@ test('音色绑定要求音频已有文件：还没有文件的音频不在可�
       () => service.bind({ episodeId: episode1, entityId: guard, assetId: empty.id, purpose: 'voice' }),
       (error) => error instanceof ValidationError && /还没有音频文件/.test(error.fieldErrors.assetId)
     );
-    const ready = assets.createAsset('audio', { name: '有文件', audioKind: '音色参考', files: AUDIO_FILES });
+    const ready = assets.createAsset('audio', { name: '有文件', audioKind: '音色参考', files: AUDIO_FILES }, { fileSource: 'upload' });
     assert.deepEqual(service.getEpisodeView(episode1).voiceAssets.map((asset) => asset.name), ['有文件']);
     assert.equal(service.bind({ episodeId: episode1, entityId: guard, assetId: ready.id, purpose: 'voice' }).isPrimary, true);
   } finally {
@@ -224,10 +225,10 @@ test('音色绑定要求音频已有文件：还没有文件的音频不在可�
 test('试听音色参考：读取第一个参考文件的内容；不是音色参考、没有文件、资产不存在时报错', async () => {
   const { database, assets, service } = createFixture();
   try {
-    const voice = assets.createAsset('audio', { name: '低沉嗓音', audioKind: '音色参考', files: AUDIO_FILES });
+    const voice = assets.createAsset('audio', { name: '低沉嗓音', audioKind: '音色参考', files: AUDIO_FILES }, { fileSource: 'upload' });
     assert.deepEqual(service.readVoiceAudio(voice.id), { mime: 'audio/wav', data: WAV.toString('base64') });
 
-    const music = assets.createAsset('audio', { name: '背景乐', audioKind: 'music', files: AUDIO_FILES });
+    const music = assets.createAsset('audio', { name: '背景乐', audioKind: 'music', files: AUDIO_FILES }, { fileSource: 'upload' });
     assert.throws(
       () => service.readVoiceAudio(music.id),
       (error) => error instanceof ValidationError && /音色参考/.test(error.fieldErrors.assetId)

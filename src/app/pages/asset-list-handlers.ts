@@ -1,14 +1,14 @@
 // ------------------------------------------------------------------------
 // 名称：asset-list-handlers.ts
-// 说明：资产列表页的请求处理：读取某类型的全部资产（带提示词与图片的状态）和该类型的分类、取走待执行动作、删除（先取使用情况，再删除）、提示词后台生成的启动与取消、图片（音频）生成的提交与版本管理。
+// 说明：资产列表页的请求处理：读取某类型的全部资产（带提示词与图片的状态）和该类型的分类、取走待执行动作、删除（先取使用情况，再删除）、切换资产使用的文件来源（上传、生成）、提示词后台生成的启动与取消、图片（音频）生成的提交与版本管理。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
 // 备注：不依赖 VS Code；一个页面绑定一种资产类型，请求不需要再带类型；新建、编辑表单由页面用表单请求在弹出页面中完成，删除确认在页面内对话框完成；版本列表、采用等请求直接交给资产生成服务。
 // ------------------------------------------------------------------------
 
-import { NotFoundError } from '../../domain/errors';
-import { AssetKind, AssetListItem } from '../../domain/models/asset';
+import { FORM_LEVEL_ERROR_KEY, NotFoundError, ValidationError } from '../../domain/errors';
+import { AssetFileSource, AssetKind, AssetListItem } from '../../domain/models/asset';
 import { checkGenerationAvailability, GenerationAvailability, hasUngeneratedChanges, isPromptOutdated } from '../../domain/rules/asset-generation-rules';
 import { readEntityId, readRecord } from '../../domain/rules/field-readers';
 import { MessageRouter } from '../messaging/message-router';
@@ -23,6 +23,7 @@ export const ASSET_LIST_REQUESTS = {
   takePending: 'assets.takePending',
   prepareDelete: 'assets.prepareDelete',
   delete: 'assets.delete',
+  switchSource: 'assets.switchSource',
   generatePrompt: 'assets.generatePrompt',
   cancelPrompt: 'assets.cancelPrompt',
   generateCatalog: 'assets.generateCatalog',
@@ -109,6 +110,16 @@ export function registerAssetListHandlers(
     const asset = assets.getAsset(readEntityId(payload, '资产'));
     assets.deleteAsset(asset.id);
     return { deleted: true, name: asset.name };
+  });
+
+  // 切换使用的文件来源：上传与生成的文件都保留，只改变资产对外使用哪一组。
+  router.register(ASSET_LIST_REQUESTS.switchSource, (payload) => {
+    const source = readRecord(payload).source;
+    if (source !== 'upload' && source !== 'generated') {
+      throw new ValidationError({ [FORM_LEVEL_ERROR_KEY]: '文件来源无效。' });
+    }
+    assets.switchFileSource(readEntityId(payload, '资产'), source as AssetFileSource);
+    return { switched: true };
   });
 
   router.register(ASSET_LIST_REQUESTS.generatePrompt, (payload) => {
