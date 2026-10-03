@@ -87,11 +87,6 @@ function createProjectSchema(title: string): FormSchema {
   };
 }
 
-/** 把已保存的值对应到选项（忽略大小写，兼容旧版本保存的小写分辨率）；没有对应项时原样返回，未设置为空串。 */
-function canonicalOption(options: readonly string[], value: string | null): string {
-  return options.find((option) => option.toLowerCase() === value?.toLowerCase()) ?? value ?? '';
-}
-
 /** 项目转表单初始值：未设置的选项为空串。 */
 function toFormValues(project: Project): FormValues {
   return {
@@ -99,7 +94,7 @@ function toFormValues(project: Project): FormValues {
     description: project.description,
     visualStyle: project.visualStyle ?? '',
     defaultAspectRatio: project.defaultAspectRatio ?? '',
-    defaultResolution: canonicalOption(VIDEO_RESOLUTION_OPTIONS, project.defaultResolution)
+    defaultResolution: project.defaultResolution ?? ''
   };
 }
 

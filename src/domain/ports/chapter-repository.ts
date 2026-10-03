@@ -15,4 +15,6 @@ export interface ChapterRepository {
   list(runId: number): ChapterDraft[];
   /** 保存一章；同一序号已存在时覆盖。 */
   save(runId: number, chapter: ChapterDraft, timestamp: string): void;
+  /** 清除阶段记录下已保存的全部章节；用于丢弃与素材不一致的旧进度。 */
+  clear(runId: number): void;
 }

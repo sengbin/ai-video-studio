@@ -122,3 +122,11 @@ export interface EntityEdit {
   readonly attributes: Readonly<Record<string, string>>;
   readonly isActive: boolean;
 }
+
+/** 确认采用剧本时会从作品中移除的旧集：新版本的抽取结果里已不存在这一集。 */
+export interface RemovedEpisode {
+  readonly id: number;
+  readonly seq: number;
+  /** 是否已有下游数据（分镜脚本等阶段记录、资产绑定、集的生成参数）；有则不能移除，合并会被拒绝。 */
+  readonly hasDownstream: boolean;
+}

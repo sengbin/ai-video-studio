@@ -44,7 +44,7 @@ export interface AssetRepository {
   countReferenceFiles(assetId: number): number;
   /** 新增资产及其文件，返回资产标识；已有提示词时视为基于当前内容。 */
   insert(input: AssetInput, files: readonly NewAssetFile[], timestamp: string): number;
-  /** 修改资产内容与所属分类（null 为不分类），用 files 整体替换原有文件，并写入修订信息；资产不存在时返回 false。 */
+  /** 修改资产内容与所属分类（null 为不分类），用 files 整体替换原有文件，并写入修订信息（clearAdopted 时同一事务内清除采用关系：资产的采用版本与各版本文件的已采用标记）；资产不存在时返回 false。 */
   update(
     id: number,
     content: AssetContent,
@@ -57,7 +57,7 @@ export interface AssetRepository {
   updatePrompts(id: number, prompts: GeneratedPrompts, revision: PromptRevisionUpdate, timestamp: string): boolean;
   /** 删除资产（连同文件和绑定）；资产不存在时返回 false。 */
   remove(id: number): boolean;
-  /** 统计资产被集内实体绑定和镜头声音使用的情况。 */
+  /** 统计资产被集内实体绑定和镜头声音使用的情况（含音色参考绑定数）。 */
   getUsage(id: number): AssetUsageSummary;
   /** 把提示词状态置为生成中；已在生成中或资产不存在时返回 false。 */
   beginPrompt(id: number, timestamp: string): boolean;

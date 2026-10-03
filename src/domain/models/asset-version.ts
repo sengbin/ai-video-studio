@@ -13,9 +13,6 @@ import { PromptLanguage } from './model-capability';
 /** 版本（同时是生成任务）的状态：排队、生成中、成功、失败、已取消。 */
 export type AssetVersionStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'canceled';
 
-/** 仍在进行中的状态：同一资产同时只能有一个。 */
-export const ACTIVE_VERSION_STATUSES: readonly AssetVersionStatus[] = ['queued', 'running'];
-
 /** 版本的生成参数。 */
 export interface AssetGenerationParams {
   /** 图片数量；音频固定为 1。 */

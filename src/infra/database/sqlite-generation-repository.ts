@@ -4,11 +4,11 @@
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
-// 备注：状态变更用 UPDATE ... WHERE status IN (...) 保证只作用于仍在进行的任务；成功时在一个事务内写结果并更新任务。
+// 备注：状态变更用 UPDATE ... WHERE status IN (...) 保证只作用于仍在进行的任务；成功时在一个事务内写结果并更新任务；新增任务时在同一事务内检查并插入，并由部分唯一索引（迁移 019）保证同一镜头组最多一个进行中的任务，冲突转为 ConflictError。
 // ------------------------------------------------------------------------
 
 import type { DatabaseSync } from 'node:sqlite';
-import { ProviderFailure } from '../../domain/errors';
+import { ConflictError, FORM_LEVEL_ERROR_KEY, ProviderFailure } from '../../domain/errors';
 import {
   ACTIVE_JOB_STATUSES,
   GroupLocation,
@@ -63,6 +63,9 @@ interface ResultRow {
 /** 进行中的状态在 SQL 中的列表。 */
 const ACTIVE_STATUS_SQL = ACTIVE_JOB_STATUSES.map((status) => `'${status}'`).join(', ');
 
+/** 镜头组已有进行中的任务时再次提交的提示。 */
+const ACTIVE_JOB_CONFLICT_MESSAGE = '这一组正在生成，完成或取消后才能再次提交。';
+
 function toJob(row: JobRow): VideoJobRecord {
   return {
     id: row.id,
@@ -108,15 +111,27 @@ export class SqliteGenerationRepository implements GenerationRepository, JobMedi
   constructor(private readonly database: DatabaseSync) {}
 
   insertJob(job: NewVideoJob, timestamp: string): VideoJobRecord {
-    const id = runInTransaction(this.database, () => {
-      const result = this.database
-        .prepare(
-          `INSERT INTO video_jobs (group_id, model_id, status, request_snapshot_json, attempt, prev_job_id, first_frame_id, created_at)
-           VALUES (?, ?, ?, ?, (SELECT COALESCE(MAX(attempt), 0) + 1 FROM video_jobs WHERE group_id = ?), ?, ?, ?)`
-        )
-        .run(job.groupId, job.modelId, job.status, JSON.stringify(job.snapshot), job.groupId, job.prevJobId, job.firstFrameId, timestamp);
-      return Number(result.lastInsertRowid);
-    });
+    let id: number;
+    try {
+      id = runInTransaction(this.database, () => {
+        // 检查与插入在同一个事务里；事务之外的并发写入由部分唯一索引兜底。
+        if (this.hasActiveJob(job.groupId)) {
+          throw new ConflictError(FORM_LEVEL_ERROR_KEY, ACTIVE_JOB_CONFLICT_MESSAGE);
+        }
+        const result = this.database
+          .prepare(
+            `INSERT INTO video_jobs (group_id, model_id, status, request_snapshot_json, attempt, prev_job_id, first_frame_id, created_at)
+             VALUES (?, ?, ?, ?, (SELECT COALESCE(MAX(attempt), 0) + 1 FROM video_jobs WHERE group_id = ?), ?, ?, ?)`
+          )
+          .run(job.groupId, job.modelId, job.status, JSON.stringify(job.snapshot), job.groupId, job.prevJobId, job.firstFrameId, timestamp);
+        return Number(result.lastInsertRowid);
+      });
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('UNIQUE constraint failed: video_jobs.group_id')) {
+        throw new ConflictError(FORM_LEVEL_ERROR_KEY, ACTIVE_JOB_CONFLICT_MESSAGE);
+      }
+      throw error;
+    }
     return this.requireJob(id);
   }
 

@@ -1,7 +1,7 @@
 /*
  * ------------------------------------------------------------------------
  * 名称：sidebar.css
- * 说明：侧栏页面样式，包含亮暗主题令牌、分区卡片与菜单行。
+ * 说明：侧栏页面样式，包含亮暗主题令牌、分区卡片、菜单行与提示。
  * 作者：Lion
  * 邮箱：chengbin@3578.cn
  * 日期：2026-09-30
@@ -114,6 +114,16 @@ nav {
 
 .menu-row.is-pressed {
   background: var(--row-pressed-background);
+}
+
+/* 提示（如数据库无法打开）：文字说明为主，颜色只作强化；长路径允许在任意位置换行 */
+.notice {
+  margin: 0;
+  padding: 2px 6px;
+  color: var(--vscode-errorForeground, rgb(244, 71, 71));
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 
 button {

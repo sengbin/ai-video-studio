@@ -146,7 +146,7 @@ export interface AssetListItem extends AssetRecord {
   readonly fileCount: number;
   /** 参考音频时长（秒）；图片资产为 null。 */
   readonly durationSeconds: number | null;
-  /** 被多少集绑定使用。 */
+  /** 被多少集使用：集内实体绑定，或镜头声音直接指定该音频，同一集只算一次。 */
   readonly episodeCount: number;
   /** 生成版本的摘要，用于列表的状态列。 */
   readonly generation: AssetGenerationSummary;
@@ -178,10 +178,23 @@ export interface AssetUsage {
   readonly entityName: string;
 }
 
-/** 删除资产前需要告知用户的使用情况。 */
+/** 音频资产被镜头声音条目直接指定的一处：某作品某集中有若干条声音指定了它。 */
+export interface AssetSoundUsage {
+  readonly workName: string;
+  readonly episodeSeq: number;
+  readonly episodeTitle: string;
+  /** 该集中指定了该音频的镜头声音条目数。 */
+  readonly soundCount: number;
+}
+
+/** 删除资产、采用版本前需要告知用户的使用情况。 */
 export interface AssetUsageSummary {
   /** 绑定记录（集内实体绑定）。 */
   readonly bindings: readonly AssetUsage[];
-  /** 被镜头声音条目指定为音频的次数。 */
+  /** 被镜头声音条目指定为音频的次数（各集之和）。 */
   readonly soundReferences: number;
+  /** 通过镜头声音条目（shot_sounds.audio_asset_id）直接指定该音频的集，按作品名、集序号排列。 */
+  readonly soundEpisodes: readonly AssetSoundUsage[];
+  /** 被用作音色参考（绑定用途为 voice）的绑定数，即用它做音色参考的角色数。 */
+  readonly voiceBindingCount: number;
 }

@@ -10,7 +10,7 @@
 import { ConflictError, NotFoundError, ValidationError } from '../../domain/errors';
 import { AssetFileRecord, AssetKind, AssetListItem, AssetRecord, AssetUsageSummary } from '../../domain/models/asset';
 import { AssetRepository } from '../../domain/ports/asset-repository';
-import { normalizeAssetContent, normalizeAssetPrompts } from '../../domain/rules/asset-rules';
+import { ASSET_FILE_FIELD_KEY, normalizeAssetContent, normalizeAssetPrompts } from '../../domain/rules/asset-rules';
 import { computePromptRevision, computeRevisionUpdate, sameReferenceFiles } from '../../domain/rules/asset-generation-rules';
 import { FieldErrors } from '../../domain/rules/field-readers';
 import { ChangeNotifier } from './change-notifier';
@@ -20,6 +20,11 @@ export const DUPLICATE_ASSET_NAME_MESSAGE = '已有同名资产，请换一个�
 
 const AUDIO_KIND_LOCKED_MESSAGE = '该音频已被绑定或引用，不能修改音频类型。';
 const PROMPT_RUNNING_MESSAGE = '提示词生成中，完成后再修改提示词。';
+
+/** 音频被用作音色参考时不能清空文件的提示。 */
+function voiceFileRequiredMessage(count: number): string {
+  return `该音频已被 ${count} 个角色用作音色参考，请先解除绑定或替换文件。`;
+}
 
 /** 创建资产时的可选项：由哪个脚本实体创建、所属分类（缺省为不分类）。 */
 export interface CreateAssetOptions {
@@ -118,7 +123,7 @@ export class AssetService {
   /**
    * 修改资产的内容并整体替换参考文件；类型不能修改。改分类不影响提示词与生成状态的修订号。
    * @param options 所属分类；不传 categoryId 时保持原分类。
-   * @throws ValidationError 内容不合法，或已被使用的音频修改了音频类型。
+   * @throws ValidationError 内容不合法，已被使用的音频修改了音频类型，或被用作音色参考的音频清空了文件。
    * @throws ConflictError 名称与同类型的其他资产重复。
    * @throws NotFoundError 资产不存在。
    */
@@ -132,6 +137,13 @@ export class AssetService {
     this.assertNameAvailable(asset.kind, normalized.content.name, id);
     if (asset.kind === 'audio' && normalized.content.attributes.audio_kind !== asset.attributes.audio_kind && this.isInUse(id)) {
       throw new ValidationError({ audioKind: AUDIO_KIND_LOCKED_MESSAGE });
+    }
+    // 音色参考的音频被绑定后，生成时只读取它的文件；清空文件会让参考音频被静默丢弃，所以必须先解除绑定或替换文件。
+    if (asset.kind === 'audio' && normalized.files.length === 0 && this.repository.countReferenceFiles(id) > 0) {
+      const voiceCount = this.repository.getUsage(id).voiceBindingCount;
+      if (voiceCount > 0) {
+        throw new ValidationError({ [ASSET_FILE_FIELD_KEY]: voiceFileRequiredMessage(voiceCount) });
+      }
     }
     // 表单不包含提示词，保留已有的。
     const content = { ...normalized.content, promptZh: asset.promptZh, promptEn: asset.promptEn };

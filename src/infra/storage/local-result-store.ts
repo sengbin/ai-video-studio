@@ -4,7 +4,7 @@
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
-// 备注：路径只由整数标识拼成，不含外部输入；只允许 https 地址；先写临时文件再改名，避免留下写了一半的文件；fetch 可注入以便测试。
+// 备注：路径只由整数标识拼成，不含外部输入，公开的 resolvePath 仍会校验结果位于存储根目录内；只允许 https 地址；先写临时文件再改名，避免留下写了一半的文件；fetch 可注入以便测试。
 // ------------------------------------------------------------------------
 
 import { createWriteStream } from 'node:fs';
@@ -15,9 +15,7 @@ import { pipeline } from 'node:stream/promises';
 import type { ReadableStream as WebReadableStream } from 'node:stream/web';
 import { GroupLocation } from '../../domain/models/generation';
 import { ResultStore, SavedResultFile } from '../../domain/ports/generation-repository';
-
-/** 单个结果视频的大小上限，单位为字节。 */
-const MAX_RESULT_BYTES = 500 * 1024 * 1024;
+import { RESULT_VIDEO_MAX_BYTES } from '../../domain/rules/generation-rules';
 
 /** 下载中的临时文件后缀。 */
 const PARTIAL_SUFFIX = '.part';
@@ -53,7 +51,7 @@ export class LocalResultStore implements ResultStore {
     const counter = new Transform({
       transform(chunk: Buffer, _encoding, callback) {
         sizeBytes += chunk.length;
-        callback(sizeBytes > MAX_RESULT_BYTES ? new Error('结果视频超过大小上限。') : null, chunk);
+        callback(sizeBytes > RESULT_VIDEO_MAX_BYTES ? new Error('结果视频超过大小上限。') : null, chunk);
       }
     });
     try {
@@ -66,7 +64,20 @@ export class LocalResultStore implements ResultStore {
     return { filePath, sizeBytes };
   }
 
+  /**
+   * 把保存时返回的相对路径解析为存储根目录下的绝对路径。
+   * @param filePath 相对存储根目录、使用 `/` 分隔的路径。
+   * @throws Error 路径是绝对路径，或解析后不在存储根目录之内（含 `..` 越界、指向根目录本身）。
+   */
   resolvePath(filePath: string): string {
-    return path.join(this.rootDirectory, ...filePath.split('/'));
+    if (path.isAbsolute(filePath) || filePath.startsWith('/')) {
+      throw new Error('结果文件路径必须是相对存储目录的路径，不能是绝对路径。');
+    }
+    const absolutePath = path.resolve(this.rootDirectory, ...filePath.split('/'));
+    const relative = path.relative(path.resolve(this.rootDirectory), absolutePath);
+    if (relative === '' || relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+      throw new Error('结果文件路径超出了存储目录。');
+    }
+    return absolutePath;
   }
 }

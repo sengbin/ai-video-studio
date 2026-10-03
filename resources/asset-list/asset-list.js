@@ -139,11 +139,13 @@
     const impact = await runAction(REQUEST_PREPARE_DELETE, { id: asset.id });
     if (!impact) return;
 
-    const details = impact.usage.bindings
-      .slice(0, MAX_USAGE_LINES)
-      .map((use) => `${use.workName} › 第 ${use.episodeSeq} 集 ${use.episodeTitle}：${use.entityName}`);
-    if (impact.usage.bindings.length > MAX_USAGE_LINES) details.push(`……另有 ${impact.usage.bindings.length - MAX_USAGE_LINES} 处`);
-    if (impact.usage.soundReferences > 0) details.push(`${impact.usage.soundReferences} 条镜头声音指定了该音频`);
+    // 使用位置：集内实体绑定，加上镜头声音直接指定该音频的集（按集汇总条数）。
+    const lines = [
+      ...impact.usage.bindings.map((use) => `${use.workName} › 第 ${use.episodeSeq} 集 ${use.episodeTitle}：${use.entityName}`),
+      ...impact.usage.soundEpisodes.map((use) => `${use.workName} › 第 ${use.episodeSeq} 集 ${use.episodeTitle}：${use.soundCount} 条镜头声音指定了该音频`)
+    ];
+    const details = lines.slice(0, MAX_USAGE_LINES);
+    if (lines.length > MAX_USAGE_LINES) details.push(`……另有 ${lines.length - MAX_USAGE_LINES} 处`);
     const used = details.length > 0;
     const confirmed = await aiUi.confirm({
       title: `删除${KIND_LABELS[kind]}`,

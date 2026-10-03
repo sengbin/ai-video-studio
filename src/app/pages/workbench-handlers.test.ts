@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：workbench-handlers.test.ts
-// 说明：生成工作台请求处理的自动化测试：各请求转发到生成服务、打开结果视频走宿主注入的 openFile、标识不合法时报错、阶段产出请求已注册。
+// 说明：生成工作台请求处理的自动化测试：各请求转发到生成服务、打开结果视频走宿主注入的 openFile、标识不合法时报错、读取镜头组全部历史版本、结果视频超过大小上限时给出完整可操作的提示、阶段产出请求已注册。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
@@ -9,6 +9,7 @@
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { RESULT_VIDEO_MAX_BYTES } from '../../domain/rules/generation-rules';
 import { MessageRouter } from '../messaging/message-router';
 import { BindingService } from '../services/binding-service';
 import { GenerationProfileService } from '../services/generation-profile-service';
@@ -50,7 +51,11 @@ function createFixture() {
     },
     cancel: async (payload: unknown) => {
       calls.push(['cancel', payload]);
-      return { remoteCanceled: false };
+      return { remoteCanceled: false, remoteCancelError: '平台返回 500' };
+    },
+    getGroupVersions: (payload: unknown) => {
+      calls.push(['groupVersions', payload]);
+      return [{ id: 11 }];
     },
     regroup: (payload: unknown) => void calls.push(['regroup', payload]),
     selectResult: (payload: unknown) => {
@@ -143,7 +148,7 @@ test('清单、集视图、提交、提交预览、重新分组、拆分、合�
   assert.deepEqual(await callOk(WORKBENCH_REQUESTS.regroup, { workId: 1, episodeId: 2, maxSeconds: 20 }), { done: true });
   await callOk(WORKBENCH_REQUESTS.splitGroup, { workId: 1, episodeId: 2, shotId: 6 });
   await callOk(WORKBENCH_REQUESTS.mergeGroup, { workId: 1, episodeId: 2, groupId: 7 });
-  await callOk(WORKBENCH_REQUESTS.cancel, { jobId: 5 });
+  assert.deepEqual(await callOk(WORKBENCH_REQUESTS.cancel, { jobId: 5 }), { remoteCanceled: false, remoteCancelError: '平台返回 500' }, '取消结果（含通知平台失败的原因）原样返回页面');
   assert.deepEqual(calls, [
     ['episode', [1, 2]],
     ['submit', body],
@@ -162,6 +167,14 @@ test('读取集视图时作品或集标识不合法会报错', async () => {
     const response = await send(WORKBENCH_REQUESTS.episode, payload);
     assert.ok(response !== undefined && !response.ok, JSON.stringify(payload));
   }
+});
+
+test('结果版本页：读取镜头组全部历史版本转发给生成服务', async () => {
+  const { calls, callOk } = createFixture();
+  const body = { workId: 1, episodeId: 2, groupId: 3 };
+  assert.deepEqual(await callOk(WORKBENCH_REQUESTS.groupVersions, body), [{ id: 11 }]);
+  assert.deepEqual(calls, [['groupVersions', body]]);
+  assert.equal(WORKBENCH_REQUESTS.groupVersions, 'workbench.groupVersions');
 });
 
 test('采用结果版本：转发给生成服务', async () => {
@@ -196,6 +209,26 @@ test('尾帧请求：列出待截取的结果、把结果视频以 Base64 交给
   assert.deepEqual(await callOk(WORKBENCH_REQUESTS.saveFrame, frame), { saved: true });
   assert.deepEqual(await callOk(WORKBENCH_REQUESTS.frameFailed, { resultId: 9, reason: '无法解码视频' }), { failed: 1 });
   assert.deepEqual(calls, [['resultPath', { resultId: 9 }], ['saveFrame', frame], ['frameFailed', { resultId: 9, reason: '无法解码视频' }]]);
+});
+
+test('结果视频超过大小上限：读不给页面，提示完整说明原因和下一步（统一引用 RESULT_VIDEO_MAX_BYTES）', async () => {
+  const { videoBytes, read, send } = createFixture();
+  videoBytes.current = new Uint8Array(RESULT_VIDEO_MAX_BYTES);
+  const atLimit = await send(WORKBENCH_REQUESTS.resultVideo, { resultId: 9 });
+  assert.ok(atLimit?.ok, '恰好等于上限仍可读取');
+
+  videoBytes.current = new Uint8Array(RESULT_VIDEO_MAX_BYTES + 1);
+  const response = await send(WORKBENCH_REQUESTS.resultVideo, { resultId: 9 });
+  assert.ok(response !== undefined && !response.ok);
+  const message = response.error.message;
+  assert.equal(response.error.kind, 'validation');
+  assert.match(message, new RegExp(`超过 ${RESULT_VIDEO_MAX_BYTES / (1024 * 1024)} MB`));
+  assert.match(message, /打开视频/);
+  assert.match(message, /首帧来源改为“无”或“指定图片”/);
+  assert.match(message, /重新生成上一组/);
+  assert.ok(message.endsWith('。'), '文案完整，没有被截断');
+  assert.ok(message.length <= 200, '作为尾帧失败原因（上限 200 字）也不会被截断');
+  assert.deepEqual(read, ['/store/videos/1.mp4', '/store/videos/1.mp4']);
 });
 
 test('提交结果通过宿主通知：已提交为信息，有被拒绝的组为警告，没有内容时不通知', async () => {

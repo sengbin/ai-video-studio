@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：workbench-handlers.ts
-// 说明：生成工作台（P5）的请求处理：读取作品与可用模型清单、读取一集的镜头组与任务历史、提交生成（结果以右下角通知弹出）、提交预览（不写任务）、保存镜头组的参数覆盖、重新分组与拆分合并镜头组、取消任务、采用某个结果版本、打开、导出、在文件夹中显示结果视频、尾帧截取相关（列出待截取的结果、把结果视频交给页面、保存尾帧、上报截取失败）；并提供分镜脚本阶段产出层需要的请求。
+// 说明：生成工作台（P5）的请求处理：读取作品与可用模型清单、读取一集的镜头组与任务历史、提交生成（结果以右下角通知弹出）、提交预览（不写任务）、保存镜头组的参数覆盖、重新分组与拆分合并镜头组、取消任务、采用某个结果版本、读取镜头组全部历史成功版本（版本页）、打开、导出、在文件夹中显示结果视频、尾帧截取相关（列出待截取的结果、把结果视频交给页面、保存尾帧、上报截取失败）；并提供分镜脚本阶段产出层需要的请求。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
@@ -9,6 +9,7 @@
 
 import { FORM_LEVEL_ERROR_KEY, ValidationError } from '../../domain/errors';
 import { readEntityId, readRecord } from '../../domain/rules/field-readers';
+import { RESULT_VIDEO_MAX_BYTES } from '../../domain/rules/generation-rules';
 import { MessageRouter } from '../messaging/message-router';
 import { BindingService } from '../services/binding-service';
 import { GenerationProfileService } from '../services/generation-profile-service';
@@ -40,11 +41,12 @@ export const WORKBENCH_REQUESTS = {
   pendingFrames: 'workbench.pendingFrames',
   resultVideo: 'workbench.resultVideo',
   saveFrame: 'workbench.saveFrame',
-  frameFailed: 'workbench.frameFailed'
+  frameFailed: 'workbench.frameFailed',
+  groupVersions: 'workbench.groupVersions'
 } as const;
 
-/** 读给页面播放或截取尾帧的结果视频大小上限（字节）：视频要以 Base64 形式通过消息传给页面。 */
-const MAX_FRAME_SOURCE_BYTES = 200 * 1024 * 1024;
+/** 结果视频超过大小上限、无法读给页面时的提示：视频要以 Base64 形式通过消息传给页面，上限与保存结果时的下载上限共用 RESULT_VIDEO_MAX_BYTES；文字需完整可操作，且不超过尾帧失败原因的长度上限（200 字）以免被截断。 */
+const RESULT_VIDEO_TOO_LARGE_MESSAGE = `结果视频超过 ${RESULT_VIDEO_MAX_BYTES / (1024 * 1024)} MB，工作台无法读取（播放、截取尾帧）。播放请用“打开视频”交给系统播放器；若要用它的尾帧作下一组首帧，请把下一组的首帧来源改为“无”或“指定图片”，或重新生成上一组（缩短时长、降低分辨率）。`;
 
 /** 宿主推送给工作台的事件名称：changed 要求刷新数据（任务或分镜脚本有变化）。 */
 export const WORKBENCH_EVENTS = {
@@ -148,6 +150,7 @@ export function registerWorkbenchHandlers(router: MessageRouter, services: Workb
 
   router.register(WORKBENCH_REQUESTS.cancel, (payload) => generation.cancel(payload));
   router.register(WORKBENCH_REQUESTS.selectResult, (payload) => generation.selectResult(payload));
+  router.register(WORKBENCH_REQUESTS.groupVersions, (payload) => generation.getGroupVersions(payload));
 
   router.register(WORKBENCH_REQUESTS.openResult, async (payload) => {
     await host.openFile(generation.getResultPath(payload));
@@ -167,8 +170,8 @@ export function registerWorkbenchHandlers(router: MessageRouter, services: Workb
   router.register(WORKBENCH_REQUESTS.pendingFrames, () => generation.listPendingTailFrames());
   router.register(WORKBENCH_REQUESTS.resultVideo, async (payload) => {
     const data = await host.readFile(generation.getResultPath(payload));
-    if (data.byteLength > MAX_FRAME_SOURCE_BYTES) {
-      throw new ValidationError({ [FORM_LEVEL_ERROR_KEY]: '结果视频过大，无法在工作台里读取（播放或截取尾帧），可以用' });
+    if (data.byteLength > RESULT_VIDEO_MAX_BYTES) {
+      throw new ValidationError({ [FORM_LEVEL_ERROR_KEY]: RESULT_VIDEO_TOO_LARGE_MESSAGE });
     }
     return { mimeType: 'video/mp4', data: Buffer.from(data).toString('base64') };
   });

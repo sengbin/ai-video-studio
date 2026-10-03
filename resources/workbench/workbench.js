@@ -4,7 +4,7 @@
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
-// 备注：请求与事件名称与 src/app/pages/workbench-handlers.ts 一致；“编辑镜头”“确认分镜脚本”复用 stage/stage.js 的产出层（aiStage）；右栏检查器的页签容器由 workbench/inspector.js（aiInspector）提供，其中“绑定”面板由 workbench/bindings.js（aiBindings）提供，“参数”面板与生效参数的合并由 workbench/profile.js（aiProfile）提供，“提交”面板由 workbench/submit-panel.js（aiSubmit）提供，“结果版本”弹出页由 workbench/versions.js（aiVersions）提供，“上一组尾帧作首帧”的尾帧截取由 workbench/tail-frames.js（aiTailFrames）提供；依赖 shared/page-format.js（pageFormat）。
+// 备注：请求与事件名称与 src/app/pages/workbench-handlers.ts 一致；“编辑镜头”“确认分镜脚本”复用 stage/stage.js 的产出层（aiStage）；右栏检查器的页签容器由 workbench/inspector.js（aiInspector）提供，其中“绑定”面板由 workbench/bindings.js（aiBindings）提供，“参数”面板与生效参数的合并由 workbench/profile.js（aiProfile）提供，“提交”面板由 workbench/submit-panel.js（aiSubmit）提供，“结果版本”弹出页由 workbench/versions.js（aiVersions）提供（打开时另行请求该组全部历史成功版本），“上一组尾帧作首帧”的尾帧截取由 workbench/tail-frames.js（aiTailFrames）提供；依赖 shared/page-format.js（pageFormat）。
 // ------------------------------------------------------------------------
 
 'use strict';
@@ -22,6 +22,7 @@
   const REQUEST_MERGE_GROUP = 'workbench.mergeGroup';
   const REQUEST_CANCEL = 'workbench.cancel';
   const REQUEST_SELECT_RESULT = 'workbench.selectResult';
+const REQUEST_GROUP_VERSIONS = 'workbench.groupVersions';
   const REQUEST_OPEN_RESULT = 'workbench.openResult';
   const REQUEST_EXPORT_RESULT = 'workbench.exportResult';
   const REQUEST_REVEAL_RESULT = 'workbench.revealResult';
@@ -349,14 +350,16 @@
     return result;
   }
 
-  /** 从检查器的“提交”页签提交：成功后展开底部队列并定位到第一个新任务所在的组。 */
+  /** 从检查器的“提交”页签提交：成功后展开底部队列并定位到第一个新任务所在的组；返回是否至少有一组已提交（宿主返回错误或所选组都被拒绝时为 false）。 */
   async function submitFromInspector(groupIds) {
     const result = await submit(view.groups.filter((group) => groupIds.includes(group.id)));
     if (result && result.submitted.length > 0) {
       queueOpen = true;
       selectedGroupId = result.submitted[0].groupId;
       render();
+      return true;
     }
+    return false;
   }
 
   /** 还没有结果、没有进行中任务，且没有超过所选模型单次最长时长的镜头组。 */
@@ -378,7 +381,9 @@
     });
     if (!confirmed) return;
     const result = await runAction(REQUEST_CANCEL, { jobId: job.id });
-    if (result && isRunning && !result.remoteCanceled) {
+    if (result && result.remoteCancelError) {
+      showMessage(`已停止等待这个任务的结果，但通知平台取消失败（${result.remoteCancelError}）。平台上的任务可能仍在继续并计费，请到平台控制台确认。`, true);
+    } else if (result && isRunning && !result.remoteCanceled) {
       showMessage('已停止等待这个任务的结果。平台不支持取消，平台上的任务可能仍会继续生成并计费。', false);
     }
     await loadEpisode(false);
@@ -431,10 +436,21 @@
     return [durationSeconds === null ? '' : `${durationSeconds} 秒`, formatSize(sizeBytes), hasAudio ? '有声' : '无声'].filter(Boolean).join(' · ');
   }
 
+  /** 向宿主读取这一组全部历史成功版本（工作台列表只带最近若干条任务）；失败时返回原因。 */
+  async function loadGroupVersions(groupId) {
+    const { workId, episodeId } = parseEpisodeKey(episodeKey);
+    try {
+      return { ok: true, jobs: await window.hostBridge.request(REQUEST_GROUP_VERSIONS, { workId, episodeId, groupId }) };
+    } catch (error) {
+      return { ok: false, message: errorText(error) };
+    }
+  }
+
   /** 弹出这一组的结果版本页：采用、打开、导出、对比。 */
   function openVersions(group) {
     aiVersions.open(group.id, {
       getState: () => ({ view }),
+      loadVersions: loadGroupVersions,
       select: selectResult,
       describeParams: describeJobParams,
       describeResult,

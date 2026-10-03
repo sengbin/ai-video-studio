@@ -17,6 +17,7 @@ import {
   AssetKind,
   AssetListItem,
   AssetRecord,
+  AssetSoundUsage,
   AssetUsage,
   AssetUsageSummary,
   NewAssetFile,
@@ -125,7 +126,12 @@ export class SqliteAssetRepository implements AssetRepository {
            (SELECT COUNT(*) FROM asset_files f WHERE f.asset_id = a.id AND f.role = 'reference') AS file_count,
            (SELECT f.duration_seconds FROM asset_files f WHERE f.asset_id = a.id AND f.role = 'reference'
              ORDER BY f.sort_order, f.id LIMIT 1) AS duration_seconds,
-           (SELECT COUNT(DISTINCT b.episode_id) FROM entity_bindings b WHERE b.asset_id = a.id) AS episode_count,
+           (SELECT COUNT(*) FROM episodes e
+             WHERE EXISTS (SELECT 1 FROM entity_bindings b WHERE b.episode_id = e.id AND b.asset_id = a.id)
+                OR EXISTS (SELECT 1 FROM shot_sounds s
+                             JOIN shots sh ON sh.id = s.shot_id
+                             JOIN storyboard_scripts ss ON ss.id = sh.storyboard_script_id
+                            WHERE ss.episode_id = e.id AND s.audio_asset_id = a.id)) AS episode_count,
            (SELECT t.mime FROM asset_files t WHERE t.asset_id = a.id AND t.role = 'thumbnail'
              ORDER BY t.sort_order, t.id LIMIT 1) AS thumb_mime,
            (SELECT t.content FROM asset_files t WHERE t.asset_id = a.id AND t.role = 'thumbnail'
@@ -280,6 +286,12 @@ export class SqliteAssetRepository implements AssetRepository {
       }
       this.database.prepare('DELETE FROM asset_files WHERE asset_id = ?').run(id);
       this.insertFiles(id, files, timestamp);
+      if (revision.clearAdopted) {
+        // 参考文件被手动改动，不再对应任何版本：采用关系的两处记录（assets.adopted_version_id 与版本文件的 is_adopted）必须同时清除。
+        this.database
+          .prepare('UPDATE asset_version_files SET is_adopted = 0 WHERE is_adopted = 1 AND version_id IN (SELECT id FROM asset_versions WHERE asset_id = ?)')
+          .run(id);
+      }
       return true;
     });
   }
@@ -333,7 +345,7 @@ export class SqliteAssetRepository implements AssetRepository {
   getUsage(id: number): AssetUsageSummary {
     const rows = this.database
       .prepare(
-        `SELECT w.name AS work_name, e.seq AS episode_seq, e.title AS episode_title, se.name AS entity_name
+        `SELECT w.name AS work_name, e.seq AS episode_seq, e.title AS episode_title, se.name AS entity_name, b.purpose
            FROM entity_bindings b
            JOIN episodes e ON e.id = b.episode_id
            JOIN works w ON w.id = e.work_id
@@ -341,17 +353,39 @@ export class SqliteAssetRepository implements AssetRepository {
           WHERE b.asset_id = ?
           ORDER BY w.name, e.seq, se.name`
       )
-      .all(id) as unknown as Array<{ work_name: string; episode_seq: number; episode_title: string; entity_name: string }>;
-    const sounds = this.database.prepare('SELECT COUNT(*) AS total FROM shot_sounds WHERE audio_asset_id = ?').get(id) as unknown as {
-      total: number;
-    };
+      .all(id) as unknown as Array<{ work_name: string; episode_seq: number; episode_title: string; entity_name: string; purpose: string }>;
+    // 镜头声音经 镜头 → 分镜脚本 找到所在的集；同一集可能有多条，按集汇总。
+    const soundRows = this.database
+      .prepare(
+        `SELECT w.name AS work_name, e.seq AS episode_seq, e.title AS episode_title, COUNT(*) AS sound_count
+           FROM shot_sounds s
+           JOIN shots sh ON sh.id = s.shot_id
+           JOIN storyboard_scripts ss ON ss.id = sh.storyboard_script_id
+           JOIN episodes e ON e.id = ss.episode_id
+           JOIN works w ON w.id = e.work_id
+          WHERE s.audio_asset_id = ?
+          GROUP BY e.id
+          ORDER BY w.name, e.seq`
+      )
+      .all(id) as unknown as Array<{ work_name: string; episode_seq: number; episode_title: string; sound_count: number }>;
     const bindings: AssetUsage[] = rows.map((row) => ({
       workName: row.work_name,
       episodeSeq: row.episode_seq,
       episodeTitle: row.episode_title,
       entityName: row.entity_name
     }));
-    return { bindings, soundReferences: sounds.total };
+    const soundEpisodes: AssetSoundUsage[] = soundRows.map((row) => ({
+      workName: row.work_name,
+      episodeSeq: row.episode_seq,
+      episodeTitle: row.episode_title,
+      soundCount: row.sound_count
+    }));
+    return {
+      bindings,
+      soundReferences: soundEpisodes.reduce((total, item) => total + item.soundCount, 0),
+      soundEpisodes,
+      voiceBindingCount: rows.filter((row) => row.purpose === 'voice').length
+    };
   }
 
   /** 写入资产的文件；调用方负责事务。 */

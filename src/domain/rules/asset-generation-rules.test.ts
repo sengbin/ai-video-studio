@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：asset-generation-rules.test.ts
-// 说明：资产生成规则的自动化测试：修订号的计算、参考文件的比较、“需更新”“有改动未生成”的推算与能否生成的判断。
+// 说明：资产生成规则的自动化测试：修订号的计算、参考文件的比较、“需更新”“有改动未生成”的推算、能否生成的判断与使用集数的统计。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
@@ -15,6 +15,7 @@ import {
   computePromptRevision,
   computeRevisionUpdate,
   contentFieldsChanged,
+  countUsedEpisodes,
   hasUngeneratedChanges,
   isPromptOutdated,
   modelKindOfAsset,
@@ -113,4 +114,13 @@ test('能否生成：提示词生成中、没有提示词、已有进行中的�
 
 test('资产类型对应的模型类型：音频用音频模型，其余用图像模型', () => {
   assert.deepEqual((['character', 'scene', 'prop', 'effect', 'audio'] as const).map(modelKindOfAsset), ['image', 'image', 'image', 'image', 'audio']);
+});
+
+test('使用集数：绑定所在的集加镜头声音指定的集，同一集只算一次；没有使用为 0', () => {
+  const binding = (episodeSeq: number, entityName: string) => ({ workName: '作品甲', episodeSeq, episodeTitle: `第${episodeSeq}集`, entityName });
+  const sound = (episodeSeq: number, workName = '作品甲') => ({ workName, episodeSeq, episodeTitle: `第${episodeSeq}集`, soundCount: 1 });
+  assert.equal(countUsedEpisodes({ bindings: [], soundEpisodes: [] }), 0);
+  assert.equal(countUsedEpisodes({ bindings: [binding(1, '林夏'), binding(1, '周远'), binding(2, '林夏')], soundEpisodes: [] }), 2);
+  assert.equal(countUsedEpisodes({ bindings: [], soundEpisodes: [sound(3)] }), 1);
+  assert.equal(countUsedEpisodes({ bindings: [binding(1, '林夏')], soundEpisodes: [sound(1), sound(2), sound(1, '作品乙')] }), 3);
 });

@@ -244,8 +244,6 @@ export class StoryboardService {
     }
 
     const groupMaxSeconds = groupMaxSecondsOf(readStoryboardParams(run));
-    // 生成成功的版本读取时补全分组（旧数据没有分组）。
-    if (run.status === 'succeeded') syncShotGroups(storyboards, run.id, groupMaxSeconds, this.timestamp());
     const shots = storyboards.listShots(run.id);
     const shotById = new Map(shots.map((shot) => [shot.id, shot]));
     const source = run.sourceRunId === null ? undefined : runs.findById(run.sourceRunId);

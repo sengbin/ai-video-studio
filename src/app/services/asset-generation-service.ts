@@ -20,7 +20,13 @@ import { AudioCapability, ImageCapability, ModelKind, PromptLanguage } from '../
 import { UsableModel } from '../../domain/models/model-provider';
 import { AssetRepository } from '../../domain/ports/asset-repository';
 import { AssetVersionRepository } from '../../domain/ports/asset-version-repository';
-import { checkGenerationAvailability, GenerationAvailability, hasUngeneratedChanges, modelKindOfAsset } from '../../domain/rules/asset-generation-rules';
+import {
+  checkGenerationAvailability,
+  countUsedEpisodes,
+  GenerationAvailability,
+  hasUngeneratedChanges,
+  modelKindOfAsset
+} from '../../domain/rules/asset-generation-rules';
 import { readAudioKind } from '../../domain/rules/asset-prompt-rules';
 import { ASSET_AUDIO_MAX_SECONDS, ASSET_IMAGE_MAX_BYTES, ASSET_IMAGE_MAX_FILES } from '../../domain/rules/asset-rules';
 import { FieldErrors, assertNoFieldErrors, readEntityId, readRecord } from '../../domain/rules/field-readers';
@@ -151,9 +157,13 @@ export class AssetGenerationService {
     this.now = dependencies.now ?? (() => new Date());
   }
 
-  /** 是否有该类型资产可用的模型（模型和服务商都已启用且已配置密钥），资产列表据此决定“生成”按钮能否使用。 */
-  async hasUsableModel(kind: AssetRecord['kind']): Promise<boolean> {
-    return (await this.dependencies.providers.listUsableModels(modelKindOfAsset(kind))).length > 0;
+  /**
+   * 读取某类型资产的可用模型（模型和服务商都已启用且已配置密钥），返回逐条判断资产是否有可用模型的函数，资产列表据此决定每一行“生成”按钮能否使用。
+   * 音频资产按各自的音频类型（音色参考、背景音乐、音效）分别判断：模型不支持该资产的音频类型就不算可用。
+   */
+  async createUsableModelCheck(kind: AssetRecord['kind']): Promise<(asset: Pick<AssetRecord, 'kind' | 'attributes'>) => boolean> {
+    const usable = await this.dependencies.providers.listUsableModels(modelKindOfAsset(kind));
+    return (asset) => filterUsableForAsset(usable, asset).length > 0;
   }
 
   /**
@@ -331,7 +341,6 @@ export class AssetGenerationService {
     const thumbnails = new Map(
       versions.listFilesWithContent(versionId, 'thumbnail').map((file) => [file.sortOrder, { mime: file.mime, data: file.content.toString('base64') }])
     );
-    const episodes = new Set(assets.getUsage(asset.id).bindings.map((usage) => `${usage.workName}#${usage.episodeSeq}`));
     return {
       version: toView(version, asset),
       promptZh: version.snapshot.promptZh,
@@ -344,11 +353,12 @@ export class AssetGenerationService {
         height: file.height,
         durationSeconds: file.durationSeconds,
         sizeBytes: file.sizeBytes,
-        isAdopted: file.isAdopted,
+        // 采用关系以资产的 adoptedVersionId 为准：只有当前被采用的版本里，标记过的文件才算已采用。
+        isAdopted: asset.adoptedVersionId === version.id && file.isAdopted,
         thumbnail: thumbnails.get(file.sortOrder) ?? null
       })),
       missingThumbnails: asset.kind === 'audio' ? [] : results.filter((file) => !thumbnails.has(file.sortOrder)).map((file) => file.sortOrder),
-      usedByEpisodes: episodes.size
+      usedByEpisodes: countUsedEpisodes(assets.getUsage(asset.id))
     };
   }
 
@@ -504,12 +514,7 @@ export class AssetGenerationService {
 
   /** 列出资产类型对应的可用模型；音频资产只列支持其音频类型的模型。 */
   private async listUsable(asset: AssetRecord): Promise<UsableModel[]> {
-    const usable = await this.dependencies.providers.listUsableModels(modelKindOfAsset(asset.kind));
-    if (asset.kind !== 'audio') {
-      return usable;
-    }
-    const audioKind = readAudioKind(asset.attributes);
-    return usable.filter((item) => (item.model.capability as AudioCapability).audioKinds.includes(audioKind));
+    return filterUsableForAsset(await this.dependencies.providers.listUsableModels(modelKindOfAsset(asset.kind)), asset);
   }
 
   private requireAsset(id: number): AssetRecord {
@@ -536,6 +541,15 @@ export class AssetGenerationService {
   private timestamp(): string {
     return this.now().toISOString();
   }
+}
+
+/** 从同类型的可用模型里筛出该资产能用的：音频资产只保留支持其音频类型的模型，其余原样返回。 */
+function filterUsableForAsset(usable: readonly UsableModel[], asset: Pick<AssetRecord, 'kind' | 'attributes'>): UsableModel[] {
+  if (asset.kind !== 'audio') {
+    return [...usable];
+  }
+  const audioKind = readAudioKind(asset.attributes);
+  return usable.filter((item) => (item.model.capability as AudioCapability).audioKinds.includes(audioKind));
 }
 
 /** 读取可选的下拉值：空串或未提供视为不指定；不在可选范围内时记录字段错误。 */

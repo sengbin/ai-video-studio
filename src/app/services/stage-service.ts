@@ -236,7 +236,7 @@ export class StageService {
   /**
    * 确认采用：该版本成为当前版本，原来的当前版本变为历史。剧本尚未合并时，在同一事务内把抽取结果合并到集和实体。
    * @throws NotFoundError 记录不存在。
-   * @throws ValidationError 记录不是生成成功且待确认。
+   * @throws ValidationError 记录不是生成成功且待确认；或剧本新版本里已不存在的旧集已有下游数据（合并整体回滚）。
    */
   approve(runId: number): void {
     const run = this.requireRun(runId);

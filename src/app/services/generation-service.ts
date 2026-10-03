@@ -1,13 +1,13 @@
 // ------------------------------------------------------------------------
 // 名称：generation-service.ts
-// 说明：视频生成应用服务：提供工作台的作品、集、模型与镜头组任务视图；按镜头组编译请求并校验后提交；重新分组、拆分与合并镜头组；取消任务；切换镜头组采用的结果版本；定位结果文件。
+// 说明：视频生成应用服务：提供工作台的作品、集、模型与镜头组任务视图；按镜头组编译请求并校验后提交；重新分组、拆分与合并镜头组；取消任务；切换镜头组采用的结果版本；读取镜头组的全部历史成功版本；定位结果文件。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
-// 备注：不依赖 VS Code；一个镜头组一次生成一个多镜头视频；只有已确认采用的分镜脚本才能生成；每次提交产生新任务，失败原因与历史都保留；已有生成记录的组不能拆分或合并；组的第一个镜头设为“上一镜头尾帧作首帧”时，任务等待上一组，尾帧由工作台截取后入库；上一组改用其他版本后，接在旧尾帧之后采用的组只提示、不自动重做。
+// 备注：不依赖 VS Code；一个镜头组一次生成一个多镜头视频；只有已确认采用的分镜脚本才能生成；每次提交产生新任务，失败原因与历史都保留；已有生成记录的组不能拆分或合并；组的第一个镜头设为“上一镜头尾帧作首帧”时，任务等待上一组，尾帧由工作台截取后入库；上一组改用其他版本后，接在旧尾帧之后采用的组只提示、不自动重做；同一镜头组同时只有一个进行中的任务（提交时在事务内检查并插入，冲突的组被拒绝）。
 // ------------------------------------------------------------------------
 
-import { FORM_LEVEL_ERROR_KEY, NotFoundError, ProviderError, ValidationError } from '../../domain/errors';
+import { ConflictError, FORM_LEVEL_ERROR_KEY, NotFoundError, ProviderError, ValidationError } from '../../domain/errors';
 import { ACTIVE_JOB_STATUSES, GenerationParams, JOB_STATUS_LABELS, JobFailure, JobStatus, VideoJobRecord, VideoResultRecord } from '../../domain/models/generation';
 import { DEFAULT_NEGATIVE_LIST, EMPTY_PROFILE, NEGATIVE_LIST_PRESETS, ProfileValues } from '../../domain/models/generation-profile';
 import { DurationCapability, VideoAudioElement, VideoAudioMode, VideoCapability } from '../../domain/models/model-capability';
@@ -46,7 +46,7 @@ import {
   splitLayoutBefore,
   sumSeconds
 } from '../../domain/rules/shot-group-rules';
-import { JobChange } from '../queue/job-queue';
+import { JobCancelResult, JobChange } from '../queue/job-queue';
 import { buildVideoRequest, PLACEHOLDER_FIRST_FRAME } from '../queue/video-request';
 import { ChangeNotifier } from './change-notifier';
 import { ProjectService } from './project-service';
@@ -55,7 +55,7 @@ import { readGroupLayout, regroupShots, syncShotGroups } from './shot-grouping';
 import { StoryboardService, readStoryboardParams, readStoryboardStyle, storyboardTarget } from './storyboard-service';
 import { WorkService } from './work-service';
 
-/** 每个镜头组在视图中最多显示的任务数（最新的在前）。 */
+/** 每个镜头组在工作台视图中最多显示的任务数（最新的在前）；结果版本页另用 getGroupVersions 读取全部成功版本。 */
 const MAX_JOBS_PER_GROUP = 10;
 /** 失败通知里最多引用平台原文的字数，完整原文在工作台查看。 */
 const FAILURE_NOTICE_LENGTH = 100;
@@ -286,7 +286,7 @@ interface FirstFrameLink {
 /** 提交后通知队列开始处理，以及取消任务；由 JobQueue 实现。 */
 export interface JobScheduler {
   pump(): Promise<void>;
-  cancel(jobId: number): Promise<{ readonly remoteCanceled: boolean }>;
+  cancel(jobId: number): Promise<JobCancelResult>;
 }
 
 /** 一个视频模型的调用信息。 */
@@ -624,17 +624,27 @@ export class GenerationService {
       }
       let jobId = DRY_RUN_JOB_ID;
       if (!dryRun) {
-        const job = jobs.insertJob(
-          {
-            groupId: group.id,
-            modelId: usable.model.id,
-            status: link === undefined || link.firstFrameId !== null ? 'queued' : 'waiting',
-            snapshot,
-            prevJobId: link === undefined ? null : link.prevJobId,
-            firstFrameId: link === undefined ? null : link.firstFrameId
-          },
-          this.timestamp()
-        );
+        let job: VideoJobRecord;
+        try {
+          // 仓库在同一个事务里检查并插入；前面的检查之后又有别的提交抢先时，这里会因“同一组只能有一个进行中的任务”冲突。
+          job = jobs.insertJob(
+            {
+              groupId: group.id,
+              modelId: usable.model.id,
+              status: link === undefined || link.firstFrameId !== null ? 'queued' : 'waiting',
+              snapshot,
+              prevJobId: link === undefined ? null : link.prevJobId,
+              firstFrameId: link === undefined ? null : link.firstFrameId
+            },
+            this.timestamp()
+          );
+        } catch (error) {
+          if (error instanceof ConflictError) {
+            reject(groupId, group, [error.message]);
+            continue;
+          }
+          throw error;
+        }
         jobId = job.id;
         changes.notify({ jobId, groupId });
       }
@@ -775,11 +785,32 @@ export class GenerationService {
   /**
    * 取消进行中的任务。
    * @param rawInput { jobId }。
-   * @returns remoteCanceled 为 false 时，平台任务可能仍会继续并计费。
+   * @returns remoteCanceled 为 false 时，平台任务可能仍会继续并计费；remoteCancelError 有值表示通知平台取消失败（本地取消仍然成功），原因随结果返回给页面提示。
    * @throws NotFoundError 任务不存在或已经结束。
    */
-  cancel(rawInput: unknown): Promise<{ readonly remoteCanceled: boolean }> {
+  cancel(rawInput: unknown): Promise<JobCancelResult> {
     return this.dependencies.scheduler.cancel(readEntityId({ id: readRecord(rawInput).jobId }, '任务'));
+  }
+
+  /**
+   * 读取一个镜头组全部历史成功的版本（视图里每组只带最近若干条任务，版本页需要看到全部）。
+   * @param rawInput { workId, episodeId, groupId }。
+   * @returns 有结果视频的任务视图，最新的在前。
+   * @throws NotFoundError 作品或集不存在、这一集还没有分镜脚本，或镜头组不属于这一集。
+   */
+  getGroupVersions(rawInput: unknown): JobView[] {
+    const { jobs, storyboards } = this.dependencies;
+    const source = readRecord(rawInput);
+    const groupId = readEntityId({ id: source.groupId }, '镜头组');
+    const { run } = this.resolveEpisodeRun(source);
+    if (!storyboards.listGroups(run.id).some((group) => group.id === groupId)) {
+      throw new NotFoundError('镜头组不存在，可能已被重新分组。');
+    }
+    const results = new Map(jobs.listResultsByGroups([groupId]).map((result) => [result.jobId, result]));
+    return jobs
+      .listJobsByGroups([groupId])
+      .filter((job) => results.has(job.id))
+      .map((job) => this.toJobView(job, results.get(job.id)));
   }
 
   /**

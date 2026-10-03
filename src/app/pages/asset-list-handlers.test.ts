@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：asset-list-handlers.test.ts
-// 说明：资产列表页请求处理的自动化测试：读取某类型的资产、取待处理请求、删除前的使用情况与删除。
+// 说明：资产列表页请求处理的自动化测试：读取某类型的资产（含逐条的生成可用性）、取待处理请求、删除前的使用情况与删除。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
@@ -18,6 +18,7 @@ import { AssetCategoryService } from '../services/asset-category-service';
 import { AssetGenerationService } from '../services/asset-generation-service';
 import { AssetPromptService } from '../services/asset-prompt-service';
 import { AssetService } from '../services/asset-service';
+import { createAssetGenerationFixture, createAssetWithPrompts } from '../services/testing/asset-generation-fixture';
 import { FILE_PROMPTS, ScriptedText } from '../stages/testing/scripted-text';
 import { ASSET_LIST_REQUESTS, AssetListRequest, AssetListRow, registerAssetListHandlers } from './asset-list-handlers';
 
@@ -122,7 +123,7 @@ test('删除：先取名称与使用情况，再删除；不存在或标识无�
   try {
     const asset = assets.createAsset('scene', { name: '灯塔' });
     const impact = await send(ASSET_LIST_REQUESTS.prepareDelete, { id: asset.id });
-    assert.deepEqual(impact?.ok && impact.data, { name: '灯塔', usage: { bindings: [], soundReferences: 0 } });
+    assert.deepEqual(impact?.ok && impact.data, { name: '灯塔', usage: { bindings: [], soundReferences: 0, soundEpisodes: [], voiceBindingCount: 0 } });
 
     const deleted = await send(ASSET_LIST_REQUESTS.delete, { id: asset.id });
     assert.deepEqual(deleted?.ok && deleted.data, { deleted: true, name: '灯塔' });
@@ -134,5 +135,36 @@ test('删除：先取名称与使用情况，再删除；不存在或标识无�
     assert.ok(invalid && !invalid.ok && invalid.error.kind === 'validation');
   } finally {
     database.close();
+  }
+});
+
+test('读取列表：音频资产按各自的音频类型逐条判断有无可用模型，不能按“有音频模型”一刀切', async () => {
+  const fixture = await createAssetGenerationFixture();
+  try {
+    // 假音频模型只支持音色参考和音效，不支持背景音乐。
+    createAssetWithPrompts(fixture.assets, 'audio', { name: '声音', audioKind: '音色参考', promptZh: '清亮的女声' });
+    createAssetWithPrompts(fixture.assets, 'audio', { name: '配乐', audioKind: '背景音乐', promptZh: '紧张的弦乐' });
+    createAssetWithPrompts(fixture.assets, 'audio', { name: '雨声', audioKind: '音效', promptZh: '雨打窗' });
+    const text = new ScriptedText(() => ({ promptZh: '中文', promptEn: 'english' }));
+    const router = new MessageRouter();
+    registerAssetListHandlers(
+      router,
+      'audio',
+      {
+        assets: fixture.assets,
+        categories: new AssetCategoryService(new SqliteAssetCategoryRepository(fixture.database)),
+        prompts: new AssetPromptService({ text, prompts: FILE_PROMPTS, assets: fixture.assetRepository, notify: () => undefined }),
+        generation: fixture.generation
+      },
+      { takePending: () => undefined }
+    );
+    const response = await router.handle({ type: 'request', requestId: 1, name: ASSET_LIST_REQUESTS.load, payload: undefined });
+    assert.ok(response?.ok);
+    const rows = (response.data as { assets: AssetListRow[] }).assets;
+    const availability = Object.fromEntries(rows.map((row) => [row.name, row.availability.available]));
+    assert.deepEqual(availability, { 声音: true, 配乐: false, 雨声: true });
+    assert.match(rows.find((row) => row.name === '配乐')?.availability.reason ?? '', /启用音频模型/);
+  } finally {
+    fixture.database.close();
   }
 });

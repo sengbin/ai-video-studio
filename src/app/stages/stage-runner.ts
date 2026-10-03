@@ -4,7 +4,7 @@
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-09-30
-// 备注：生成在后台异步执行，start 与 resume 在记录创建后立即返回；同一目标同时只有一个运行中的记录。
+// 备注：生成在后台异步执行，start 与 resume 在记录创建后立即返回；同一目标同时只有一个运行中的记录；先登记到活动列表再开始执行，结束时先移除登记再放行 whenIdle 的等待者。
 // ------------------------------------------------------------------------
 
 import { NotFoundError, TextGenerationError, ValidationError, FORM_LEVEL_ERROR_KEY } from '../../domain/errors';
@@ -189,13 +189,27 @@ export class StageRunner {
     }
   }
 
-  /** 在后台启动执行，登记到活动列表，结束后移除。 */
+  /**
+   * 在后台启动执行：先登记再开始，结束时（无论成功、失败还是意外抛出）先移除登记再放行等待者，
+   * 保证执行期间的取消能找到它，也不会出现已结束仍在登记中的记录。
+   */
   private launch(run: StageRun, workflow: StageWorkflow, model: TextModelInfo, text: TextGenerationPort): void {
     const controller = new AbortController();
-    const done = this.execute(run, workflow, model, text, controller.signal).finally(() => {
-      this.active.delete(run.id);
+    let finish!: { resolve: () => void; reject: (error: unknown) => void };
+    const done = new Promise<void>((resolve, reject) => {
+      finish = { resolve, reject };
     });
     this.active.set(run.id, { controller, done });
+    this.execute(run, workflow, model, text, controller.signal).then(
+      () => {
+        this.active.delete(run.id);
+        finish.resolve();
+      },
+      (error: unknown) => {
+        this.active.delete(run.id);
+        finish.reject(error);
+      }
+    );
   }
 
   /** 执行工作流，并把结果记录为成功、失败或已取消；不向外抛出异常。 */

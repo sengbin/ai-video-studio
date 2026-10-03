@@ -26,7 +26,9 @@ import {
   MODEL_NOT_ENABLED_MESSAGE,
   NO_TEXT_MODEL_NOTE,
   TextModelSource,
-  TextSettingsService
+  TextSettingsService,
+  WORK_MODEL_UNAVAILABLE_HINT,
+  WORK_MODEL_UNAVAILABLE_NO_FALLBACK_HINT
 } from './text-settings-service';
 
 const QIANWEN_KEY = 'model:fake/fake-text';
@@ -104,12 +106,12 @@ test('设置视图：默认启用 Copilot，列表是 Copilot 自动与各家族
   });
 });
 
-test('设置视图：已启用的服务商文本模型出现在列表中，停用后不再出现', async () => {
+test('设置视图：已启用的服务商文本模型出现在列表中，停用后不再出现；Copilot 没有可用模型时不列出“Copilot · 自动”', async () => {
   const { models, service } = createService({ families: [] });
   models.enabled = true;
-  assert.deepEqual((await service.getView()).choices.map((choice) => choice.key), ['copilot:', QIANWEN_KEY]);
+  assert.deepEqual((await service.getView()).choices.map((choice) => choice.key), [QIANWEN_KEY]);
   models.enabled = false;
-  assert.deepEqual((await service.getView()).choices.map((choice) => choice.key), ['copilot:']);
+  assert.deepEqual((await service.getView()).choices.map((choice) => choice.key), []);
 });
 
 test('设置视图：关闭 Copilot 后它的模型不再出现，不再查询 Copilot；没有任何可选模型时给出警告', async () => {
@@ -133,6 +135,12 @@ test('设置视图：默认模型已不可用时显示实际使用的模型并�
 
   const none = createService({ families: [], unavailableReason: '未检测到可用的 Copilot 模型。' });
   assert.equal((await none.service.getView()).modelNote, '未检测到可用的 Copilot 模型。');
+
+  // Copilot 没有可用模型但有服务商文本模型：默认回退到服务商模型，原因与回退提示一并给出。
+  none.models.enabled = true;
+  const noneWithProvider = await none.service.getView();
+  assert.deepEqual([noneWithProvider.defaultModel, noneWithProvider.modelNote], [QIANWEN_KEY, `未检测到可用的 Copilot 模型。${DEFAULT_FALLBACK_HINT(QIANWEN_LABEL)}`]);
+  assert.equal(noneWithProvider.engineNote, null);
 
   const missing = createService({ families: ['claude-sonnet'] });
   missing.store.settings = { ...missing.store.settings, defaultModel: 'copilot:gpt-4o' };
@@ -189,12 +197,31 @@ test('作品的文本模型：候选与默认名称随设置变化，选择只�
 
   // 模型被停用后，作品的选择不再出现在候选中，沿用默认；记录保留，重新启用后恢复。
   models.enabled = false;
-  assert.equal((await service.getWorkState(7)).selectedKey, null);
+  const stopped = await service.getWorkState(7);
+  assert.equal(stopped.selectedKey, null);
+  assert.equal(stopped.unavailableHint, WORK_MODEL_UNAVAILABLE_HINT('Copilot · 自动'));
+  assert.equal((await service.getWorkState(8)).unavailableHint, null, '没有单独选择不提示');
+  assert.equal((await service.getWorkState(null)).unavailableHint, null);
   models.enabled = true;
-  assert.equal((await service.getWorkState(7)).selectedKey, QIANWEN_KEY);
+  const restored = await service.getWorkState(7);
+  assert.deepEqual([restored.selectedKey, restored.unavailableHint], [QIANWEN_KEY, null]);
 
   service.setWorkModel(7, null);
   assert.equal(workModels.find(7), null);
+});
+
+test('作品的文本模型：Copilot 没有可用模型时候选不含“Copilot · 自动”，原选择失效后提示改用服务商文本模型；两者都没有时提示没有可用模型', async () => {
+  const { store, models, workModels, service } = createService({ families: [], unavailableReason: '未检测到可用的 Copilot 模型。' });
+  models.enabled = true;
+  workModels.save(7, 'copilot:gpt-4o');
+  const state = await service.getWorkState(7);
+  assert.deepEqual([state.choices.map((choice) => choice.key), state.defaultLabel, state.selectedKey], [[QIANWEN_KEY], QIANWEN_LABEL, null]);
+  assert.equal(state.unavailableHint, WORK_MODEL_UNAVAILABLE_HINT(QIANWEN_LABEL));
+
+  models.enabled = false;
+  store.settings = { ...store.settings, copilotEnabled: false };
+  const none = await service.getWorkState(7);
+  assert.deepEqual([none.choices, none.defaultLabel, none.unavailableHint], [[], null, WORK_MODEL_UNAVAILABLE_NO_FALLBACK_HINT]);
 });
 
 test('作品的文本模型：选用不可用的模型被拒绝', async () => {

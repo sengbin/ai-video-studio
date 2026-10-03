@@ -4,7 +4,7 @@
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
-// 备注：不依赖 VS Code；一轮处理由 pump() 完成，定时器由 start() 启动，测试直接调用 pump()。写法与视频队列一致：限流、服务端、网络类的提交失败自动重试，其余失败直接记为失败；千问音频接口是同步的，提交后第一次轮询即成功。
+// 备注：不依赖 VS Code；一轮处理由 pump() 完成，定时器由 start() 启动（返回的停止函数会等正在进行的一轮处理结束，停止后不再开始新的一轮），测试直接调用 pump()。写法与视频队列一致：限流、服务端、网络类的提交失败自动重试，其余失败直接记为失败；千问音频接口是同步的，提交后第一次轮询即成功。
 // ------------------------------------------------------------------------
 
 import { NotFoundError, ProviderError } from '../../domain/errors';
@@ -45,6 +45,14 @@ export interface AssetVersionChange {
   readonly versionId: number;
 }
 
+/** 取消版本的结果。 */
+export interface AssetVersionCancelResult {
+  /** 为 true 表示已通知服务商取消。 */
+  readonly remoteCanceled: boolean;
+  /** 通知服务商取消失败的原因；没有失败时缺省。此时本地取消仍然成功，但平台上的任务可能仍在继续并计费。 */
+  readonly remoteCancelError?: string;
+}
+
 /** 解析图像、音频模型的调用凭据。 */
 export interface AssetCallResolver {
   /** @throws ProviderError 模型不可用或没有配置密钥。 */
@@ -79,6 +87,10 @@ export class AssetGenerationQueue {
   private readonly transientFailures = new Map<number, number>();
   private pumping = false;
   private pumpAgain = false;
+  /** 正在进行的一轮处理，停止定时处理时据此等待它结束。 */
+  private activePump: Promise<void> | undefined;
+  /** 已停止：为 true 时不再开始新的一轮处理，进行中的一轮在处理完当前版本后结束。 */
+  private stopped = false;
 
   constructor(private readonly dependencies: AssetGenerationQueueDependencies) {
     this.now = dependencies.now ?? (() => new Date());
@@ -100,47 +112,69 @@ export class AssetGenerationQueue {
     return failed;
   }
 
-  /** 启动定时处理：立即处理一轮，之后每隔 intervalMs 处理一轮；返回停止函数。 */
-  start(intervalMs: number): () => void {
+  /**
+   * 启动定时处理：立即处理一轮，之后每隔 intervalMs 处理一轮。
+   * @returns 停止函数：停止定时器、不再开始新的一轮处理，并等待正在进行的一轮处理结束。
+   */
+  start(intervalMs: number): () => Promise<void> {
+    this.stopped = false;
     const run = (): void => {
       this.pump().catch((error: unknown) => console.error('处理资产生成队列时出现未预期的错误：', error));
     };
     run();
     const timer = setInterval(run, intervalMs);
-    return () => clearInterval(timer);
+    return async () => {
+      this.stopped = true;
+      clearInterval(timer);
+      // 进行中的一轮出错时已由发起方记录日志，这里只等它结束。
+      await this.activePump?.then(undefined, () => undefined);
+    };
   }
 
-  /** 处理一轮：先轮询生成中的版本，再提交排队中的版本。正在处理时只登记再来一轮。 */
+  /** 处理一轮：先轮询生成中的版本，再提交排队中的版本。正在处理时只登记再来一轮；已停止时什么也不做。 */
   async pump(): Promise<void> {
+    if (this.stopped) {
+      return;
+    }
     if (this.pumping) {
       this.pumpAgain = true;
       return;
     }
     this.pumping = true;
+    const round = this.runRounds();
+    this.activePump = round;
     try {
-      do {
-        this.pumpAgain = false;
-        for (const version of this.dependencies.versions.listByStatus(['running'])) {
-          await this.pollOne(version);
-        }
-        await this.submitQueued();
-      } while (this.pumpAgain);
+      await round;
     } finally {
       this.pumping = false;
+      this.activePump = undefined;
     }
   }
 
+  /** 连续处理，直到没有人登记再来一轮或队列已停止。 */
+  private async runRounds(): Promise<void> {
+    do {
+      this.pumpAgain = false;
+      for (const version of this.dependencies.versions.listByStatus(['running'])) {
+        if (this.stopped) return;
+        await this.pollOne(version);
+      }
+      await this.submitQueued();
+    } while (this.pumpAgain && !this.stopped);
+  }
+
   /**
-   * 取消进行中的版本：服务商支持取消时同时取消远端任务，不支持时只停止本地跟踪（远端可能继续并计费）。
+   * 取消进行中的版本：服务商支持取消时同时取消远端任务，不支持时只停止本地跟踪（远端可能继续并计费）；通知服务商失败时本地取消仍然成功，失败原因放在 remoteCancelError 里。
    * @throws NotFoundError 版本不存在或已经结束。
    */
-  async cancel(versionId: number): Promise<{ readonly remoteCanceled: boolean }> {
+  async cancel(versionId: number): Promise<AssetVersionCancelResult> {
     const { versions } = this.dependencies;
     const version = versions.findVersion(versionId);
     if (version === undefined || (version.status !== 'queued' && version.status !== 'running')) {
       throw new NotFoundError('版本不存在或已经结束。');
     }
     let remoteCanceled = false;
+    let remoteCancelError: string | undefined;
     if (version.status === 'running' && version.remoteJobId !== null) {
       try {
         const call = await this.resolveCall(version);
@@ -148,22 +182,23 @@ export class AssetGenerationQueue {
           await call.adapter.cancel({ modelCode: call.modelCode, remoteJobId: version.remoteJobId }, call.context);
           remoteCanceled = true;
         }
-      } catch {
-        // 通知服务商取消失败不影响本地取消。
+      } catch (error) {
+        // 通知服务商取消失败不影响本地取消，但要把原因带给调用方，让用户知道平台上的任务可能仍在计费。
+        remoteCancelError = error instanceof Error ? error.message : String(error);
       }
     }
     if (versions.markCanceled(versionId, this.timestamp())) {
       this.forget(versionId);
       this.dependencies.notify({ assetId: version.assetId, versionId });
     }
-    return { remoteCanceled };
+    return remoteCancelError === undefined ? { remoteCanceled } : { remoteCanceled, remoteCancelError };
   }
 
   private async submitQueued(): Promise<void> {
     const { versions } = this.dependencies;
     let running = versions.listByStatus(['running']).length;
     for (const version of versions.listByStatus(['queued'])) {
-      if (running >= this.maxConcurrent) {
+      if (running >= this.maxConcurrent || this.stopped) {
         return;
       }
       const retry = this.submitRetries.get(version.id);
@@ -248,7 +283,9 @@ export class AssetGenerationQueue {
       if (state.status !== 'succeeded') this.transientFailures.delete(version.id);
       switch (state.status) {
         case 'succeeded':
-          if (state.result !== null) {
+          if (state.result === null) {
+            this.fail(version, { category: 'server', code: null, message: '平台报告任务已完成，但没有返回结果文件，请重新生成。' });
+          } else {
             await this.saveResult(version, asset, state.result);
           }
           return;

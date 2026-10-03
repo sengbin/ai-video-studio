@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：sidebar-html.ts
-// 说明：侧栏页面的 HTML 标记生成，按菜单配置渲染分区与菜单行。
+// 说明：侧栏页面的 HTML 标记生成，按菜单配置渲染分区与菜单行，可在菜单上方显示提示。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-09-30
@@ -19,6 +19,8 @@ export interface SidebarHtmlOptions {
   /** 脚本文件的 Webview 地址，按顺序执行。 */
   readonly scriptUris: readonly string[];
   readonly sections: readonly SidebarMenuSection[];
+  /** 显示在菜单上方的提示（如数据库无法打开的原因）；缺省不显示。 */
+  readonly notice?: string;
 }
 
 /**
@@ -28,7 +30,8 @@ export interface SidebarHtmlOptions {
  */
 export function createSidebarHtml(options: SidebarHtmlOptions): string {
   const nonce = createNonce();
-  const sectionsHtml = options.sections.map(renderSection).join('\n');
+  const noticeHtml = options.notice === undefined ? [] : [renderNotice(options.notice)];
+  const sectionsHtml = [...noticeHtml, ...options.sections.map(renderSection)].join('\n');
   const styleTags = options.styleUris.map((uri) => `  <link rel="stylesheet" href="${escapeHtml(uri)}">`).join('\n');
   const scriptTags = options.scriptUris
     .map((uri) => `  <script nonce="${nonce}" src="${escapeHtml(uri)}"></script>`)
@@ -48,6 +51,15 @@ ${sectionsHtml}
 ${scriptTags}
 </body>
 </html>`;
+}
+
+/** 渲染提示卡片；用 alert 角色让读屏软件立即读出。 */
+function renderNotice(notice: string): string {
+  return `    <section class="card">
+      <div class="card-inner card-flat">
+        <p class="notice" role="alert">${escapeHtml(notice)}</p>
+      </div>
+    </section>`;
 }
 
 /** 渲染一个分区卡片及其菜单行。 */

@@ -129,7 +129,7 @@ test('文本模型请求：默认模型与 Copilot 开关即时保存，选用�
   });
   providers.syncCatalog();
   const router = new MessageRouter();
-  registerSettingsHandlers(router, { text: new TextSettingsService(store, { listFamilies: async () => ({ families: [] }) }, providers, NO_WORK_MODELS), providers });
+  registerSettingsHandlers(router, { text: new TextSettingsService(store, { listFamilies: async () => ({ families: ['gpt-4o'] }) }, providers, NO_WORK_MODELS), providers });
   const send = async (name: string, payload?: unknown) => {
     const response = await router.handle({ type: 'request', requestId: 1, name, payload });
     assert.ok(response !== undefined);
@@ -141,7 +141,7 @@ test('文本模型请求：默认模型与 Copilot 开关即时保存，选用�
     return (loaded.data as { text: { choices: Array<{ key: string }> } }).text.choices.map((choice) => choice.key);
   };
 
-  assert.deepEqual(await loadChoices(), ['copilot:']);
+  assert.deepEqual(await loadChoices(), ['copilot:', 'copilot:gpt-4o']);
   const rejected = await send(SETTINGS_REQUESTS.update, { defaultModel: 'model:fake/fake-text' });
   assert.ok(!rejected.ok && rejected.error.kind === 'validation' && rejected.error.fieldErrors?.defaultModel);
 
@@ -150,7 +150,7 @@ test('文本模型请求：默认模型与 Copilot 开关即时保存，选用�
   const view = (await providers.listViews())[0];
   const model = view.models.find((item) => item.kind === 'text')!;
   assert.ok((await send(SETTINGS_REQUESTS.modelSetEnabled, { modelId: model.id, isEnabled: true })).ok);
-  assert.deepEqual(await loadChoices(), ['copilot:', 'model:fake/fake-text']);
+  assert.deepEqual(await loadChoices(), ['copilot:', 'copilot:gpt-4o', 'model:fake/fake-text']);
 
   assert.ok((await send(SETTINGS_REQUESTS.update, { defaultModel: 'model:fake/fake-text' })).ok);
   assert.ok((await send(SETTINGS_REQUESTS.update, { copilotEnabled: false })).ok);

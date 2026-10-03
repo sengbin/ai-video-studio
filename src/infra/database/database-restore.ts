@@ -7,7 +7,7 @@
 // 备注：必须在打开数据库连接之前调用（Windows 上不能替换已打开的文件），因此恢复需重新加载窗口后生效；失败时丢弃待恢复文件，避免每次启动都重复失败。
 // ------------------------------------------------------------------------
 
-import { existsSync, mkdirSync, renameSync, rmSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, renameSync, rmSync } from 'node:fs';
 import * as path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { formatBackupTimestamp } from '../../domain/rules/backup-rules';
@@ -71,7 +71,7 @@ export function applyPendingRestore(paths: DatabaseFilePaths, now: Date): string
   }
 }
 
-/** 把当前数据库备份到自动备份目录；原来没有数据库时不备份并返回 undefined。 */
+/** 把当前数据库备份到自动备份目录；原来没有数据库时不备份并返回 undefined；数据库无法经 SQLite 导出时原样复制文件。 */
 function backupCurrentDatabase(paths: DatabaseFilePaths, now: Date): string | undefined {
   if (!existsSync(paths.databasePath)) {
     return undefined;
@@ -81,12 +81,17 @@ function backupCurrentDatabase(paths: DatabaseFilePaths, now: Date): string | un
     paths.autoBackupDirectory,
     `${AUTO_BACKUP_FILE_PREFIX}${formatBackupTimestamp(now)}${BACKUP_FILE_EXTENSION}`
   );
-  // 经 SQLite 导出而不是直接复制文件：能处理上次异常退出遗留的回滚日志，得到一致的快照。
-  const current = new DatabaseSync(paths.databasePath);
+  // 优先经 SQLite 导出而不是直接复制文件：能处理上次异常退出遗留的回滚日志，得到一致的快照。
   try {
-    writeSnapshot(current, backupPath);
-  } finally {
-    current.close();
+    const current = new DatabaseSync(paths.databasePath);
+    try {
+      writeSnapshot(current, backupPath);
+    } finally {
+      current.close();
+    }
+  } catch {
+    // 数据库已损坏、SQLite 无法导出时（这正是需要从备份恢复的典型场景），改为原样复制文件，保证被替换的数据仍留有一份；复制也失败则抛出，恢复不会继续。
+    copyFileSync(paths.databasePath, backupPath);
   }
   return backupPath;
 }

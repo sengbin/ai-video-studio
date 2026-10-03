@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：text-generation-router.test.ts
-// 说明：文本生成路由的自动化测试：作品选择、全局默认、第一个可用模型的回退顺序，Copilot 与服务商文本模型的路由，没有可用模型时的错误，服务商失败转换为文本生成错误，不同作品互不影响。
+// 说明：文本生成路由的自动化测试：作品选择、全局默认、第一个可用模型的回退顺序，Copilot 没有可用模型时回退到服务商文本模型，Copilot 与服务商文本模型的路由，没有可用模型时的错误，服务商失败转换为文本生成错误，不同作品互不影响。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-03
@@ -15,17 +15,18 @@ import { ModelRecord, UsableModel } from '../../domain/models/model-provider';
 import { ProviderCallContext, ResolvedTextCall, TextModelProvider } from '../../domain/ports/provider-adapters';
 import { TextGenerationPort, TextGenerationRequest, TextModelInfo } from '../../domain/ports/text-generation-port';
 import { estimateTokens } from '../../domain/rules/token-estimate';
-import { NO_TEXT_ENGINE_MESSAGE, TextGenerationRouter } from './text-generation-router';
+import { NO_PROVIDER_FALLBACK_NOTE, NO_TEXT_ENGINE_MESSAGE, TextGenerationRouter } from './text-generation-router';
 
 const CAPABILITY: TextCapability = { contextTokens: 1000, maxOutputTokens: 200, imageInput: true };
 const REQUEST: TextGenerationRequest = { system: 's', user: 'u', tool: { name: 't', description: 'd', inputSchema: { type: 'object' } } };
 
 /** 假 Copilot 端口：记录调用与所用的家族。 */
 class FakeCopilot implements TextGenerationPort {
-  constructor(readonly family: string, private readonly calls: string[]) {}
+  constructor(readonly family: string, private readonly calls: string[], private readonly failure?: Error) {}
 
   async resolveModel(): Promise<TextModelInfo> {
     this.calls.push(`resolve:${this.family}`);
+    if (this.failure !== undefined) throw this.failure;
     return { id: `copilot/${this.family || 'auto'}`, maxInputTokens: 5000 };
   }
 
@@ -75,6 +76,8 @@ interface Options {
   models?: UsableModel[];
   workModels?: Record<number, string>;
   resolveFailure?: unknown;
+  /** 按家族返回 Copilot 解析时的失败；返回 undefined 表示该家族可用。 */
+  copilotFailure?: (family: string) => Error | undefined;
 }
 
 function createRouter(options: Options = {}) {
@@ -85,7 +88,7 @@ function createRouter(options: Options = {}) {
   const models = options.models ?? [];
   const router = new TextGenerationRouter({
     settings: { read: () => settings },
-    createCopilot: (family) => new FakeCopilot(family, calls),
+    createCopilot: (family) => new FakeCopilot(family, calls, options.copilotFailure?.(family)),
     providers: {
       listSelectableTextModels: () => models,
       resolveTextCall: async (modelId): Promise<ResolvedTextCall> => {
@@ -164,6 +167,46 @@ test('选择的模型已不可用：作品回退到全局默认，默认也不�
   // 默认选的服务商模型已停用，Copilot 可用 → Copilot 自动。
   const copilot = createRouter({ defaultModel: 'model:fake/gone', models: [usable(1, 'a')] });
   assert.deepEqual(await copilot.router.forWork(null).generate(REQUEST), { from: 'copilot:' });
+});
+
+test('Copilot 开着但没有可用模型：回退到第一个可用的服务商文本模型，不再先选 Copilot 导致失败；Copilot 有模型时仍优先 Copilot 自动', async () => {
+  const noModels = new TextGenerationError('unavailable', '没有可用的 Copilot 模型。');
+  // 默认是 Copilot 自动、没有可用模型 → 服务商模型。
+  const auto = createRouter({ defaultModel: 'copilot:', models: [usable(1, 'a'), usable(2, 'b')], copilotFailure: () => noModels });
+  const port = auto.router.forWork(null);
+  assert.deepEqual(await port.resolveModel(), { id: 'fake/a', maxInputTokens: 800 });
+  assert.deepEqual(await port.generate(REQUEST), { from: 'provider:a' });
+  assert.deepEqual(auto.calls, ['resolve:'], 'Copilot 自动只探测一次，不重复');
+
+  // 作品选的家族不存在 → 默认（服务商模型）。
+  const missingFamily = createRouter({
+    defaultModel: 'model:fake/b',
+    models: [usable(1, 'a'), usable(2, 'b')],
+    workModels: { 1: 'copilot:gone' },
+    copilotFailure: (family) => (family === 'gone' ? noModels : undefined)
+  });
+  assert.deepEqual(await missingFamily.router.forWork(1).generate(REQUEST), { from: 'provider:b' });
+
+  // 默认选的家族不存在，Copilot 自动可用 → Copilot 自动。
+  const toAuto = createRouter({ defaultModel: 'copilot:gone', models: [usable(1, 'a')], copilotFailure: (family) => (family === 'gone' ? noModels : undefined) });
+  assert.deepEqual(await toAuto.router.forWork(null).generate(REQUEST), { from: 'copilot:' });
+  assert.deepEqual(toAuto.calls, ['resolve:gone', 'resolve:', 'generate:']);
+});
+
+test('Copilot 没有可用模型且没有服务商文本模型：给出明确的不可用错误；授权、限流等其他 Copilot 错误不回退', async () => {
+  const noModels = new TextGenerationError('unavailable', '没有可用的 Copilot 模型。');
+  const none = createRouter({ copilotFailure: () => noModels });
+  const error = await rejectedWith(none.router.forWork(null).resolveModel());
+  assert.equal(error.category, 'unavailable');
+  assert.ok(error.message.startsWith('没有可用的 Copilot 模型。'));
+  assert.ok(error.message.includes(NO_PROVIDER_FALLBACK_NOTE));
+
+  for (const category of ['not_authorized', 'rate_limited', 'failed'] as const) {
+    const failing = createRouter({ models: [usable(1, 'a')], copilotFailure: () => new TextGenerationError(category, '原因') });
+    const rejected = await rejectedWith(failing.router.forWork(null).resolveModel());
+    assert.deepEqual([rejected.category, rejected.message], [category, '原因']);
+    assert.deepEqual(failing.resolved, [], '这些错误不回退到服务商模型');
+  }
 });
 
 test('每次 resolveModel 按当时的设置重新选择，没有解析过时 generate 会先选择', async () => {

@@ -4,7 +4,7 @@
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-09-30
-// 备注：进度（分段要点、图片描述、大纲）保存在阶段记录的 progress.detail 中；章节保存在章节表，重试时跳过已完成的部分。
+// 备注：进度（素材指纹、分段要点、图片描述、大纲）保存在阶段记录的 progress.detail 中；章节保存在章节表，重试时跳过已完成的部分；素材指纹（分段设置、各段长度、内容哈希）与上次不一致时丢弃全部旧进度与章节，从头开始。
 // ------------------------------------------------------------------------
 
 import { FORM_LEVEL_ERROR_KEY, ValidationError } from '../../domain/errors';
@@ -16,9 +16,11 @@ import { normalizeCreativeParams, parseChapter, parseOutline, parseSummary } fro
 import { FieldErrors, assertNoFieldErrors, readOptionalChoice, readRecord } from '../../domain/rules/field-readers';
 import { NovelSegment, NovelSplitSettings, splitNovel } from '../../domain/rules/novel-splitter';
 import { PromptTemplates } from '../../domain/ports/prompt-templates';
+import { ImageInput } from '../../domain/ports/text-generation-port';
 import { AskOptions, askModel } from './ask-model';
 import { SUBMIT_CHAPTER_TOOL, SUBMIT_SUMMARY_TOOL, createOutlineTool } from './output-tools/creative-output-tools';
 import { wrapMaterial } from './prompt-templates';
+import { SourceFingerprint, fingerprintImages, fingerprintNovel, isSameFingerprint, parseFingerprint } from './source-fingerprint';
 import { StageContext, StageWorkflow } from './stage-workflow';
 
 /** 素材来源：文字灵感、灵感图片、小说原文。 */
@@ -70,13 +72,26 @@ const SOURCE_KIND_LABELS: Readonly<Record<CreativeSourceType, string>> = {
 const NO_IDEA_TEXT = '（没有提供具体灵感，请依据题材、基调和补充要求创作。）';
 const NOT_APPLICABLE = '（无）';
 const PREVIOUS_ENDING_CHARS = 300;
+/** 恢复进度时发现素材或分段设置与上次不一致（或无法确认一致）、丢弃旧进度从头开始时给用户的提示。 */
+const RESTART_NOTICE = '素材或分段设置与上次不一致，已丢弃之前的进度从头开始';
 
 /** 保存在阶段记录 progress.detail 中的创意进度，用于中断后继续。 */
 interface CreativeProgressDetail {
-  segmentCount: number;
+  /** 生成这些进度时的素材指纹；恢复时与当前素材一致才复用。文字灵感没有外部素材，为 null。 */
+  source: SourceFingerprint | null;
   summaries: string[];
   digest: string | null;
   outline: ChapterOutlineItem[] | null;
+}
+
+/** 本次执行读取到的素材。 */
+interface LoadedSource {
+  /** 小说各段；其他来源为空。 */
+  readonly segments: readonly NovelSegment[];
+  /** 灵感图片；其他来源为空。 */
+  readonly images: readonly ImageInput[];
+  /** 素材指纹；文字灵感为 null。 */
+  readonly fingerprint: SourceFingerprint | null;
 }
 
 /** 一次执行中共用的状态与辅助函数。 */
@@ -85,6 +100,7 @@ interface Environment {
   readonly input: CreativeRunInput;
   readonly state: CreativeProgressDetail;
   readonly segments: readonly NovelSegment[];
+  readonly images: readonly ImageInput[];
   readonly savedChapters: Map<number, { title: string; content: string }>;
   report(step: string): void;
   ask<T>(template: string, variables: Record<string, string>, parse: (json: unknown) => T, options: AskOptions): Promise<T>;
@@ -93,12 +109,12 @@ interface Environment {
 /** 从阶段记录的进度中读取创意进度，缺失或格式不对时视为从头开始。 */
 function readDetail(progress: StageProgress | null): CreativeProgressDetail {
   const detail = progress?.detail;
-  const source = typeof detail === 'object' && detail !== null ? (detail as Partial<CreativeProgressDetail>) : {};
+  const source = typeof detail === 'object' && detail !== null ? (detail as Record<string, unknown>) : {};
   return {
-    segmentCount: typeof source.segmentCount === 'number' ? source.segmentCount : 0,
-    summaries: Array.isArray(source.summaries) ? source.summaries.filter((item) => typeof item === 'string') : [],
+    source: parseFingerprint(source.source),
+    summaries: Array.isArray(source.summaries) ? source.summaries.filter((item): item is string => typeof item === 'string') : [],
     digest: typeof source.digest === 'string' ? source.digest : null,
-    outline: Array.isArray(source.outline) ? source.outline : null
+    outline: Array.isArray(source.outline) ? (source.outline as ChapterOutlineItem[]) : null
   };
 }
 
@@ -152,17 +168,50 @@ export class CreativeWorkflow implements StageWorkflow {
     const { run } = context;
     // 输入快照由 normalizeInput 生成，结构可信。
     const input = run.input as unknown as CreativeRunInput;
+    const source = this.loadSource(run.workId, input.sourceType);
     const state = readDetail(run.progress);
-    const segments = input.sourceType === 'novel' ? this.loadSegments(run.workId) : [];
-    if (state.segmentCount !== 0 && state.segmentCount !== segments.length) {
-      throw new ValidationError({ [FORM_LEVEL_ERROR_KEY]: '小说分段设置已变化，无法从中断处继续，请重新生成。' });
-    }
-    state.segmentCount = segments.length;
+    const restartNotice = this.discardStaleProgress(run.id, input.sourceType, state, source.fingerprint);
+    state.source = source.fingerprint;
 
-    const environment = this.createEnvironment(context, input, state, segments);
+    const environment = this.createEnvironment(context, input, state, source, restartNotice);
     const material = await this.prepareMaterial(environment);
     const outline = await this.planOutline(environment, material);
     await this.writeChapters(environment, material, outline);
+  }
+
+  /**
+   * 恢复进度前核对素材：已保存的要点、图片描述、大纲与章节只有在素材指纹（分段设置、各段长度、内容哈希）与上次完全一致时才复用，
+   * 否则全部丢弃（含已保存的章节），从头开始。文字灵感的内容固定在输入快照中，不需要核对。
+   * @returns 发生了丢弃时返回给用户的提示，没有丢弃时为空串。
+   */
+  private discardStaleProgress(runId: number, sourceType: CreativeSourceType, state: CreativeProgressDetail, current: SourceFingerprint | null): string {
+    const { chapters } = this.dependencies;
+    const hasProgress = state.summaries.length > 0 || state.digest !== null || state.outline !== null || chapters.list(runId).length > 0;
+    if (!hasProgress || sourceType === 'text' || isSameFingerprint(state.source, current)) {
+      return '';
+    }
+    state.summaries = [];
+    state.digest = null;
+    state.outline = null;
+    chapters.clear(runId);
+    return RESTART_NOTICE;
+  }
+
+  /** 读取素材并计算指纹：小说切分为各段，图片读出内容，文字灵感没有外部素材。 */
+  private loadSource(workId: number, sourceType: CreativeSourceType): LoadedSource {
+    if (sourceType === 'novel') {
+      const settings = this.dependencies.getSplitSettings();
+      const segments = this.loadSegments(workId, settings);
+      return { segments, images: [], fingerprint: fingerprintNovel(segments, settings) };
+    }
+    if (sourceType === 'image') {
+      const images = this.dependencies.sources.readImages(workId);
+      if (images.length === 0) {
+        throw new ValidationError({ [FORM_LEVEL_ERROR_KEY]: '没有找到灵感图片，请先添加图片。' });
+      }
+      return { segments: [], images, fingerprint: fingerprintImages(images) };
+    }
+    return { segments: [], images: [], fingerprint: null };
   }
 
   /** 组装一次执行的共用状态与提问函数。 */
@@ -170,9 +219,11 @@ export class CreativeWorkflow implements StageWorkflow {
     context: StageContext,
     input: CreativeRunInput,
     state: CreativeProgressDetail,
-    segments: readonly NovelSegment[]
+    source: LoadedSource,
+    restartNotice: string
   ): Environment {
     const { prompts, chapters } = this.dependencies;
+    const { segments, images } = source;
     const savedChapters = new Map(chapters.list(context.run.id).map((chapter) => [chapter.seq, chapter]));
 
     const report = (step: string): void => {
@@ -180,7 +231,8 @@ export class CreativeWorkflow implements StageWorkflow {
       const materialDone =
         input.sourceType === 'novel' ? state.summaries.length : input.sourceType === 'image' && state.digest !== null ? 1 : 0;
       context.reportProgress({
-        step,
+        // 丢弃了旧进度时，提示跟在每一步之后，直到本次执行结束。
+        step: restartNotice === '' ? step : `${step}（${restartNotice}）`,
         total: materialSteps + 1 + (state.outline?.length ?? 0),
         done: materialDone + (state.outline === null ? 0 : 1) + savedChapters.size,
         detail: { ...state }
@@ -190,16 +242,16 @@ export class CreativeWorkflow implements StageWorkflow {
     const ask = <T>(template: string, variables: Record<string, string>, parse: (json: unknown) => T, options: AskOptions): Promise<T> =>
       askModel(context, prompts, template, variables, parse, options);
 
-    return { context, input, state, segments, savedChapters, report, ask };
+    return { context, input, state, segments, images, savedChapters, report, ask };
   }
 
   /** 读取并切分小说原文。 */
-  private loadSegments(workId: number): NovelSegment[] {
+  private loadSegments(workId: number, settings: NovelSplitSettings): NovelSegment[] {
     const text = this.dependencies.sources.readNovelText(workId);
     if (text === undefined || text.trim().length === 0) {
       throw new ValidationError({ [FORM_LEVEL_ERROR_KEY]: '没有找到小说原文，请先上传原作文件。' });
     }
-    return splitNovel(text, this.dependencies.getSplitSettings());
+    return splitNovel(text, settings);
   }
 
   /**
@@ -207,7 +259,7 @@ export class CreativeWorkflow implements StageWorkflow {
    * @returns 用于大纲的素材文字，已包裹为数据段。
    */
   private async prepareMaterial(environment: Environment): Promise<string> {
-    const { input, state, segments, context, report, ask } = environment;
+    const { input, state, segments, images, report, ask } = environment;
     const { params, sourceType } = input;
 
     if (sourceType === 'text') {
@@ -216,10 +268,6 @@ export class CreativeWorkflow implements StageWorkflow {
 
     if (sourceType === 'image') {
       if (state.digest === null) {
-        const images = this.dependencies.sources.readImages(context.run.workId);
-        if (images.length === 0) {
-          throw new ValidationError({ [FORM_LEVEL_ERROR_KEY]: '没有找到灵感图片，请先添加图片。' });
-        }
         report('分析图片');
         state.digest = await ask('creative-digest-images', { imageCount: String(images.length) }, parseSummary, {
           images,

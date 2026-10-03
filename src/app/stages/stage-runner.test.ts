@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：stage-runner.test.ts
-// 说明：阶段执行器与创意工作流的自动化测试：生成、逐章保存、校验失败不重试、失败后继续、取消、小说分段、图片素材、异常情况。
+// 说明：阶段执行器与创意工作流的自动化测试：生成、逐章保存、校验失败不重试、失败后继续、取消（含先登记再执行）、素材或分段设置变化后的重试恢复与素材指纹、小说分段、图片素材、异常情况。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-09-30
@@ -17,6 +17,7 @@ import { StageRunRepository } from '../../domain/ports/stage-run-repository';
 import { ImageInput, TextGenerationRequest, TextGenerationSource, TextModelInfo } from '../../domain/ports/text-generation-port';
 import { NovelSplitSettings } from '../../domain/rules/novel-splitter';
 import { CreativeWorkflow } from './creative-workflow';
+import { fingerprintImages, fingerprintNovel, isSameFingerprint, parseFingerprint } from './source-fingerprint';
 import { INTERRUPTED_MESSAGE, StageRunner } from './stage-runner';
 import { DEFAULT_MODEL, FILE_PROMPTS, Responder, ScriptedText, readPrompt, standardResponder } from './testing/scripted-text';
 
@@ -131,15 +132,24 @@ class MemoryChapters implements ChapterRepository {
     chapters.set(chapter.seq, chapter);
     this.store.set(runId, chapters);
   }
+  clear(runId: number): void {
+    this.store.delete(runId);
+  }
 }
 
 interface HarnessOptions {
-  readonly responder?: Responder;
+  responder?: Responder;
   readonly model?: Partial<TextModelInfo>;
-  readonly novelText?: string;
-  readonly images?: ImageInput[];
+  /** 小说原文；每次执行时重新读取，测试可以在重试前修改它。 */
+  novelText?: string;
+  /** 灵感图片；每次执行时重新读取。 */
+  images?: ImageInput[];
+  /** 小说分段设置；每次执行时重新读取，不给则用 SPLIT_SETTINGS。 */
+  splitSettings?: NovelSplitSettings;
   /** 自定义文本生成来源；不给则所有作品都用同一个假端口。 */
   readonly texts?: (text: ScriptedText) => TextGenerationSource;
+  /** 记录状态或进度变化时额外调用，晚于通知记录。 */
+  readonly onNotify?: (run: StageRun) => void;
 }
 
 /** 组装执行器与全部假依赖。 */
@@ -154,10 +164,19 @@ function createHarness(options: HarnessOptions = {}) {
     chapters,
     sources: { readNovelText: () => options.novelText, readImages: () => options.images ?? [] },
     prompts: FILE_PROMPTS,
-    getSplitSettings: () => SPLIT_SETTINGS,
+    getSplitSettings: () => options.splitSettings ?? SPLIT_SETTINGS,
     now
   });
-  const runner = new StageRunner({ runs, texts: options.texts?.(text) ?? text, workflows: [workflow], now, notify: (run) => notifications.push(run) });
+  const runner = new StageRunner({
+    runs,
+    texts: options.texts?.(text) ?? text,
+    workflows: [workflow],
+    now,
+    notify: (run) => {
+      notifications.push(run);
+      options.onNotify?.(run);
+    }
+  });
   return { runner, runs, chapters, text, notifications };
 }
 
@@ -472,4 +491,157 @@ test('文本端口按作品取得：启动与重试都向来源询问该作品�
   await harness.runner.whenIdle();
   assert.equal(harness.runs.findById(started.id)?.status, 'succeeded');
   assert.deepEqual(asked, [TARGET.workId, TARGET.workId]);
+});
+
+test('登记先于执行：执行刚开始（首次进度通知）时发出的取消就能生效，结束后不再登记', async () => {
+  let canceledAtStart: boolean | undefined;
+  const holder: { harness?: ReturnType<typeof createHarness> } = {};
+  // 图片素材的第一次进度通知发生在 execute 的同步段内，早于 start 返回。
+  const harness = createHarness({
+    images: [{ mimeType: 'image/png', data: new Uint8Array([1, 2]) }],
+    onNotify: (run) => {
+      if (canceledAtStart === undefined && run.status === 'running' && run.progress !== null) {
+        canceledAtStart = holder.harness?.runner.cancel(run.id);
+      }
+    }
+  });
+  holder.harness = harness;
+
+  const started = await harness.runner.start({ target: TARGET, input: IMAGE_INPUT });
+  await harness.runner.whenIdle();
+
+  assert.equal(canceledAtStart, true);
+  assert.equal(harness.runs.findById(started.id)?.status, 'canceled');
+  assert.equal(harness.runner.cancel(started.id), false, '已结束的记录不再登记');
+  await harness.runner.whenIdle();
+});
+
+/** 小说在第 2 章失败一次后返回；options 会被执行器按引用读取，测试可在重试前修改其中的原文与设置。 */
+async function failAtSecondChapter(options: HarnessOptions) {
+  let broken = true;
+  options.responder = (request) => (broken && request.user.includes('# 任务：撰写第 2 章') ? BROKEN_OUTPUT : standardResponder(request));
+  const harness = createHarness(options);
+  const started = await harness.runner.start({ target: TARGET, input: NOVEL_INPUT });
+  await harness.runner.whenIdle();
+  assert.equal(harness.runs.findById(started.id)?.status, 'failed');
+  assert.deepEqual(harness.chapters.list(started.id).map((chapter) => chapter.seq), [1]);
+  broken = false;
+  return { harness, runId: started.id };
+}
+
+test('重试恢复：小说内容变化（分段数不变）时丢弃旧进度与已保存章节，从头开始并提示', async () => {
+  const options: HarnessOptions = { novelText: NOVEL_TEXT };
+  const { harness, runId } = await failAtSecondChapter(options);
+  assert.equal(countRequests(harness.text.requests, '# 任务：提取原文要点'), 3);
+
+  options.novelText = NOVEL_TEXT.replace('乙'.repeat(600), '丁'.repeat(600));
+  await harness.runner.resume(runId);
+  assert.match(harness.runs.findById(runId)?.progress?.step ?? '', /素材或分段设置与上次不一致/);
+  await harness.runner.whenIdle();
+
+  const finished = harness.runs.findById(runId)!;
+  assert.equal(finished.status, 'succeeded');
+  assert.equal(countRequests(harness.text.requests, '# 任务：提取原文要点'), 6, '要点全部重新提取');
+  assert.equal(countRequests(harness.text.requests, '# 任务：规划章节大纲'), 2, '大纲重新规划');
+  assert.equal(countRequests(harness.text.requests, '# 任务：撰写第 1 章'), 2, '已保存的第 1 章被丢弃后重新生成');
+  assert.deepEqual(harness.chapters.list(runId).map((chapter) => chapter.seq), [1, 2, 3]);
+  assert.match(finished.progress?.step ?? '', /从头开始/, '提示保留到本次执行结束');
+});
+
+test('重试恢复：只改分段设置（分段结果恰好相同）也不复用旧进度', async () => {
+  const options: HarnessOptions = { novelText: NOVEL_TEXT };
+  const { harness, runId } = await failAtSecondChapter(options);
+
+  options.splitSettings = { mode: 'chapter', maxSegmentChars: 1200 };
+  await harness.runner.resume(runId);
+  await harness.runner.whenIdle();
+
+  assert.equal(harness.runs.findById(runId)?.status, 'succeeded');
+  assert.equal(countRequests(harness.text.requests, '# 任务：提取原文要点'), 6);
+  const source = (harness.runs.findById(runId)?.progress?.detail as { source: { split: unknown } }).source;
+  assert.deepEqual(source.split, { mode: 'chapter', maxSegmentChars: 1200 }, '新进度记录的是当前设置');
+});
+
+test('重试恢复：素材与设置完全一致时复用旧进度，不提示；进度里记录了分段设置、各段长度与内容哈希', async () => {
+  const options: HarnessOptions = { novelText: NOVEL_TEXT };
+  const { harness, runId } = await failAtSecondChapter(options);
+  const source = (harness.runs.findById(runId)?.progress?.detail as { source: { split: unknown; lengths: number[]; contentHash: string } }).source;
+  assert.deepEqual(source.split, SPLIT_SETTINGS);
+  assert.equal(source.lengths.length, 3);
+  assert.match(source.contentHash, /^[0-9a-f]{64}$/);
+
+  await harness.runner.resume(runId);
+  await harness.runner.whenIdle();
+
+  const finished = harness.runs.findById(runId)!;
+  assert.equal(finished.status, 'succeeded');
+  assert.equal(countRequests(harness.text.requests, '# 任务：提取原文要点'), 3);
+  assert.equal(countRequests(harness.text.requests, '# 任务：撰写第 1 章'), 1);
+  assert.ok(!(finished.progress?.step ?? '').includes('从头开始'));
+});
+
+test('重试恢复：旧进度没有素材指纹时无法确认一致，同样从头开始', async () => {
+  const options: HarnessOptions = { novelText: NOVEL_TEXT };
+  const { harness, runId } = await failAtSecondChapter(options);
+  const failed = harness.runs.findById(runId)!;
+  const { source: _removed, ...legacyDetail } = failed.progress?.detail as Record<string, unknown>;
+  harness.runs.updateProgress(runId, { ...failed.progress!, detail: legacyDetail });
+
+  await harness.runner.resume(runId);
+  await harness.runner.whenIdle();
+
+  assert.equal(harness.runs.findById(runId)?.status, 'succeeded');
+  assert.equal(countRequests(harness.text.requests, '# 任务：提取原文要点'), 6);
+});
+
+/** 图片素材在大纲阶段失败一次后返回；options 按引用读取，测试可在重试前修改其中的图片。 */
+async function failAtOutlineWithImages(options: HarnessOptions) {
+  let broken = true;
+  options.responder = (request) => (broken && request.user.includes('# 任务：规划章节大纲') ? {} : standardResponder(request));
+  const harness = createHarness(options);
+  const started = await harness.runner.start({ target: TARGET, input: IMAGE_INPUT });
+  await harness.runner.whenIdle();
+  assert.equal(harness.runs.findById(started.id)?.status, 'failed');
+  assert.equal(countRequests(harness.text.requests, '# 任务：分析灵感图片'), 1);
+  broken = false;
+  return { harness, runId: started.id };
+}
+
+test('重试恢复：灵感图片没有变化时复用图片描述；图片变化后丢弃旧描述，从头开始', async () => {
+  const unchanged = await failAtOutlineWithImages({ images: [{ mimeType: 'image/png', data: new Uint8Array([1, 2]) }] });
+  await unchanged.harness.runner.resume(unchanged.runId);
+  await unchanged.harness.runner.whenIdle();
+  assert.equal(unchanged.harness.runs.findById(unchanged.runId)?.status, 'succeeded');
+  assert.equal(countRequests(unchanged.harness.text.requests, '# 任务：分析灵感图片'), 1);
+
+  const options: HarnessOptions = { images: [{ mimeType: 'image/png', data: new Uint8Array([1, 2]) }] };
+  const changed = await failAtOutlineWithImages(options);
+  options.images = [{ mimeType: 'image/png', data: new Uint8Array([1, 2, 3]) }];
+  await changed.harness.runner.resume(changed.runId);
+  await changed.harness.runner.whenIdle();
+  const run = changed.harness.runs.findById(changed.runId)!;
+  assert.equal(run.status, 'succeeded');
+  assert.equal(countRequests(changed.harness.text.requests, '# 任务：分析灵感图片'), 2, '图片描述重新生成');
+  assert.match(run.progress?.step ?? '', /从头开始/);
+});
+
+test('素材指纹：内容、段边界、分段设置、图片任一变化都会改变指纹，格式不对的指纹读出为空', async () => {
+  const settings: NovelSplitSettings = { mode: 'chapter', maxSegmentChars: 1000 };
+  const base = fingerprintNovel([{ index: 1, title: null, text: 'ab' }, { index: 2, title: null, text: 'c' }], settings);
+  assert.ok(isSameFingerprint(base, fingerprintNovel([{ index: 1, title: null, text: 'ab' }, { index: 2, title: null, text: 'c' }], settings)));
+  assert.ok(!isSameFingerprint(base, fingerprintNovel([{ index: 1, title: null, text: 'a' }, { index: 2, title: null, text: 'bc' }], settings)), '段边界移动');
+  assert.ok(!isSameFingerprint(base, fingerprintNovel([{ index: 1, title: null, text: 'ab' }, { index: 2, title: null, text: 'd' }], settings)), '内容变化');
+  assert.ok(!isSameFingerprint(base, fingerprintNovel([{ index: 1, title: null, text: 'ab' }, { index: 2, title: null, text: 'c' }], { ...settings, mode: 'length' })), '分段方式');
+  assert.ok(!isSameFingerprint(base, fingerprintNovel([{ index: 1, title: null, text: 'ab' }, { index: 2, title: null, text: 'c' }], { ...settings, maxSegmentChars: 2000 })), '每段上限');
+  assert.ok(!isSameFingerprint(base, null) && !isSameFingerprint(null, null));
+
+  const image = fingerprintImages([{ mimeType: 'image/png', data: new Uint8Array([1, 2]) }]);
+  assert.ok(!isSameFingerprint(image, fingerprintImages([{ mimeType: 'image/png', data: new Uint8Array([1, 3]) }])));
+  assert.ok(!isSameFingerprint(image, base), '图片与小说的指纹不同');
+
+  // 经过 JSON 往返（写入数据库再读出）后依然一致。
+  assert.ok(isSameFingerprint(base, parseFingerprint(JSON.parse(JSON.stringify(base)))));
+  for (const broken of [undefined, null, 'x', {}, { contentHash: 'h', lengths: ['1'], split: null }, { contentHash: 'h', lengths: [], split: { mode: 'x', maxSegmentChars: 1 } }]) {
+    assert.equal(parseFingerprint(broken), null);
+  }
 });

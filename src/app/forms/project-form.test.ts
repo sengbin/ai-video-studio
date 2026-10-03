@@ -90,13 +90,13 @@ test('编辑表单：初始值来自项目，未设置的选项为空串', () =>
   }
 });
 
-test('编辑表单：旧版本保存的小写分辨率对应到大写选项', () => {
+test('编辑表单：已保存的默认画幅与分辨率原样带入初始值', () => {
   const { database, service } = createService();
   try {
-    const project = service.createProject({ name: '灯塔计划', defaultResolution: '480P' });
-    database.prepare('UPDATE projects SET default_resolution = ? WHERE id = ?').run('480p', project.id);
-    const form = createEditProjectForm(service, service.getProject(project.id));
+    const project = service.createProject({ name: '灯塔计划', defaultAspectRatio: '9:16', defaultResolution: '480P' });
+    const form = createEditProjectForm(service, project);
 
+    assert.equal(form.initialValues.defaultAspectRatio, '9:16');
     assert.equal(form.initialValues.defaultResolution, '480P');
   } finally {
     database.close();

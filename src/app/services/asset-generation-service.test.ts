@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：asset-generation-service.test.ts
-// 说明：资产生成服务的自动化测试：生成对话框的目录与默认值、提交校验、修订号推算“需更新”“有改动未生成”、缩略图补存、采用与删除版本。
+// 说明：资产生成服务的自动化测试：生成对话框的目录与默认值、提交校验、修订号推算“需更新”“有改动未生成”、缩略图补存、采用与删除版本、采用标记的一致性、逐条可用模型、采用前的使用提示。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
@@ -11,6 +11,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { NotFoundError, ValidationError } from '../../domain/errors';
 import { AssetRecord } from '../../domain/models/asset';
+import { seedAssetUsage } from '../../infra/database/testing/seed-asset-usage';
 import { IMAGE_URL, PNG_BYTES, WAV_BYTES, createAssetGenerationFixture, createAssetWithPrompts } from './testing/asset-generation-fixture';
 
 type Fixture = Awaited<ReturnType<typeof createAssetGenerationFixture>>;
@@ -222,7 +223,10 @@ test('缩略图补存与采用：缩略图未就绪不能采用；可勾选部�
     const manual = fixture.assets.updateAsset(asset.id, { name: '林夏', appearance: '短发', promptZh: '短发的年轻女子', promptEn: 'a young woman with short hair', referenceAspectRatio: '16:9', files: JSON.stringify([{ name: 'other.png', mimeType: 'image/png', size: PNG_BYTES.length, data: PNG_BYTES.toString('base64'), width: 1, height: 1 }]) });
     assert.equal(manual.adoptedVersionId, null);
     assert.equal((await fixture.generation.listVersions(asset.id)).hasManualFiles, true);
-  } finally {
+    // 采用关系的两处记录同时清除：库里旧版本文件的已采用标记，以及界面视图里的已采用。
+    assert.equal(fixture.versions.listFiles(versionId).some((file) => file.isAdopted), false);
+    assert.deepEqual(fixture.generation.getVersion(versionId).files.map((file) => file.isAdopted), [false, false]);
+    assert.equal((await fixture.generation.listVersions(asset.id)).versions[0].isAdopted, false);  } finally {
     fixture.database.close();
   }
 });
@@ -284,6 +288,66 @@ test('只有成功的版本可以采用', async () => {
     const { versionId } = await fixture.generation.submit({ assetId: asset.id, modelId: await modelIdOf(fixture, asset), promptLanguage: 'zh' });
     assert.throws(() => fixture.generation.adopt({ versionId }), /只有生成成功的版本可以采用/);
     assert.throws(() => fixture.generation.adopt({}), ValidationError);
+  } finally {
+    fixture.database.close();
+  }
+});
+
+test('旧数据里遗留的已采用标记：资产没有采用任何版本时，版本视图不显示已采用', async () => {
+  const fixture = await createAssetGenerationFixture();
+  try {
+    const asset = createCharacter(fixture);
+    const versionId = await generate(fixture, asset);
+    // 模拟旧版本遗留：文件上有已采用标记，但资产的采用版本为空。
+    fixture.database.prepare('UPDATE asset_version_files SET is_adopted = 1 WHERE version_id = ?').run(versionId);
+    assert.equal(fixture.assets.getAsset(asset.id).adoptedVersionId, null);
+    assert.deepEqual(fixture.generation.getVersion(versionId).files.map((file) => file.isAdopted), [false]);
+    assert.equal(fixture.generation.getVersion(versionId).version.isAdopted, false);
+  } finally {
+    fixture.database.close();
+  }
+});
+
+test('逐条判断可用模型：音频资产按各自的音频类型，图像资产按图像模型', async () => {
+  const fixture = await createAssetGenerationFixture();
+  try {
+    const voice = createAssetWithPrompts(fixture.assets, 'audio', { name: '声音', audioKind: '音色参考', promptZh: '声音' });
+    const sfx = createAssetWithPrompts(fixture.assets, 'audio', { name: '雨声', audioKind: '音效', promptZh: '雨声' });
+    const music = createAssetWithPrompts(fixture.assets, 'audio', { name: '配乐', audioKind: '背景音乐', promptZh: '紧张' });
+    const audioCheck = await fixture.generation.createUsableModelCheck('audio');
+    assert.deepEqual([voice, sfx, music].map((asset) => audioCheck(asset)), [true, true, false], '假音频模型不支持背景音乐');
+    // 与生成对话框的判断一致。
+    assert.equal((await fixture.generation.getCatalog(music.id)).models.length, 0);
+
+    const imageCheck = await fixture.generation.createUsableModelCheck('character');
+    assert.equal(imageCheck(createCharacter(fixture)), true);
+  } finally {
+    fixture.database.close();
+  }
+
+  const noKey = await createAssetGenerationFixture({ withApiKey: false });
+  try {
+    const voice = createAssetWithPrompts(noKey.assets, 'audio', { name: '声音', audioKind: '音色参考', promptZh: '声音' });
+    assert.equal((await noKey.generation.createUsableModelCheck('audio'))(voice), false);
+  } finally {
+    noKey.database.close();
+  }
+});
+
+test('采用前的使用提示：镜头声音直接指定该音频的集也计入，与绑定所在的集去重', async () => {
+  const fixture = await createAssetGenerationFixture();
+  try {
+    const voice = createAssetWithPrompts(fixture.assets, 'audio', { name: '声音', audioKind: '音色参考', promptZh: '清亮的女声' });
+    const versionId = await generate(fixture, voice);
+    assert.equal(fixture.generation.getVersion(versionId).usedByEpisodes, 0);
+
+    const seed = seedAssetUsage(fixture.database, fixture.project.id);
+    seed.addSounds(voice.id, 0, 2);
+    assert.equal(fixture.generation.getVersion(versionId).usedByEpisodes, 1, '只有镜头声音引用也算被使用');
+    seed.bindEntity(voice.id, 0, 0, 'voice');
+    assert.equal(fixture.generation.getVersion(versionId).usedByEpisodes, 1, '同一集的绑定与声音只算一集');
+    seed.bindEntity(voice.id, 1, 0, 'voice');
+    assert.equal(fixture.generation.getVersion(versionId).usedByEpisodes, 2);
   } finally {
     fixture.database.close();
   }

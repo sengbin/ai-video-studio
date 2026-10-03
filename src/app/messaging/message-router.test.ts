@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：message-router.test.ts
-// 说明：请求路由与错误映射的自动化测试。
+// 说明：请求路由与错误映射的自动化测试，含不合法请求信封的协议错误响应。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-09-30
@@ -38,12 +38,34 @@ test('支持异步处理函数', async () => {
   assert.ok(response?.ok && response.data === 42);
 });
 
-test('不是合法请求的消息被忽略', async () => {
+test('不是合法请求且没有可识别 requestId 的消息被忽略', async () => {
   const router = new MessageRouter();
   assert.equal(await router.handle(null), undefined);
   assert.equal(await router.handle('text'), undefined);
   assert.equal(await router.handle({ type: 'event', name: 'x' }), undefined);
   assert.equal(await router.handle({ type: 'request', name: 'x' }), undefined);
+  assert.equal(await router.handle({ type: 'request', requestId: '7', name: 'x' }), undefined, 'requestId 不是数字时无法识别');
+});
+
+test('不是合法请求信封但带有可识别 requestId：返回带该编号的协议错误响应，不调用处理函数', async () => {
+  let called = false;
+  const router = new MessageRouter().register('x', () => {
+    called = true;
+  });
+
+  const missingName = await router.handle({ type: 'request', requestId: 3 });
+  assert.deepEqual(expectError(missingName).kind, 'unsupported');
+  assert.equal(missingName?.requestId, 3);
+  assert.match(expectError(missingName).message, /请求格式无效/);
+
+  const wrongType = await router.handle({ type: 'event', requestId: 4, name: 'x' });
+  assert.equal(wrongType?.requestId, 4);
+  assert.equal(expectError(wrongType).kind, 'unsupported');
+
+  const badName = await router.handle({ type: 'request', requestId: 5, name: 42 });
+  assert.equal(badName?.requestId, 5);
+  assert.equal(expectError(badName).kind, 'unsupported');
+  assert.equal(called, false);
 });
 
 test('未注册的请求返回 unsupported', async () => {

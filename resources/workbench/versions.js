@@ -4,7 +4,7 @@
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
-// 备注：不发请求，数据和操作由 workbench.js 注入；必须先于 workbench.js 加载；对外是 window.aiVersions 的 open、refresh；视频本身用系统播放器打开对比观看，页面内不播放。
+// 备注：数据和操作由 workbench.js 注入的 host 提供，其中 loadVersions 在打开时与这一组的任务变化后读取该组全部历史成功版本（不受工作台列表只显示最近若干条任务的限制）；必须先于 workbench.js 加载；对外是 window.aiVersions 的 open、refresh；视频本身用系统播放器打开对比观看，页面内不播放。
 // ------------------------------------------------------------------------
 
 'use strict';
@@ -17,15 +17,15 @@
   /** 当前打开的版本页；没有打开时为 null。 */
   let dialog = null;
 
-  /** 镜头组里有结果视频的任务，最新的在前。 */
-  function versionsOf(group) {
-    return group ? group.jobs.filter((job) => job.result) : [];
-  }
-
   /** 宿主页面当前的这个镜头组；已不存在（如重新分组）时为 undefined。 */
   function currentGroup() {
     const { view } = dialog.host.getState();
     return view ? view.groups.find((group) => group.id === dialog.groupId) : undefined;
+  }
+
+  /** 宿主页面里这一组的变化摘要：序号、过期提示与任务状态变化时需要重新读取全部版本。 */
+  function groupKey(group) {
+    return JSON.stringify(group ? [group.seq, group.staleNote, group.jobs.map((job) => [job.id, job.status, job.result ? job.result.isSelected : null])] : null);
   }
 
   /** 在提示区显示文字；空串表示清除。 */
@@ -84,7 +84,7 @@
 
   /** 对比当前勾选的两个版本，较早的放左边。 */
   function compareSelected() {
-    const versions = versionsOf(currentGroup()).filter((job) => dialog.selected.has(job.id));
+    const versions = dialog.jobs.filter((job) => dialog.selected.has(job.id));
     if (versions.length !== COMPARE_COUNT) return;
     const [newer, older] = versions;
     const toSide = (job) => ({ title: `第 ${job.attempt} 次${job.result.isSelected ? '（已采用）' : ''}`, fields: dialog.host.describeFields(job) });
@@ -148,29 +148,52 @@
     ];
   }
 
-  /** 重新绘制版本列表；镜头组或版本已不存在时关闭页面。 */
+  /** 重新绘制版本列表；镜头组已不存在、或读取到的版本为空时关闭页面。 */
   function renderBody() {
     const group = currentGroup();
-    const versions = versionsOf(group);
-    if (!group || versions.length === 0) {
+    if (!group || (dialog.status === 'ready' && dialog.jobs.length === 0)) {
       dialog.page.close('api');
       return;
     }
-    dialog.selected = new Set([...dialog.selected].filter((id) => versions.some((job) => job.id === id)));
     dialog.bodyElement.textContent = '';
+    if (dialog.status !== 'ready') {
+      dialog.bodyElement.append(aiUi.h('p', { class: 'description', text: dialog.status === 'loading' ? '正在读取这一组的全部版本…' : '没能读取这一组的全部版本，原因见上方提示；关闭后重新打开可再试。' }));
+      updateCompareButton();
+      return;
+    }
+    const versions = dialog.jobs;
+    dialog.selected = new Set([...dialog.selected].filter((id) => versions.some((job) => job.id === id)));
     if (group.staleNote) dialog.bodyElement.append(aiUi.h('p', { class: 'status-warning', text: group.staleNote }));
     dialog.bodyElement.append(aiUi.table({ columns: buildColumns(), rows: versions, ariaLabel: `第 ${group.seq} 组的结果版本` }).element);
     updateCompareButton();
+  }
+
+  /** 向宿主读取这一组全部历史成功版本并重绘；较早发出的读取结果会被后一次读取取代，页面关闭后的结果直接丢弃。 */
+  async function load() {
+    const current = dialog;
+    const token = ++current.loadToken;
+    const outcome = await current.host.loadVersions(current.groupId);
+    if (dialog !== current || token !== current.loadToken) return;
+    if (!outcome.ok) {
+      current.status = 'failed';
+      showMessage(outcome.message, true);
+    } else {
+      if (current.status === 'failed') showMessage('', false);
+      current.jobs = outcome.jobs;
+      current.status = 'ready';
+    }
+    renderBody();
   }
 
   /**
    * 打开镜头组的版本页；已打开时不重复打开。
    * @param {number} groupId 镜头组标识。
    * @param {{ getState: () => { view: object|null },
+   *   loadVersions: (groupId: number) => Promise<{ ok: true, jobs: object[] } | { ok: false, message: string }>,
    *   select: (result: object, groupId: number) => Promise<{ ok: boolean, cancelled?: boolean, message?: string }>,
    *   describeParams: (job: object) => string, describeResult: (result: object) => string,
    *   describeFields: (job: object) => Array<{ label: string, value: string, long?: boolean }>,
-   *   openResult: (result: object) => Promise<void>, exportResult: (result: object) => Promise<void>, revealResult: (result: object) => Promise<void> }} host 宿主页面提供的数据与操作。
+   *   openResult: (result: object) => Promise<void>, exportResult: (result: object) => Promise<void>, revealResult: (result: object) => Promise<void> }} host 宿主页面提供的数据与操作：loadVersions 返回这一组全部成功的任务（最新的在前），不受工作台列表只显示最近若干条任务的限制。
    */
   function open(groupId, host) {
     if (dialog) return;
@@ -179,8 +202,9 @@
     const compareButton = aiUi.button({ text: '', compact: true, disabled: true, onClick: compareSelected });
     const hint = aiUi.h('p', { class: 'description', text: COMPARE_HINT });
     const content = aiUi.h('div', { class: 'wb-versions' }, aiUi.h('div', { class: 'wb-versions__bar' }, compareButton.element, hint), messageElement, bodyElement);
-    dialog = { host, groupId, selected: new Set(), messageElement, bodyElement, compareButton, page: null, key: '' };
+    dialog = { host, groupId, selected: new Set(), jobs: [], status: 'loading', loadToken: 0, messageElement, bodyElement, compareButton, page: null, key: '' };
     const group = currentGroup();
+    dialog.key = groupKey(group);
     dialog.page = aiUi.openPage({
       title: `第 ${group ? group.seq : ''} 组的结果版本`,
       content,
@@ -194,16 +218,16 @@
       dialog = null;
     });
     renderBody();
+    void load();
   }
 
-  /** 页面数据变化后刷新版本页；这一组的任务没有变化时不重绘，避免打断勾选。 */
+  /** 页面数据变化后刷新版本页；这一组的任务没有变化时不重新读取，避免打断勾选。 */
   function refresh() {
     if (!dialog) return;
-    const group = currentGroup();
-    const key = JSON.stringify(group ? [group.seq, group.staleNote, versionsOf(group).map((job) => [job.id, job.result.isSelected])] : null);
+    const key = groupKey(currentGroup());
     if (key === dialog.key) return;
     dialog.key = key;
-    renderBody();
+    void load();
   }
 
   window.aiVersions = { open, refresh };

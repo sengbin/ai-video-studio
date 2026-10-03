@@ -7,7 +7,7 @@
 // 备注：规则见 docs/database-design.md 4.9；修改表单或提示词只改修订号，不创建空版本；纯函数，不依赖数据库。
 // ------------------------------------------------------------------------
 
-import { AssetContent, AssetFileRecord, AssetGenerationSummary, AssetKind, AssetRecord, NewAssetFile } from '../models/asset';
+import { AssetContent, AssetFileRecord, AssetGenerationSummary, AssetKind, AssetRecord, AssetUsageSummary, NewAssetFile } from '../models/asset';
 import { ModelKind } from '../models/model-capability';
 
 /** 保存资产时要写入的修订信息。 */
@@ -88,6 +88,17 @@ export function computePromptRevision(
   };
 }
 
+/**
+ * 统计资产被多少集使用：集内实体绑定所在的集，加上镜头声音直接指定该音频的集，同一集只算一次；采用版本前据此提示。
+ * @param usage 资产的使用情况。
+ */
+export function countUsedEpisodes(usage: Pick<AssetUsageSummary, 'bindings' | 'soundEpisodes'>): number {
+  const episodes = new Set<string>();
+  for (const item of [...usage.bindings, ...usage.soundEpisodes]) {
+    episodes.add(`${item.workName}#${item.episodeSeq}`);
+  }
+  return episodes.size;
+}
 /** 是否有提示词。 */
 export function hasPrompt(asset: Pick<AssetRecord, 'promptZh' | 'promptEn'>): boolean {
   return asset.promptZh !== '' || asset.promptEn !== '';

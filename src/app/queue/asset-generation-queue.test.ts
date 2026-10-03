@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：asset-generation-queue.test.ts
-// 说明：资产生成队列的自动化测试：图片与音频的提交、轮询与结果保存，失败原因记录，提交重试，暂时性失败的容忍，取消与重试，重启恢复。
+// 说明：资产生成队列的自动化测试：图片与音频的提交、轮询与结果保存，失败原因记录，提交重试，暂时性失败的容忍，取消与重试（含通知服务商取消失败时返回原因），平台成功但没有结果时记为失败，定时处理的停止（等待进行中的一轮），重启恢复。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
@@ -11,7 +11,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { ProviderError } from '../../domain/errors';
 import { AssetRecord } from '../../domain/models/asset';
-import { ImageGenerationRequest } from '../../domain/ports/provider-adapters';
+import { ImageGenerationRequest, RemoteJobRef } from '../../domain/ports/provider-adapters';
 import { IMAGE_URL, PNG_BYTES, createAssetGenerationFixture, createAssetWithPrompts } from '../services/testing/asset-generation-fixture';
 
 type Fixture = Awaited<ReturnType<typeof createAssetGenerationFixture>>;
@@ -222,6 +222,77 @@ test('取消：生成中的版本记为已取消，之后的轮询不会覆盖�
     await fixture.queue.pump();
     await fixture.queue.pump();
     assert.deepEqual([fixture.versions.findVersion(versionId)?.status, fixture.versions.findVersion(versionId)?.attempt], ['succeeded', 2]);
+  } finally {
+    fixture.database.close();
+  }
+});
+
+test('取消：通知服务商取消失败时本地取消仍然成功，失败原因随结果返回', async () => {
+  const fixture = await createAssetGenerationFixture();
+  try {
+    const provider = fixture.image as typeof fixture.image & { cancel?: (ref: RemoteJobRef) => Promise<void> };
+    provider.cancel = async () => {
+      throw new Error('平台返回 500');
+    };
+    const asset = createCharacter(fixture);
+    const versionId = await submitVersion(fixture, asset);
+    await fixture.queue.pump();
+    assert.deepEqual(await fixture.queue.cancel(versionId), { remoteCanceled: false, remoteCancelError: '平台返回 500' });
+    assert.equal(fixture.versions.findVersion(versionId)?.status, 'canceled');
+  } finally {
+    fixture.database.close();
+  }
+});
+
+test('平台报告成功但没有结果：记为失败并说明原因，不保持生成中', async () => {
+  const fixture = await createAssetGenerationFixture();
+  try {
+    const asset = createCharacter(fixture);
+    const versionId = await submitVersion(fixture, asset);
+    await fixture.queue.pump();
+    fixture.image.queryStates.push({ status: 'succeeded', result: null, errorCategory: null, errorCode: null, errorMessage: null });
+    await fixture.queue.pump();
+    const failed = fixture.versions.findVersion(versionId);
+    assert.deepEqual([failed?.status, failed?.errorCategory], ['failed', 'server']);
+    assert.match(failed?.errorMessage ?? '', /没有返回结果文件/);
+    assert.equal(fixture.changes.at(-1)?.versionId, versionId);
+  } finally {
+    fixture.database.close();
+  }
+});
+
+test('定时处理：start 立即处理一轮；停止函数等进行中的一轮处理完，之后定时器与手动 pump 都不再处理', async () => {
+  const fixture = await createAssetGenerationFixture();
+  try {
+    let release = (): void => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const submit = fixture.image.submit.bind(fixture.image);
+    fixture.image.submit = async (request) => {
+      await gate;
+      return submit(request);
+    };
+    const firstId = await submitVersion(fixture, createCharacter(fixture));
+    const stop = fixture.queue.start(20);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(fixture.versions.findVersion(firstId)?.status, 'queued', '这一轮停在提交中');
+
+    let stopped = false;
+    const stopping = stop().then(() => {
+      stopped = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal(stopped, false, '进行中的一轮没结束时，停止函数一直等待');
+    release();
+    await stopping;
+    assert.equal(fixture.versions.findVersion(firstId)?.status, 'running', '进行中的一轮处理完才返回');
+
+    const secondId = await submitVersion(fixture, createVoiceAsImage(fixture));
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    await fixture.queue.pump();
+    assert.equal(fixture.versions.findVersion(secondId)?.status, 'queued', '停止后不再开始新的一轮');
+    await stop();
   } finally {
     fixture.database.close();
   }

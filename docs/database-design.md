@@ -161,8 +161,8 @@ erDiagram
 | `revision` | 整数 | 是 | 1 | 修订号，产出内容每被编辑保存一次加 1，用于判断下游是否过期 |
 | `source_run_id` | 整数 | 否 | | 依赖的上游阶段记录，外键 `stage_runs.id`，删除时置空；创意阶段为空 |
 | `source_revision` | 整数 | 否 | | 生成时上游记录的修订号 |
-| `model_info` | 文本 | 否 | | 使用的 Copilot 模型标识（家族与版本） |
-| `progress_json` | 文本（JSON） | 否 | | 进度：当前步骤、总步数、已完成数、创意大纲等，供页面显示与中断后继续 |
+| `model_info` | 文本 | 否 | | 使用的文本模型标识：Copilot 为 `提供方/模型家族`（如 `copilot/家族名`），服务商文本模型为 `服务商代码/模型代码` |
+| `progress_json` | 文本（JSON） | 否 | | 进度：当前步骤、总步数、已完成数和 `detail`，供页面显示与中断后继续；创意阶段的 `detail` 为 `{ source, summaries, digest, outline }`：`source` 是素材指纹 `{ split, lengths, contentHash }`（`split` 为小说的分段设置 `{ mode, maxSegmentChars }`，图片为 `null`；`lengths` 为各段字符数或各张图片字节数；`contentHash` 为素材内容的 SHA-256），文字灵感没有外部素材，`source` 为 `null`；`summaries` 为小说各段要点，`digest` 为图片的画面描述，`outline` 为章节大纲。恢复前指纹与当前素材完全一致才复用，否则丢弃旧进度和已写入的章节，从头开始 |
 | `raw_output` | 文本 | 否 | | 最近一次模型原始输出，仅在失败时保留，便于排查 |
 | `error_message` | 文本 | 否 | | 失败或取消原因 |
 | `created_at` | 文本 | 是 | | |
@@ -273,7 +273,7 @@ erDiagram
 | `first_frame_mode` | 文本 | 是 | `none` | `none`、`prev_tail`、`asset` |
 | `first_frame_asset_file_id` | 整数 | 否 | | 已弃用，从未写入，改用下面的 `first_frame_asset_id`（资产文件在资产编辑、采用生成版本时会整体删除重写，文件标识不稳定；SQLite 不能删除带外键的列，所以保留不用） |
 | `first_frame_asset_id` | 整数 | 否 | | `asset` 模式下指定的资产，外键 `assets.id`，删除资产时置空（迁移 015 新增）；提交时取该资产的第一张参考图作首帧 |
-| `group_id` | 整数 | 否 | | 所属镜头组，外键 `shot_groups.id`，组被删除时置空；空表示尚未分组（新增镜头、旧数据），读取时自动补全 |
+| `group_id` | 整数 | 否 | | 所属镜头组，外键 `shot_groups.id`，组被删除时置空；空表示尚未分组（旧数据），工作台读取这一集时自动补全 |
 | `prompt_zh` | 文本 | 是 | 空串 | 中文视频提示词 |
 | `prompt_en` | 文本 | 是 | 空串 | 英文视频提示词 |
 | `created_at` | 文本 | 是 | | |
@@ -301,7 +301,7 @@ erDiagram
 
 - `(storyboard_script_id, seq)` 唯一；组的成员由 `shots.group_id` 表示，组内镜头序号连续。
 - **单组最长时长**：生成分镜脚本时设定（默认 15 秒，2 至 120 的整数，保存在阶段记录 `input_json.params.groupMaxSeconds`），应不超过目标视频模型单次最长时长（15、20、30 秒…）。单个镜头时长不能超过它。
-- **自动分组**：生成成功后、新增或删除镜头后、读取时发现有未分组镜头时，保留已有的组，把未分组的镜头按顺序补在最后：先并入最后一组（放得下时），否则新开一组；空组自动删除。打包按顺序装满一组再开下一组；超限时若是在同一场次中间断开，且退回到场次变化处后前面的部分不少于上限的一半、退回的部分加上新镜头仍放得下，就退回。
+- **自动分组**：生成成功后、新增或删除镜头后同步分组（写入路径）；分镜脚本的读取不补分组，工作台读取一集时若发现有未分组镜头（旧数据）才补全。每次都保留已有的组，把未分组的镜头按顺序补在最后：先并入最后一组（放得下时），否则新开一组；空组自动删除。打包按顺序装满一组再开下一组；超限时若是在同一场次中间断开，且退回到场次变化处后前面的部分不少于上限的一半、退回的部分加上新镜头仍放得下，就退回。
 - **手动调整**（生成工作台）：“重新分组”（可指定新的每组最长时长，丢弃全部旧组和它们的生成记录）、“从某镜头前拆开”、“并入上一组”。拆分和合并只允许在没有任何生成记录的组上进行；重新分组在有进行中的任务时被拒绝。
 - 重新生成分镜脚本会产生新的阶段记录与分镜脚本，旧版本的组和记录随旧版本保留。
 
@@ -405,7 +405,7 @@ erDiagram
 
 列表查询只读取缩略图，不读取参考图的 `content`。
 
-实现约定：图片资产的每张参考图对应一条 `role = thumbnail` 的缩略图记录（`sort_order` 与参考图一致，由页面用 canvas 生成 256px 的 JPEG，随表单提交）；列表取 `sort_order` 最小的一条。资产编辑时文件整体替换（先删后写），采用资产版本时同样整体替换（见 4.8）；表单里手动改动了文件时，`assets.adopted_version_id` 置空。音频资产没有缩略图，`duration_seconds` 由页面解码读取。
+实现约定：图片资产的每张参考图对应一条 `role = thumbnail` 的缩略图记录（`sort_order` 与参考图一致，由页面用 canvas 生成 256px 的 JPEG，随表单提交）；列表取 `sort_order` 最小的一条。资产编辑时文件整体替换（先删后写），采用资产版本时同样整体替换（见 4.8）；表单里手动改动了文件时，`assets.adopted_version_id` 置空，同一事务内该资产各版本文件的 `is_adopted` 也清零。被角色绑定为音色参考（`entity_bindings.purpose = voice`）的音频资产不能清空文件（校验错误挂在文件字段：“该音频已被 N 个角色用作音色参考，请先解除绑定或替换文件。”）。音频资产没有缩略图，`duration_seconds` 由页面解码读取。
 
 #### `entity_bindings` 实体与资产绑定
 
@@ -564,6 +564,16 @@ erDiagram
 
 **参数合并规则**：对每个参数，依次取镜头组、集、作品的值，取第一个非空值；画幅和分辨率最后回退到项目默认值。种子为空表示随机（不传），声音内容为空表示模型支持的全部；`duration_seconds` 只取镜头组的值。提交时按每组自己合并后的参数校验：种子要求模型能力声明支持；指定的生成时长不得小于组内镜头总时长，并须落在模型能力的时长范围内（`min`、`max`、`step` 或 `options`）；模型不支持的声音内容在提交预览中列出并忽略。单镜头时长仍以 `shots.duration_seconds` 为准（在分镜脚本阶段编辑），“单镜头时长范围”目前保存在分镜脚本阶段记录的输入快照中，本表的 `min_shot_seconds`、`max_shot_seconds` 暂未写入。
 
+#### `work_text_models` 作品文本模型
+
+保存作品单独选择的文本模型，迁移 018 新增。没有记录表示沿用全局默认文本模型（`aigcVideoStudio.text.defaultModel`），选择规则见 [ARCHITECTURE.md](ARCHITECTURE.md) 6.5。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `work_id` | 整数 | 是 | 主键，外键 `works.id`，级联删除 |
+| `model_key` | 文本 | 是 | 文本模型键：`copilot:<家族>`（家族为空表示自动）或 `model:<服务商代码>/<模型代码>`；不能为空串（CHECK） |
+| `updated_at` | 文本 | 是 | |
+
 ### 4.7 生成任务与结果
 
 #### `video_jobs` 镜头组生成任务
@@ -587,6 +597,8 @@ erDiagram
 | `created_at` | 文本 | 是 | | |
 | `submitted_at` | 文本 | 否 | | 实际提交给模型的时间 |
 | `finished_at` | 文本 | 否 | | |
+
+约束：同一 `group_id` 下最多一条进行中（`status` 为 `waiting`、`queued`、`running`）的任务，由部分唯一索引 `video_jobs_active_group_unique_idx` 保证（迁移 019）；提交时的检查与插入即使并发也不会产生第二个。升级时若同一镜头组已有多个进行中的任务，只保留 `id` 最大（最新）的一个，其余记为 `failed`（`error_category = invalid_request`，`error_code = DuplicateActiveJob`）。
 
 `request_snapshot_json` 的键（JSON 内使用 camelCase；当前实现，上一组尾帧作首帧不进快照而是记录在任务的 `prev_job_id`、`first_frame_id`）：
 
@@ -644,7 +656,7 @@ erDiagram
 
 资产的“提示词”和“图片/音频”是两步，流程见 [ARCHITECTURE.md](ARCHITECTURE.md) 6.7：
 
-- **提示词**由 Copilot 在后台生成，状态与结果保存在 `assets` 上（`prompt_status`、`prompt_zh`、`prompt_en`），不做版本管理，用户可随时手动修改。
+- **提示词**由文本模型（Copilot 或千问文本模型）在后台生成，状态与结果保存在 `assets` 上（`prompt_status`、`prompt_zh`、`prompt_en`），不做版本管理，用户可随时手动修改。
 - **图片或音频**由图像、音频模型生成，**每次提交产生一个版本**（`asset_versions`），所有历史版本都保存，用户从中采用最终版本；采用的版本才写入 `asset_files`，被绑定和视频生成使用。
 
 迁移 `009-asset-generation`（步骤 11）创建下面两张表，并给 `assets` 增加 4.4 中标注“迁移 009 新增”的字段。
@@ -695,7 +707,7 @@ erDiagram
 | `size_bytes` | 整数 | 是 | | |
 | `content` | 二进制 | 是 | | 内容 |
 | `sort_order` | 整数 | 是 | 0 | 同一版本内的顺序；缩略图与对应结果的 `sort_order` 一致 |
-| `is_adopted` | 整数 | 是 | 0 | 该结果文件是否已被采用到 `asset_files` |
+| `is_adopted` | 整数 | 是 | 0 | 该结果文件是否已被采用到 `asset_files`；界面上是否“已采用”以 `assets.adopted_version_id` 为准（只有被采用的版本里标记过的文件才算已采用） |
 | `created_at` | 文本 | 是 | | |
 
 缩略图与资产文件一样由页面用 canvas 生成（宿主不引入图像库）：版本弹出层显示某个版本时，发现缺少缩略图就生成并回传保存；列表只读缩略图。
@@ -712,7 +724,7 @@ erDiagram
 - **提示词的依据**：`prompt_content_revision` 记录当前提示词依据的 `content_revision`。后台生成成功时取“生成开始时”的 `content_revision`；用户保存表单时修改了提示词，视为已确认，取保存后的 `content_revision`；只改了表单字段而没改提示词，不更新它。
 - **提示词需更新**：有提示词，且 `prompt_content_revision < content_revision`。
 - **图片/音频有改动未生成**：资产至少有一个版本，且最新的版本（不含已取消）满足 `content_revision < assets.content_revision` 或 `prompt_revision < assets.prompt_revision`。生成进行中修改表单或提示词，该版本完成时自然显示为有改动未生成。
-- **采用版本与手动文件**：采用版本时写入 `adopted_version_id`；表单提交的文件与现有文件（名称、大小、内容）不一致时，视为手动修改，`adopted_version_id` 置空。
+- **采用版本与手动文件**：采用版本时写入 `adopted_version_id`；表单提交的文件与现有文件（名称、大小、内容）不一致时，视为手动修改，`adopted_version_id` 置空，并在同一事务内把该资产各版本文件的 `is_adopted` 清零。
 
 ## 5. 索引
 
@@ -741,6 +753,7 @@ erDiagram
 | `video_jobs` | `(group_id, created_at DESC)` | 镜头组的提交历史 |
 | `video_jobs` | `(status)` | 队列扫描、启动恢复 |
 | `video_jobs` | `(prev_job_id)` | 释放后续镜头 |
+| `video_jobs` | 部分唯一 `video_jobs_active_group_unique_idx`：`(group_id) WHERE status IN ('waiting', 'queued', 'running')` | 同一镜头组同时只能有一个进行中的任务（迁移 019） |
 | `video_results` | 部分唯一 `(group_id) WHERE is_selected = 1` | 每个镜头组一个采用版本 |
 | `shot_groups` | `(storyboard_script_id, seq)` 唯一 | 组顺序 |
 | `shots` | `(group_id)` | 按组查询镜头 |
@@ -767,7 +780,8 @@ erDiagram
 1. **单个短视频也有 1 集。** 创建 `kind = single` 的作品时，同时创建第 1 集。
 2. **重新生成剧本时保护下游数据。**
    - 生成时只写 `screenplays`（正文与 `structure_json`），**不修改** `episodes`、`script_entities`；用户确认采用时才按下面的规则合并，并记录 `applied_at`。已合并过的记录再次确认时不重复合并。
-   - 集按序号合并：已有序号的集更新标题、梗概、正文和目标时长，抽取结果里新增的序号创建新集，不删除已有集；单个短视频的抽取结果只有 1 集，标题取生成时的作品名称。
+   - 集按序号合并：已有序号的集更新标题、梗概、正文和目标时长，抽取结果里新增的序号创建新集；单个短视频的抽取结果只有 1 集，标题取生成时的作品名称。
+   - 新版本里已不存在的旧集：该集没有下游数据（分镜脚本等阶段记录 `stage_runs.episode_id`、资产绑定 `entity_bindings`、集的生成参数 `generation_profiles`）时，在合并中删除；有下游数据时拒绝确认，同一事务回滚，错误列出集序号，须先在新版本中保留这些集。确认前界面分别列出“不再属于剧本、将被移除”和“不能移除、确认会被拒绝”的集。
    - 合并之后，用户对集和实体的编辑直接保存在 `episodes`、`script_entities`（同时该版本回到待确认），再次确认不重复合并；合并之前的编辑保存在 `screenplays.structure_json`。
    - 实体按 `(kind, name)` 合并，保留已有绑定；不再出现的实体置 `is_active = 0`。
    - 若已有集存在分镜脚本或生成结果，须先向用户确认。
@@ -786,7 +800,7 @@ erDiagram
    - 产出内容（章节、剧本包正文、集、实体、镜头、声音条目）每次编辑保存，对应阶段记录的 `revision` 加 1；已确认的记录同时回到 `pending` 且 `is_current = 0`。这些编辑统一经服务层保存。
    - 下游过期：下游记录的 `source_revision` 与上游记录现在的 `revision` 不同，或上游记录不再是已确认，则该下游记录显示“上游已变更”；不自动修改或删除下游数据。
    - 下游阶段只能选择已确认（`is_current = 1`）的上游记录作为输入。
-10. **资产提示词不建阶段记录、不做版本管理。** Copilot 在后台生成中英文提示词，状态与结果直接保存在 `assets`（`prompt_status`、`prompt_zh`、`prompt_en`），用户可随时修改；重新生成直接覆盖。提示词的历史不保留，版本只保存当时使用的提示词快照（见 4.8）。
+10. **资产提示词不建阶段记录、不做版本管理。** 文本模型在后台生成中英文提示词，状态与结果直接保存在 `assets`（`prompt_status`、`prompt_zh`、`prompt_en`），用户可随时修改；重新生成直接覆盖。提示词的历史不保留，版本只保存当时使用的提示词快照（见 4.8）。
 11. **资产修订号与“有改动未生成”。** 见 4.8：改表单内容、改提示词只修改修订号，不创建空版本；版本号只在真正提交生成时加 1。
 12. **采用资产版本。** 只有成功的版本可以采用，采用时把所选的结果文件（默认全部，最多 10 张）复制为 `asset_files`（整体替换原有的参考文件和缩略图），并记录 `adopted_version_id`。绑定和视频生成只读 `asset_files`，因此未采用的版本不影响任何下游；已提交的视频任务有请求快照，采用新版本不改变它们。
 13. **音频资产的文件可以暂时为空。** 音频资产可先创建、再生成或上传文件；没有文件的音频资产不能绑定为音色参考。
@@ -813,10 +827,13 @@ erDiagram
 | 14 | `014-audio-mode-cleanup` | 重建 `generation_profiles`，`audio_mode` 的 CHECK 收窄为 `none`、`native`，数据原样保留 | 已实现 |
 | 15 | `015-shot-first-frame-asset` | `shots` 增加可空的 `first_frame_asset_id`（外键 `assets.id`，删除资产时置空），用于“指定图片作首帧” | 已实现 |
 | 16 | `016-prompt-params` | `generation_profiles` 增加 `negative_list`（负向清单）与 `prompt_extend`（提示词改写，0 或 1）；只加列，已有记录不变 | 已实现 |
+| 17 | `017-text-models` | 重建 `models`，`kind` 的 CHECK 增加 `text`（文本模型，用于千问AI平台的文本生成模型）；全部行原样搬迁，标识不变（使用 `rebuildsReferencedTables`，结束后检查外键完整性并确认外键已重新开启） | 已实现 |
+| 18 | `018-work-text-models` | 新增 `work_text_models`（作品单独选择的文本模型键，随作品级联删除）；只加表，已有数据不变 | 已实现 |
+| 19 | `019-active-job-unique` | 给 `video_jobs` 新增部分唯一索引 `video_jobs_active_group_unique_idx`（`(group_id) WHERE status IN ('waiting', 'queued', 'running')`），表结构不变；升级时同一镜头组有多个进行中的任务，只保留 `id` 最大的一个，其余记为 `failed`（`error_category = invalid_request`，`error_code = DuplicateActiveJob`） | 已实现 |
 
 拆分说明：镜头引用资产文件，因此资产在分镜之前建立；前五个迁移创建了 22 张表，迁移 8 再增加镜头组表，各功能的仓库随功能实现逐步补全。
 
-已发布的脚本不再修改；结构变更一律新增下一个编号的脚本。测试阶段不考虑已有数据，需要重建表（例如修改 CHECK 约束）时，新增的迁移可以直接丢弃该表及其下游表的数据，不做数据搬迁；首次发布版本（0.0.1）之后不再允许，迁移 001 至 013 视为已发布（迁移 014 起重建表必须保留数据，见 014）。升级前先复制数据库文件作为备份。
+已发布的脚本不再修改；结构变更一律新增下一个编号的脚本。测试阶段不考虑已有数据，需要重建表（例如修改 CHECK 约束）时，新增的迁移可以直接丢弃该表及其下游表的数据，不做数据搬迁；首次发布版本（0.0.1）之后不再允许，迁移 001 至 013 视为已发布（迁移 014 起重建表必须保留数据，见 014）。升级前若库里已有数据，先用 `VACUUM INTO` 备份为 `<数据库文件>.backup-v<版本>`；重建被其他表引用的表时，迁移执行器在事务外关闭外键、执行后检查 `PRAGMA foreign_key_check`，并在结束后读取 `PRAGMA foreign_keys` 确认外键已重新开启，未开启则拒绝继续使用该连接。
 
 ## 9. 与架构文档的差异说明
 
@@ -830,4 +847,4 @@ erDiagram
 - 新增创意阶段相关表 `work_sources`、`chapters`，以及项目级默认值。
 - 生成任务只入库提交后的状态；草稿、就绪是校验阶段的界面状态。
 - 声音从单个模式字段拓展为结构化内容：新增 `shot_sounds`（对白、旁白、音效、配乐），镜头表不再保存对白和声音说明文本；资产新增音频类型；绑定新增用途（形象、音色）。
-- 阶段记录增加人工确认状态、修订号和上游依赖；剧本包增加结构快照，确认后才合并到集和实体；模型增加类型（图像、音频、视频），能力描述按类型区分；资产生成采用“版本”模型（`asset_versions`、`asset_version_files`），原预留的 `asset_jobs`、`asset_candidates` 合并为这两张表。
+- 阶段记录增加人工确认状态、修订号和上游依赖；剧本包增加结构快照，确认后才合并到集和实体；模型增加类型（文本、图像、音频、视频），能力描述按类型区分；资产生成采用“版本”模型（`asset_versions`、`asset_version_files`），原预留的 `asset_jobs`、`asset_candidates` 合并为这两张表。

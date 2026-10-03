@@ -4,7 +4,7 @@
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-03
-// 备注：请求名称与 src/app/pages/workbench-handlers.ts 一致；依赖 shared/page-format.js（pageFormat.decodeBase64）；必须先于 workbench.js 加载；对外是 window.aiPlayer.open；视频以 blob 地址播放（页面的内容安全策略允许 media-src blob:），关闭时释放；宿主对读取的视频大小有上限，超过时显示原因，仍可用“打开视频”交给系统播放器。
+// 备注：请求名称与 src/app/pages/workbench-handlers.ts 一致；依赖 shared/page-format.js（pageFormat.decodeBase64）；必须先于 workbench.js 加载；对外是 window.aiPlayer.open；视频以 blob 地址播放（页面的内容安全策略允许 media-src blob:），关闭时释放，关闭后才返回的读取结果直接丢弃；宿主对读取的视频大小有上限，超过时显示原因，仍可用“打开视频”交给系统播放器。
 // ------------------------------------------------------------------------
 
 'use strict';
@@ -43,6 +43,8 @@
     const note = aiUi.h('p', { class: 'description', hidden: true });
     const content = aiUi.h('div', { class: 'wb-player' }, status, video, note);
     let videoUrl = '';
+    /** 弹出页是否已关闭：关闭后异步读取才返回时不再更新已移除的内容，也不再创建 blob 地址。 */
+    let disposed = false;
     const page = aiUi.openPage({
       title: options.title,
       content,
@@ -53,6 +55,7 @@
       buttons: [{ id: 'close', text: '关闭', isCancel: true }]
     });
     void page.closed.then(() => {
+      disposed = true;
       video.pause();
       video.removeAttribute('src');
       video.load();
@@ -60,6 +63,7 @@
     });
 
     video.addEventListener('error', () => {
+      if (disposed) return;
       status.textContent = '视频无法解码播放，可以用“打开视频”交给系统播放器。';
       status.className = 'status-error';
       status.hidden = false;
@@ -68,6 +72,7 @@
     void (async () => {
       try {
         const source = await window.hostBridge.request(REQUEST_VIDEO, { resultId: options.resultId });
+        if (disposed) return;
         const bytes = window.pageFormat.decodeBase64(source.data);
         note.textContent = hasAudioTrack(bytes)
           ? '这个视频带声音，可用播放控件调节音量或静音。'
@@ -78,6 +83,7 @@
         video.hidden = false;
         note.hidden = false;
       } catch (error) {
+        if (disposed) return;
         status.textContent = errorText(error);
         status.className = 'status-error';
       }

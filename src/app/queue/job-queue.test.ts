@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：job-queue.test.ts
-// 说明：视频生成队列的自动化测试：提交与轮询、成功保存结果、失败原因记录、并发上限、提交重试、取消、暂时性失败的容忍、重启恢复。
+// 说明：视频生成队列的自动化测试：提交与轮询、成功保存结果、失败原因记录、并发上限、提交重试、取消（含通知服务商取消失败时返回原因）、暂时性失败的容忍、重启恢复、平台成功但没有结果或镜头组已不存在时记为失败、定时处理的停止（等待进行中的一轮）。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
@@ -41,9 +41,15 @@ class ScriptedVideoProvider extends FakeVideoProvider {
   readonly canceled: RemoteJobRef[] = [];
   /** 下一次查询要抛出的错误。 */
   queryError: Error | null = null;
-  supportsCancel = false;
+  /** 下一次取消要抛出的错误。 */
+  cancelError: Error | null = null;
+  /** 设置后，提交要等它完成才返回，用来让一轮处理停在“提交中”。 */
+  submitGate: Promise<void> | null = null;
+  /** 不支持取消的服务商没有 cancel 方法；调用 enableCancel() 后才有。 */
+  cancel?: (ref: RemoteJobRef, context: ProviderCallContext) => Promise<void>;
 
   override async submit(request: VideoGenerationRequest): Promise<RemoteJobRef> {
+    if (this.submitGate !== null) await this.submitGate;
     const error = this.submitErrors.shift();
     if (error !== undefined) throw error;
     return super.submit(request);
@@ -54,10 +60,12 @@ class ScriptedVideoProvider extends FakeVideoProvider {
     return super.query();
   }
 
-  cancel(ref: RemoteJobRef, _context: ProviderCallContext): Promise<void> {
-    if (!this.supportsCancel) return Promise.reject(new Error('不支持'));
-    this.canceled.push(ref);
-    return Promise.resolve();
+  /** 让这个服务商支持取消。 */
+  enableCancel(): void {
+    this.cancel = async (ref) => {
+      if (this.cancelError !== null) throw this.cancelError;
+      this.canceled.push(ref);
+    };
   }
 }
 
@@ -263,7 +271,7 @@ test('取消：排队中的任务直接取消；生成中的任务按服务商�
     assert.deepEqual(await queue.cancel(running.id), { remoteCanceled: false }, '服务商不支持取消，只停止本地跟踪');
     assert.equal(jobs.findJob(running.id)?.status, 'canceled');
 
-    provider.supportsCancel = true;
+    provider.enableCancel();
     const third = enqueue(2);
     await queue.pump();
     assert.deepEqual(await queue.cancel(third.id), { remoteCanceled: true });
@@ -273,6 +281,59 @@ test('取消：排队中的任务直接取消；生成中的任务按服务商�
     await assert.rejects(queue.cancel(999), /不存在或已经结束/);
     await queue.pump();
     assert.equal(jobs.findJob(running.id)?.status, 'canceled', '已取消的任务不会被后续轮询改写');
+  } finally {
+    database.close();
+  }
+});
+
+test('取消：通知服务商取消失败时本地取消仍然成功，失败原因随结果返回', async () => {
+  const { database, jobs, provider, callBehavior, queue, enqueue } = createFixture();
+  try {
+    provider.enableCancel();
+    provider.cancelError = new Error('平台返回 500');
+    const [first, second] = [enqueue(0), enqueue(1)];
+    await queue.pump();
+    assert.deepEqual(await queue.cancel(first.id), { remoteCanceled: false, remoteCancelError: '平台返回 500' });
+    assert.equal(jobs.findJob(first.id)?.status, 'canceled');
+    assert.deepEqual(provider.canceled, []);
+
+    callBehavior.error = new ProviderError('auth', '没有配置访问密钥。');
+    assert.deepEqual(await queue.cancel(second.id), { remoteCanceled: false, remoteCancelError: '没有配置访问密钥。' }, '解析模型凭据失败同样带回原因');
+    assert.equal(jobs.findJob(second.id)?.status, 'canceled');
+  } finally {
+    database.close();
+  }
+});
+
+test('平台报告成功但没有结果：记为失败并说明原因，不保持生成中', async () => {
+  const { database, jobs, provider, changes, queue, enqueue } = createFixture();
+  try {
+    const job = enqueue();
+    await queue.pump();
+    provider.queryStates.push({ status: 'succeeded', result: null, errorCategory: null, errorCode: null, errorMessage: null });
+    await queue.pump();
+    const failed = jobs.findJob(job.id);
+    assert.equal(failed?.status, 'failed');
+    assert.equal(failed?.failure?.category, 'server');
+    assert.match(failed?.failure?.message ?? '', /没有返回结果视频/);
+    assert.deepEqual(changes[changes.length - 1], { jobId: job.id, groupId: job.groupId });
+  } finally {
+    database.close();
+  }
+});
+
+test('保存结果时镜头组已不存在：记为失败并通知，不保持生成中', async () => {
+  const { database, jobs, saved, changes, queue, enqueue } = createFixture();
+  try {
+    const job = enqueue();
+    await queue.pump();
+    jobs.getGroupLocation = () => undefined;
+    await queue.pump();
+    const failed = jobs.findJob(job.id);
+    assert.equal(failed?.status, 'failed');
+    assert.match(failed?.failure?.message ?? '', /镜头组已不存在/);
+    assert.deepEqual(saved, [], '没有下载结果');
+    assert.deepEqual(changes[changes.length - 1], { jobId: job.id, groupId: job.groupId });
   } finally {
     database.close();
   }
@@ -375,6 +436,38 @@ test('同时调用 pump：正在处理时只登记再来一轮，不重复提交
     enqueue();
     await Promise.all([queue.pump(), queue.pump(), queue.pump()]);
     assert.equal(provider.submitted.length, 1);
+  } finally {
+    database.close();
+  }
+});
+
+test('定时处理：start 立即处理一轮；停止函数等进行中的一轮处理完，之后定时器与手动 pump 都不再处理', async () => {
+  const { database, jobs, provider, queue, enqueue } = createFixture();
+  try {
+    let release = (): void => undefined;
+    provider.submitGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const first = enqueue(0);
+    const stop = queue.start(20);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(jobs.findJob(first.id)?.status, 'queued', '这一轮停在提交中');
+
+    let stopped = false;
+    const stopping = stop().then(() => {
+      stopped = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal(stopped, false, '进行中的一轮没结束时，停止函数一直等待');
+    release();
+    await stopping;
+    assert.equal(jobs.findJob(first.id)?.status, 'running', '进行中的一轮处理完才返回');
+
+    const later = enqueue(1);
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    await queue.pump();
+    assert.equal(jobs.findJob(later.id)?.status, 'queued', '停止后不再开始新的一轮');
+    await stop();
   } finally {
     database.close();
   }

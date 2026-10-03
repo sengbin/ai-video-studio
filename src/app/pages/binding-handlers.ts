@@ -22,11 +22,6 @@ export const BINDING_REQUESTS = {
   voiceAudio: 'bindings.voiceAudio'
 } as const;
 
-/** 宿主推送的事件名称：绑定变化后要求页面刷新。 */
-export const BINDING_EVENTS = {
-  changed: 'bindings.changed'
-} as const;
-
 /**
  * 在路由器上注册实体绑定的请求处理函数。
  * @param router 页面的请求路由器。

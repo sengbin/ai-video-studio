@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：sqlite-generation-repository.test.ts
-// 说明：生成任务仓库的自动化测试：新增与尝试次数、状态变更只作用于进行中的任务、成功写结果并自动采用、采用其他结果、失败原因往返、素材读取、镜头组删除的连带清除、迁移 8 的升级。
+// 说明：生成任务仓库的自动化测试：新增与尝试次数、状态变更只作用于进行中的任务、成功写结果并自动采用、采用其他结果、失败原因往返、素材读取、镜头组删除的连带清除、迁移 8、19 的升级（同一镜头组只能有一个进行中的任务）。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
@@ -9,9 +9,10 @@
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { ConflictError } from '../../domain/errors';
 import { JobSnapshot } from '../../domain/models/generation';
 import { IN_MEMORY_DATABASE_PATH, openDatabase } from './database-connection';
-import { readSchemaVersion } from './migration-runner';
+import { readSchemaVersion, runMigrations } from './migration-runner';
 import { MIGRATIONS } from './migrations';
 import { SqliteGenerationRepository } from './sqlite-generation-repository';
 import { seedGeneration } from './testing/seed-generation';
@@ -46,7 +47,8 @@ test('新增任务：快照往返，同一镜头组的提交次数递增，不�
   try {
     const first = insert();
     assert.deepEqual([first.status, first.attempt, first.remoteJobId, first.failure, first.submittedAt, first.snapshot], ['queued', 1, null, null, null, SNAPSHOT]);
-    assert.equal(insert().attempt, 2);
+    repository.markFailed(first.id, { category: 'server', code: null, message: 'x' }, T2);
+    assert.equal(insert().attempt, 2, '上一个任务结束后才能再提交');
     assert.equal(insert(seed.groupIds[1]).attempt, 1);
     assert.deepEqual(repository.listJobsByGroups([seed.groupIds[0]]).map((job) => job.attempt), [2, 1], '最新的在前');
     assert.deepEqual(repository.listJobsByGroups([]), []);
@@ -87,9 +89,11 @@ test('状态流转：排队 → 生成中 → 成功；已结束的任务不能�
 test('同一镜头组的第二个成功结果不抢占已采用的版本', () => {
   const { database, repository, insert } = createFixture();
   try {
-    const [a, b] = [insert(), insert()];
-    for (const job of [a, b]) repository.markSubmitted(job.id, `r${job.id}`, T2);
+    const a = insert();
+    repository.markSubmitted(a.id, `r${a.id}`, T2);
     const first = repository.markSucceeded(a.id, RESULT, T2);
+    const b = insert();
+    repository.markSubmitted(b.id, `r${b.id}`, T2);
     const second = repository.markSucceeded(b.id, { ...RESULT, filePath: 'videos/1/1/1/1-2.mp4' }, T2);
     assert.deepEqual([first?.isSelected, second?.isSelected], [true, false]);
   } finally {
@@ -100,11 +104,13 @@ test('同一镜头组的第二个成功结果不抢占已采用的版本', () =>
 test('采用结果：同一镜头组只保留一个采用的版本，不影响其他组；结果不存在返回 false', () => {
   const { database, seed, repository, insert } = createFixture();
   try {
-    const [a, b, other] = [insert(), insert(), insert(seed.groupIds[1])];
-    for (const job of [a, b, other]) repository.markSubmitted(job.id, `r${job.id}`, T2);
-    const first = repository.markSucceeded(a.id, RESULT, T2);
-    const second = repository.markSucceeded(b.id, { ...RESULT, filePath: 'videos/1/1/1/1-2.mp4' }, T2);
-    const unrelated = repository.markSucceeded(other.id, { ...RESULT, filePath: 'videos/1/1/1/2-3.mp4' }, T2);
+    const finish = (job: { id: number }, filePath: string) => {
+      repository.markSubmitted(job.id, `r${job.id}`, T2);
+      return repository.markSucceeded(job.id, { ...RESULT, filePath }, T2);
+    };
+    const first = finish(insert(), RESULT.filePath);
+    const second = finish(insert(), 'videos/1/1/1/1-2.mp4');
+    const unrelated = finish(insert(seed.groupIds[1]), 'videos/1/1/1/2-3.mp4');
     assert.ok(first && second && unrelated);
 
     assert.equal(repository.selectResult(second.id), true);
@@ -239,6 +245,7 @@ test('等待前序：写入时带前序和首帧；释放时记下首帧并转�
     assert.deepEqual([released?.status, released?.firstFrameId], ['queued', frameId]);
     assert.equal(repository.releaseWaitingJob(waiting.id, frameId), false);
 
+    repository.markCanceled(waiting.id, T2);
     const ready = repository.insertJob({ groupId: seed.groupIds[1], modelId: seed.modelId, status: 'queued', snapshot: SNAPSHOT, prevJobId: previous.id, firstFrameId: frameId }, T1);
     assert.equal(ready.firstFrameId, frameId);
   } finally {
@@ -267,6 +274,120 @@ test('从版本 7 升级到 8：任务表改为挂在镜头组上，错误分类
       () => database.prepare("INSERT INTO video_jobs (group_id, model_id, status, request_snapshot_json, error_category, created_at) VALUES (?, ?, 'queued', '{}', 'server', 't')").run(seed.groupIds[0], seed.modelId),
       '只有失败的任务才能有错误分类'
     );
+  } finally {
+    database.close();
+  }
+});
+
+test('同一镜头组同时只能有一个进行中的任务：等待、排队、生成中都算进行中，冲突抛出可读的 ConflictError；结束后可再提交，其他组不受影响', () => {
+  const { database, seed, repository, insert } = createFixture();
+  try {
+    const waiting = repository.insertJob({ groupId: seed.groupIds[0], modelId: seed.modelId, status: 'waiting', snapshot: SNAPSHOT, prevJobId: null, firstFrameId: null }, T1);
+    for (const status of ['queued', 'running'] as const) {
+      database.prepare('UPDATE video_jobs SET status = ? WHERE id = ?').run(status, waiting.id);
+      assert.throws(
+        () => insert(),
+        (error: unknown) => error instanceof ConflictError && error.message === '这一组正在生成，完成或取消后才能再次提交。'
+      );
+    }
+    assert.equal(repository.listJobsByGroups([seed.groupIds[0]]).length, 1, '冲突时没有写入任务');
+    assert.equal(insert(seed.groupIds[1]).attempt, 1, '其他镜头组不受影响');
+
+    repository.markCanceled(waiting.id, T2);
+    assert.equal(insert().attempt, 2, '上一个任务结束后可以再提交');
+  } finally {
+    database.close();
+  }
+});
+
+test('同一镜头组的唯一索引兜底：绕过检查直接写入第二个进行中的任务时，索引冲突同样转为 ConflictError', () => {
+  const { database, seed, repository, insert } = createFixture();
+  try {
+    insert();
+    repository.hasActiveJob = () => false;
+    assert.throws(
+      () => insert(),
+      (error: unknown) => error instanceof ConflictError && /正在生成/.test(error.message)
+    );
+    assert.throws(
+      () => database.prepare("INSERT INTO video_jobs (group_id, model_id, status, request_snapshot_json, created_at) VALUES (?, ?, 'waiting', '{}', 't')").run(seed.groupIds[0], seed.modelId),
+      /UNIQUE constraint failed/
+    );
+    assert.equal(repository.listJobsByGroups([seed.groupIds[0]]).length, 1);
+  } finally {
+    database.close();
+  }
+});
+
+test('从版本 18 升级到 19：同一镜头组已有多个进行中的任务时保留最新的一个，其余记为失败并写明原因，数据不丢失', () => {
+  const database = openDatabase(IN_MEMORY_DATABASE_PATH, MIGRATIONS.slice(0, 18));
+  try {
+    assert.equal(readSchemaVersion(database), 18);
+    const seed = seedGeneration(database, 3);
+    const [groupA, groupB, groupC] = seed.groupIds;
+    const insertJob = (groupId: number, status: string, remoteJobId: string | null = null) =>
+      Number(
+        database
+          .prepare("INSERT INTO video_jobs (group_id, model_id, status, request_snapshot_json, remote_job_id, created_at) VALUES (?, ?, ?, '{}', ?, 't')")
+          .run(groupId, seed.modelId, status, remoteJobId).lastInsertRowid
+      );
+    const succeeded = insertJob(groupA, 'succeeded');
+    database
+      .prepare("INSERT INTO video_results (job_id, group_id, file_path, size_bytes, is_selected, created_at) VALUES (?, ?, 'videos/a.mp4', 10, 1, 't')")
+      .run(succeeded, groupA);
+    const oldRunning = insertJob(groupA, 'running', 'remote-old');
+    const oldQueued = insertJob(groupA, 'queued');
+    const newest = insertJob(groupA, 'waiting');
+    const single = insertJob(groupB, 'queued');
+    const earlierFailed = insertJob(groupC, 'canceled');
+    const jobCount = (database.prepare('SELECT COUNT(*) AS total FROM video_jobs').get() as unknown as { total: number }).total;
+
+    runMigrations(database, MIGRATIONS);
+    assert.equal(readSchemaVersion(database), MIGRATIONS.length);
+
+    const rows = new Map(
+      (database.prepare('SELECT id, status, error_category, error_code, error_message, finished_at FROM video_jobs').all() as unknown as Array<{
+        id: number;
+        status: string;
+        error_category: string | null;
+        error_code: string | null;
+        error_message: string | null;
+        finished_at: string | null;
+      }>).map((row) => [row.id, row])
+    );
+    assert.equal(rows.size, jobCount, '没有任务被删除');
+    assert.equal(rows.get(newest)?.status, 'waiting', '保留 id 最大（最新）的进行中任务');
+    for (const id of [oldRunning, oldQueued]) {
+      const row = rows.get(id);
+      assert.deepEqual([row?.status, row?.error_category, row?.error_code], ['failed', 'invalid_request', 'DuplicateActiveJob']);
+      assert.match(row?.error_message ?? '', /多个进行中的任务.*保留最新的一个/);
+      assert.ok(row?.finished_at !== null && row?.finished_at !== undefined && !Number.isNaN(Date.parse(row.finished_at)), '写入结束时间');
+    }
+    assert.deepEqual([rows.get(succeeded)?.status, rows.get(single)?.status, rows.get(earlierFailed)?.status], ['succeeded', 'queued', 'canceled'], '其他任务不变');
+    assert.equal((database.prepare('SELECT COUNT(*) AS total FROM video_results').get() as unknown as { total: number }).total, 1, '结果保留');
+
+    const repository = new SqliteGenerationRepository(database);
+    assert.equal(repository.hasActiveJob(groupA), true);
+    assert.throws(() => repository.insertJob({ groupId: groupA, modelId: seed.modelId, status: 'queued', snapshot: SNAPSHOT, prevJobId: null, firstFrameId: null }, T1), ConflictError);
+    repository.markFailed(newest, { category: 'server', code: null, message: 'x' }, T2);
+    assert.equal(repository.insertJob({ groupId: groupA, modelId: seed.modelId, status: 'queued', snapshot: SNAPSHOT, prevJobId: null, firstFrameId: null }, T1).attempt, 2, '原有任务的尝试次数都是 1');
+  } finally {
+    database.close();
+  }
+});
+
+test('从版本 18 升级到 19：没有重复的进行中任务时数据不变，索引已建立', () => {
+  const database = openDatabase(IN_MEMORY_DATABASE_PATH, MIGRATIONS.slice(0, 18));
+  try {
+    const seed = seedGeneration(database, 2);
+    database
+      .prepare("INSERT INTO video_jobs (group_id, model_id, status, request_snapshot_json, created_at) VALUES (?, ?, 'queued', '{}', 't')")
+      .run(seed.groupIds[0], seed.modelId);
+    runMigrations(database, MIGRATIONS);
+    const rows = database.prepare('SELECT status, error_category, finished_at FROM video_jobs').all() as unknown as Array<{ status: string; error_category: string | null; finished_at: string | null }>;
+    assert.deepEqual(rows.map((row) => [row.status, row.error_category, row.finished_at]), [['queued', null, null]]);
+    const index = database.prepare("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'video_jobs_active_group_unique_idx'").get() as unknown as { sql: string } | undefined;
+    assert.match(index?.sql ?? '', /UNIQUE INDEX .*\(group_id\) WHERE status IN \('waiting', 'queued', 'running'\)/);
   } finally {
     database.close();
   }

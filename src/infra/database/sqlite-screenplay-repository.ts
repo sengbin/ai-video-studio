@@ -4,17 +4,18 @@
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
-// 备注：structure_json 为 '{}' 表示尚未抽取；merge 不自带事务，必须在确认采用的事务内调用。
+// 备注：structure_json 为 '{}' 表示尚未抽取；merge 不自带事务，必须在确认采用的事务内调用；merge 把新版本里已不存在的旧集删除，若该集已有下游数据（分镜脚本等阶段记录、资产绑定、集的生成参数）则抛出 ValidationError 拒绝合并。
 // ------------------------------------------------------------------------
 
 import type { DatabaseSync } from 'node:sqlite';
-import { ConflictError } from '../../domain/errors';
+import { ConflictError, FORM_LEVEL_ERROR_KEY, ValidationError } from '../../domain/errors';
 import {
   EntityEdit,
   EntityKind,
   EntityRecord,
   EpisodeEdit,
   EpisodeRecord,
+  RemovedEpisode,
   Screenplay,
   ScreenplayStructure,
   ScreenplayText
@@ -24,6 +25,10 @@ import { runInTransaction } from './transaction';
 
 /** 同类型下实体重名时的提示。 */
 export const DUPLICATE_ENTITY_NAME_MESSAGE = '同类型下已有同名实体，请换一个名称。';
+
+/** 旧集已不在新版本中、但已有下游数据，合并被拒绝时的提示，参数为这些集的序号。 */
+export const REMOVED_EPISODES_BLOCKED_MESSAGE = (seqs: readonly number[]): string =>
+  `原有的第 ${seqs.join('、')} 集在新版本中已不存在，但已有分镜脚本、资产绑定或生成参数，不能直接移除。请在新版本中保留这些集后再确认。`;
 
 /** 重排序号时临时移出正常范围的偏移量。 */
 const SEQ_SHIFT = 1000000;
@@ -271,6 +276,28 @@ export class SqliteScreenplayRepository implements ScreenplayRepository {
     return Number(result.changes) > 0;
   }
 
+  listEpisodesRemovedByMerge(runId: number): RemovedEpisode[] {
+    const run = this.database.prepare('SELECT work_id FROM stage_runs WHERE id = ?').get(runId) as unknown as
+      | { work_id: number }
+      | undefined;
+    const structure = this.find(runId)?.structure;
+    if (run === undefined || structure === null || structure === undefined) {
+      return [];
+    }
+    const keptSeqs = new Set(structure.episodes.map((episode) => episode.seq));
+    const countDownstream = this.database.prepare(
+      `SELECT (SELECT COUNT(*) FROM stage_runs WHERE episode_id = ?)
+            + (SELECT COUNT(*) FROM entity_bindings WHERE episode_id = ?)
+            + (SELECT COUNT(*) FROM generation_profiles WHERE episode_id = ?) AS total`
+    );
+    return this.listEpisodes(run.work_id)
+      .filter((episode) => !keptSeqs.has(episode.seq))
+      .map((episode) => {
+        const { total } = countDownstream.get(episode.id, episode.id, episode.id) as unknown as { total: number };
+        return { id: episode.id, seq: episode.seq, hasDownstream: total > 0 };
+      });
+  }
+
   merge(runId: number, timestamp: string): void {
     const run = this.database.prepare('SELECT work_id FROM stage_runs WHERE id = ?').get(runId) as unknown as
       | { work_id: number }
@@ -281,6 +308,17 @@ export class SqliteScreenplayRepository implements ScreenplayRepository {
     }
     const workId = run.work_id;
     const { episodes, entities } = structure;
+
+    // 新版本里已不存在的旧集：有下游数据时拒绝合并（调用方的事务整体回滚），没有则随合并删除。
+    const removed = this.listEpisodesRemovedByMerge(runId);
+    const blocked = removed.filter((episode) => episode.hasDownstream);
+    if (blocked.length > 0) {
+      throw new ValidationError({ [FORM_LEVEL_ERROR_KEY]: REMOVED_EPISODES_BLOCKED_MESSAGE(blocked.map((episode) => episode.seq)) });
+    }
+    const deleteEpisode = this.database.prepare('DELETE FROM episodes WHERE id = ?');
+    for (const episode of removed) {
+      deleteEpisode.run(episode.id);
+    }
 
     const upsertEpisode = this.database.prepare(
       `INSERT INTO episodes (work_id, seq, title, synopsis, screenplay_text, target_duration_seconds, created_at, updated_at)

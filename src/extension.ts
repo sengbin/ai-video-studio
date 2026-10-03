@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：extension.ts
-// 说明：AIGC Video Studio（AIGC 视频工作室）扩展入口，负责激活时装配数据库、服务、页面与侧栏。
+// 说明：AIGC Video Studio（AIGC 视频工作室）扩展入口，负责激活时装配数据库、服务、页面与侧栏；数据库无法打开时降级为只含数据备份（恢复）入口的侧栏，并在停用时按顺序收尾。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-09-30
@@ -12,6 +12,7 @@ import { readFile } from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
+import { ShutdownSequence } from './app/lifecycle/shutdown-sequence';
 import { MessageRouter } from './app/messaging/message-router';
 import { AssetListPages } from './app/pages/asset-list-pages';
 import { BackupPages } from './app/pages/backup-pages';
@@ -74,8 +75,8 @@ import { LocalResultStore, RESULT_VIDEO_DIRECTORY_NAME } from './infra/storage/l
 import { HttpMediaDownloader } from './infra/storage/http-media-downloader';
 import { SidebarActionRegistry } from './sidebar/sidebar-actions';
 import { registerSidebarHandlers } from './sidebar/sidebar-handlers';
-import { SIDEBAR_SECTIONS } from './sidebar/sidebar-menu-config';
-import { SIDEBAR_VIEW_ID, SidebarViewProvider } from './sidebar/sidebar-view-provider';
+import { DATABASE_UNAVAILABLE_NOTICE_PREFIX, DEGRADED_SIDEBAR_SECTIONS, SIDEBAR_SECTIONS } from './sidebar/sidebar-menu-config';
+import { SIDEBAR_VIEW_ID, SidebarContent, SidebarViewProvider } from './sidebar/sidebar-view-provider';
 
 /** 数据库文件名，位于扩展的全局存储目录。 */
 const DATABASE_FILE_NAME = 'aigc-video-studio.sqlite';
@@ -86,6 +87,9 @@ const WORKBENCH_ACTION_LABEL = '打开工作台';
 /** 生成队列的处理间隔：平台生成通常需要一到几分钟，每几秒查询一次足够及时。 */
 const JOB_QUEUE_INTERVAL_MS = 5000;
 
+/** 停用时等待后台阶段生成结束的最长时间（毫秒）：给短任务收尾的机会，又不让长时间的模型调用拖住停用。 */
+const STAGE_RUN_SHUTDOWN_WAIT_MS = 3000;
+
 /** 侧栏创作入口与素材来源的对应关系。 */
 const CREATION_ENTRIES: ReadonlyArray<readonly [string, WorkSourceType]> = [
   ['text-inspiration', 'text'],
@@ -93,17 +97,33 @@ const CREATION_ENTRIES: ReadonlyArray<readonly [string, WorkSourceType]> = [
   ['novel-adaptation', 'novel']
 ];
 
+/** 激活时建立的停用收尾序列；由 deactivate 执行并等待（VS Code 只等待 deactivate 返回的 Promise）。 */
+let shutdownSequence: ShutdownSequence | undefined;
+
 /**
  * 激活扩展：打开数据库并升级结构，装配服务与页面，注册侧栏视图。
+ * 数据库无法打开时不装配业务服务，只注册降级的侧栏：显示原因，并保留“数据备份（恢复）”入口，让用户可以从备份文件恢复。
  * @param context 扩展上下文，用于登记需要随扩展释放的资源。
  */
 export function activate(context: vscode.ExtensionContext): void {
   const databasePaths = resolveDatabaseFilePaths(context.globalStorageUri.fsPath, DATABASE_FILE_NAME);
-  const database = openDatabaseOrReport(context, databasePaths);
-  if (database === undefined) {
+  const opened = openDatabaseOrReport(context, databasePaths);
+  if (opened.database === undefined) {
+    activateWithoutDatabase(context, databasePaths, opened.failure);
     return;
   }
-  context.subscriptions.push({ dispose: () => database.close() });
+  const database = opened.database;
+
+  // 停用收尾：按登记顺序等阶段生成结束、停止两个队列，最后关闭数据库（殿后步骤，与登记先后无关）。
+  const shutdown = new ShutdownSequence();
+  shutdownSequence = shutdown;
+  shutdown.addFinal(() => {
+    if (database.isOpen) {
+      database.close();
+    }
+  });
+  // 兜底：宿主不经 deactivate 释放订阅时也会执行收尾；序列只执行一次。
+  context.subscriptions.push({ dispose: () => void shutdown.run() });
 
   // 存储与外部服务。
   const runs = new SqliteStageRunRepository(database);
@@ -150,6 +170,7 @@ export function activate(context: vscode.ExtensionContext): void {
   });
   // 上次退出时还在生成的记录已经无法继续，置为失败，用户可以在产出页点“重试”。
   runner.recoverInterrupted();
+  shutdown.add(() => waitForStageRuns(runner));
   const stageService = new StageService({ works: workService, runs, chapters, screenplays, runner, changes: stageChanges });
   const screenplayService = new ScreenplayService({ works: workService, runs, screenplays, runner, stages: stageService });
   const assetRepository = new SqliteAssetRepository(database);
@@ -189,7 +210,7 @@ export function activate(context: vscode.ExtensionContext): void {
     notify: notifyAssetsChanged
   });
   assetQueue.recover();
-  context.subscriptions.push({ dispose: assetQueue.start(JOB_QUEUE_INTERVAL_MS) });
+  shutdown.add(assetQueue.start(JOB_QUEUE_INTERVAL_MS));
   const assetGenerationService = new AssetGenerationService({
     assets: assetRepository,
     versions: assetVersionRepository,
@@ -211,7 +232,7 @@ export function activate(context: vscode.ExtensionContext): void {
     notify: (change) => jobChanges.notify(change)
   });
   jobQueue.recover();
-  context.subscriptions.push({ dispose: jobQueue.start(JOB_QUEUE_INTERVAL_MS) });
+  shutdown.add(jobQueue.start(JOB_QUEUE_INTERVAL_MS));
   const generationService = new GenerationService({
     works: workService,
     projects: projectService,
@@ -296,19 +317,59 @@ export function activate(context: vscode.ExtensionContext): void {
       .register(kind, 'main', () => assetListPages.show(kind))
       .register(kind, 'action', () => assetListPages.show(kind, { action: 'create' }));
   }
+  registerSidebar(context, actionRegistry, { sections: SIDEBAR_SECTIONS });
+}
+
+/**
+ * 数据库无法打开时的降级激活：不装配任何依赖数据库的服务，只注册降级侧栏。
+ * 侧栏显示“数据库无法打开：原因”和“数据备份（恢复）”入口；备份页复用同一套备份服务与待恢复机制，
+ * 备份服务不带数据库连接，只能选择备份文件、校验、确认并准备恢复，重新加载窗口后由启动流程应用恢复。
+ * @param context 扩展上下文。
+ * @param paths 数据库相关文件的路径。
+ * @param failure 数据库无法打开的原因。
+ */
+function activateWithoutDatabase(context: vscode.ExtensionContext, paths: DatabaseFilePaths, failure: string): void {
+  const backupService = new BackupService({
+    storage: new SqliteBackupStorage(undefined, paths, path.join(context.globalStorageUri.fsPath, RESULT_VIDEO_DIRECTORY_NAME)),
+    host: createBackupHost(),
+    latestSchemaVersion: MIGRATIONS.length,
+    databaseUnavailableReason: failure
+  });
+  const backupPages = new BackupPages(backupService, new PanelManager(context.extensionUri));
+  const actionRegistry = new SidebarActionRegistry(DEGRADED_SIDEBAR_SECTIONS).register('data-backup', 'main', () => backupPages.show());
+  registerSidebar(context, actionRegistry, { sections: DEGRADED_SIDEBAR_SECTIONS, notice: `${DATABASE_UNAVAILABLE_NOTICE_PREFIX}${failure}` });
+}
+
+/** 注册侧栏视图：点击经路由器交给动作注册表。 */
+function registerSidebar(context: vscode.ExtensionContext, actionRegistry: SidebarActionRegistry, content: SidebarContent): void {
   const sidebarRouter = new MessageRouter();
   registerSidebarHandlers(sidebarRouter, actionRegistry);
-
   context.subscriptions.push(
-    vscode.window.registerWebviewViewProvider(
-      SIDEBAR_VIEW_ID,
-      new SidebarViewProvider(context.extensionUri, sidebarRouter)
-    )
+    vscode.window.registerWebviewViewProvider(SIDEBAR_VIEW_ID, new SidebarViewProvider(context.extensionUri, sidebarRouter, content))
   );
 }
 
-/** 停用扩展；注册的资源由 VS Code 通过 subscriptions 统一释放。 */
-export function deactivate(): void {}
+/**
+ * 停用扩展：等待收尾序列完成（等待阶段生成、停止队列、关闭数据库），VS Code 会等待返回的 Promise。
+ * 降级激活时没有收尾序列，直接结束。
+ */
+export function deactivate(): Promise<void> {
+  return shutdownSequence === undefined ? Promise.resolve() : shutdownSequence.run();
+}
+
+/** 等待后台阶段生成结束，最多等 STAGE_RUN_SHUTDOWN_WAIT_MS；超时不再等待（模型调用仍在进行时无法强行结束），也不视为失败。 */
+async function waitForStageRuns(runner: StageRunner): Promise<void> {
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, STAGE_RUN_SHUTDOWN_WAIT_MS);
+  });
+  try {
+    // 某次生成的失败已由执行器记录，这里只关心是否结束。
+    await Promise.race([runner.whenIdle().catch(() => undefined), timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 /** 工作台使用的宿主能力：用系统程序打开、导出到用户选择的位置、在文件夹中显示、读取结果视频（供页面截取尾帧）、右下角通知。 */
 function createWorkbenchHost(): WorkbenchHost {
@@ -387,20 +448,23 @@ function notifyFinishedJobs(context: vscode.ExtensionContext, generation: Genera
   context.subscriptions.push({ dispose: unsubscribe });
 }
 
+/** 打开数据库的结果：成功时有 database；失败时 database 为 undefined，failure 说明原因。 */
+type OpenDatabaseResult = { readonly database: ReturnType<typeof openDatabase>; readonly failure?: undefined } | { readonly database?: undefined; readonly failure: string };
+
 /**
- * 在全局存储目录中打开数据库；失败时提示用户并返回 undefined。打开前先应用数据备份页准备好的恢复。
+ * 在全局存储目录中打开数据库；失败时提示用户并返回原因（调用方据此降级激活）。打开前先应用数据备份页准备好的恢复。
  * @param context 扩展上下文。
  * @param paths 数据库相关文件的路径。
  */
-function openDatabaseOrReport(context: vscode.ExtensionContext, paths: DatabaseFilePaths): ReturnType<typeof openDatabase> | undefined {
+function openDatabaseOrReport(context: vscode.ExtensionContext, paths: DatabaseFilePaths): OpenDatabaseResult {
   try {
     mkdirSync(context.globalStorageUri.fsPath, { recursive: true });
     applyPendingRestoreAndReport(paths);
-    return openDatabase(paths.databasePath);
+    return { database: openDatabase(paths.databasePath) };
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
-    void vscode.window.showErrorMessage(`AIGC Video Studio 无法打开数据库：${detail}`);
-    return undefined;
+    void vscode.window.showErrorMessage(`AIGC Video Studio 无法打开数据库：${detail}。可以在侧栏“数据备份（恢复）”中从备份文件恢复。`);
+    return { failure: detail };
   }
 }
 

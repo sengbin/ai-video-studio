@@ -93,9 +93,20 @@ export class AssetPromptService {
     return { done: this.run(asset, images, controller) };
   }
 
-  /** 取消正在进行的提示词生成；没有进行中的任务时不做任何事。 */
+  /**
+   * 取消正在进行的提示词生成：先把状态落库为“已取消”（界面显示“已取消”，重启后不会被改写成别的失败原因），再中止后台任务；
+   * 任务被中止后不会再写回结果。没有进行中的任务时不做任何事。
+   */
   cancel(assetId: number): void {
-    this.running.get(assetId)?.abort();
+    const controller = this.running.get(assetId);
+    if (controller === undefined) {
+      return;
+    }
+    // 先摘掉任务登记并落库，之后即使模型调用没有及时响应中止，也不会再改写状态，且可以立即重新生成。
+    this.running.delete(assetId);
+    this.dependencies.assets.endPrompt(assetId, 'canceled', null, this.timestamp());
+    controller.abort();
+    this.dependencies.notify();
   }
 
   /** 扩展启动时调用：遗留的生成中任务无法继续，置为失败。返回处理的数量。 */
@@ -134,12 +145,21 @@ export class AssetPromptService {
         parseAssetPrompts,
         { images, overflowHint: '请精简描述字段后重试。', tool: SUBMIT_ASSET_PROMPTS_TOOL }
       );
+      if (controller.signal.aborted) {
+        return; // 已被取消，状态在取消时已落库，不再写回结果。
+      }
       assets.finishPrompt(asset.id, result, asset.contentRevision, this.timestamp());
     } catch (error) {
+      if (controller.signal.aborted) {
+        return; // 已被取消，状态在取消时已落库，不用失败原因覆盖。
+      }
       const canceled = error instanceof TextGenerationError && error.category === 'canceled';
       assets.endPrompt(asset.id, canceled ? 'canceled' : 'failed', canceled ? null : describeFailure(error), this.timestamp());
     } finally {
-      this.running.delete(asset.id);
+      // 取消后可能已有新任务占用同一资产，只摘除自己登记的控制器。
+      if (this.running.get(asset.id) === controller) {
+        this.running.delete(asset.id);
+      }
       this.dependencies.notify();
     }
   }

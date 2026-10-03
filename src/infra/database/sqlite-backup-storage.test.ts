@@ -17,6 +17,7 @@ import { openDatabase } from './database-connection';
 import { applyPendingRestore } from './database-restore';
 import { readSchemaVersion } from './migration-runner';
 import { MIGRATIONS } from './migrations';
+import { SqliteBackupStorage } from './sqlite-backup-storage';
 import { createBackupFixture, insertProject, listProjectNames } from './testing/backup-fixture';
 
 const RESTORE_TIME = new Date(2026, 9, 3, 6, 5, 2);
@@ -40,7 +41,7 @@ test('读取状态：路径、大小、结构版本和各类数据数量', () =>
     assert.ok(status.sizeBytes > 0);
     assert.equal(status.schemaVersion, MIGRATIONS.length);
     assert.deepEqual(status.counts, { projects: 1, works: 0, episodes: 0, assets: 0, shots: 0, videoResults: 0 });
-    assert.equal(status.autoBackupDirectory, fixture.paths.autoBackupDirectory);
+    assert.equal(fixture.storage.autoBackupDirectory, fixture.paths.autoBackupDirectory);
   } finally {
     fixture.cleanup();
   }
@@ -196,6 +197,61 @@ test('应用恢复失败：抛出错误、丢弃待恢复文件，当前数据�
 
     assert.equal(existsSync(fixture.paths.pendingRestorePath), false);
     assert.deepEqual(readProjectNamesFrom(fixture.paths.databasePath), ['当前项目']);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('待恢复项的标识：随待恢复文件变化，重新准备后不同', async () => {
+  const fixture = createBackupFixture();
+  try {
+    fixture.storage.stageRestore(fixture.createBackupFile('first.sqlite', ['项目甲']));
+    const first = fixture.storage.readPendingRestore();
+    assert.ok(first !== undefined && first.token !== '');
+    assert.equal(fixture.storage.readPendingRestore()?.token, first.token, '同一待恢复项的标识稳定');
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    fixture.storage.stageRestore(fixture.createBackupFile('second.sqlite', ['项目甲', '项目乙', '项目丙']));
+    assert.notEqual(fixture.storage.readPendingRestore()?.token, first.token);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('不带连接（数据库无法打开）：读取状态与导出快照抛出明确错误，检查文件、准备和放弃待恢复仍可用', () => {
+  const fixture = createBackupFixture();
+  try {
+    const storage = new SqliteBackupStorage(undefined, fixture.paths, join(fixture.directory, 'videos'));
+    assert.throws(() => storage.readStatus(), /数据库无法打开/);
+    assert.throws(() => storage.exportSnapshot(join(fixture.directory, 'out.sqlite')), /数据库无法打开/);
+
+    const backup = fixture.createBackupFile('backup.sqlite', ['备份项目']);
+    assert.equal(storage.inspectFile(backup).integrity, INTEGRITY_OK);
+    storage.stageRestore(backup);
+    assert.ok(storage.readPendingRestore() !== undefined);
+    storage.discardPendingRestore();
+    assert.equal(storage.readPendingRestore(), undefined);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('数据库文件已损坏打不开：仍可准备恢复，重新启动时原文件被原样复制到自动备份目录后替换为备份', () => {
+  const fixture = createBackupFixture();
+  try {
+    fixture.database.close();
+    const corruptContent = '这不是数据库，数据库文件已经损坏。'.repeat(100);
+    writeFileSync(fixture.paths.databasePath, corruptContent);
+    assert.throws(() => openDatabase(fixture.paths.databasePath), '损坏的数据库打不开');
+
+    const storage = new SqliteBackupStorage(undefined, fixture.paths, join(fixture.directory, 'videos'));
+    storage.stageRestore(fixture.createBackupFile('backup.sqlite', ['备份项目']));
+
+    const autoBackupPath = applyPendingRestore(fixture.paths, RESTORE_TIME);
+    assert.equal(autoBackupPath, join(fixture.paths.autoBackupDirectory, AUTO_BACKUP_FILE_NAME));
+    assert.equal(readFileSync(autoBackupPath ?? '', 'utf8'), corruptContent, '损坏的原文件被原样保留');
+    assert.deepEqual(readProjectNamesFrom(fixture.paths.databasePath), ['备份项目']);
+    openDatabase(fixture.paths.databasePath).close();
   } finally {
     fixture.cleanup();
   }

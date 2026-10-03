@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：sidebar-menu-config.ts
-// 说明：侧栏菜单的结构与文案配置，页面按该配置渲染分区和菜单行。
+// 说明：侧栏菜单的结构与文案配置，页面按该配置渲染分区和菜单行；含数据库无法打开时的降级菜单。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-09-30
@@ -84,3 +84,16 @@ export const SIDEBAR_SECTIONS: readonly SidebarMenuSection[] = [
     ]
   }
 ];
+
+/** 数据库无法打开时的降级侧栏：只保留数据备份入口（用于恢复），条目标识与完整菜单中的“数据备份”相同，点击后打开同一个数据备份页。 */
+export const DEGRADED_SIDEBAR_SECTIONS: readonly SidebarMenuSection[] = [
+  {
+    id: 'settings',
+    title: '设置',
+    surface: 'flat',
+    items: [{ id: 'data-backup', title: '数据备份（恢复）' }]
+  }
+];
+
+/** 数据库无法打开时，侧栏顶部提示的前缀，后接具体原因。 */
+export const DATABASE_UNAVAILABLE_NOTICE_PREFIX = '数据库无法打开：';

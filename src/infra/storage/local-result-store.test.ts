@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：local-result-store.test.ts
-// 说明：本地结果文件存储的自动化测试：下载保存与路径规则、只接受 https、HTTP 错误、大小限制与失败后不留临时文件。
+// 说明：本地结果文件存储的自动化测试：下载保存与路径规则、路径边界校验、只接受 https、HTTP 错误、大小限制与失败后不留临时文件。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
@@ -12,6 +12,7 @@ import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 import { test } from 'node:test';
+import { RESULT_VIDEO_MAX_BYTES } from '../../domain/rules/generation-rules';
 import { LocalResultStore } from './local-result-store';
 
 const LOCATION = { projectId: 1, workId: 2, episodeId: 3 };
@@ -75,5 +76,60 @@ test('下载中断时清理临时文件', async () => {
     assert.deepEqual(await readdir(path.join(root, 'videos', '1', '2', '3')), []);
   } finally {
     await cleanup();
+  }
+});
+
+test('resolvePath：拒绝绝对路径、.. 越界和指向根目录本身，合法的相对路径落在根目录内', async () => {
+  const { root, store, cleanup } = await createStore((async () => new Response('x')) as typeof fetch);
+  try {
+    assert.equal(store.resolvePath('videos/1/2/3/7-9.mp4'), path.join(root, 'videos', '1', '2', '3', '7-9.mp4'));
+    assert.equal(store.resolvePath('videos/../videos/a.mp4'), path.join(root, 'videos', 'a.mp4'), '根目录内的 .. 允许');
+    assert.throws(() => store.resolvePath('../outside.mp4'), /超出了存储目录/);
+    assert.throws(() => store.resolvePath('videos/../../outside.mp4'), /超出了存储目录/);
+    assert.throws(() => store.resolvePath('..'), /超出了存储目录/);
+    assert.throws(() => store.resolvePath(''), /超出了存储目录/);
+    assert.throws(() => store.resolvePath('videos/..'), /超出了存储目录/);
+    assert.throws(() => store.resolvePath('/etc/passwd'), /绝对路径/);
+    assert.throws(() => store.resolvePath(path.join(tmpdir(), 'other.mp4')), /绝对路径/);
+  } finally {
+    await cleanup();
+  }
+});
+
+test('大小上限：超过 RESULT_VIDEO_MAX_BYTES 时中止下载并清理临时文件，恰好等于上限则保存成功', async () => {
+  const chunkBytes = 1024 * 1024;
+  /** 按固定大小的块产生指定总字节数的响应。 */
+  const respondWith = (totalBytes: number) =>
+    (async () => {
+      let sent = 0;
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          pull(controller) {
+            const size = Math.min(chunkBytes, totalBytes - sent);
+            if (size === 0) {
+              controller.close();
+              return;
+            }
+            sent += size;
+            controller.enqueue(new Uint8Array(size));
+          }
+        })
+      );
+    }) as typeof fetch;
+
+  const over = await createStore(respondWith(RESULT_VIDEO_MAX_BYTES + 1));
+  try {
+    await assert.rejects(over.store.save(LOCATION, 1, 1, 'https://oss.test/video.mp4'), /超过大小上限/);
+    assert.deepEqual(await readdir(path.join(over.root, 'videos', '1', '2', '3')), [], '不留临时文件，也不留半个视频');
+  } finally {
+    await over.cleanup();
+  }
+
+  const exact = await createStore(respondWith(RESULT_VIDEO_MAX_BYTES));
+  try {
+    const saved = await exact.store.save(LOCATION, 1, 1, 'https://oss.test/video.mp4');
+    assert.equal(saved.sizeBytes, RESULT_VIDEO_MAX_BYTES);
+  } finally {
+    await exact.cleanup();
   }
 });

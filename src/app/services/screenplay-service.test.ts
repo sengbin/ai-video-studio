@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：screenplay-service.test.ts
-// 说明：剧本阶段应用服务的自动化测试：生成、视图、编辑保存、确认时合并集和实体、合并后的编辑、调整集的顺序、重新抽取、上游变更与失败后继续。
+// 说明：剧本阶段应用服务的自动化测试：生成、视图、编辑保存、确认时合并集和实体（含新版本里已不存在的旧集的删除与拒绝）、合并后的编辑、调整集的顺序、重新抽取、上游变更与失败后继续。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
@@ -11,6 +11,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { ConflictError, NotFoundError, ValidationError } from '../../domain/errors';
 import { normalizeWorkCreation } from '../../domain/rules/work-rules';
+import { REMOVED_EPISODES_BLOCKED_MESSAGE } from '../../infra/database/sqlite-screenplay-repository';
 import { Responder, standardResponder } from '../stages/testing/scripted-text';
 import { createServiceFixture } from './testing/service-fixture';
 
@@ -40,6 +41,17 @@ async function createFixture(kind: '单个短视频' | '多集短片' = '单个�
 async function generate(fixture: Awaited<ReturnType<typeof createFixture>>) {
   const run = await fixture.screenplays.start(fixture.work.id, PARAMS);
   await fixture.runner.whenIdle();
+  return run;
+}
+
+/** 再生成一个剧本版本，并把它的抽取结果改成只剩第 1 集（用于模拟新版本里旧集已不存在）。 */
+async function startKeepingOnlyFirstEpisode(fixture: Awaited<ReturnType<typeof createFixture>>) {
+  const run = await generate(fixture);
+  const structure = {
+    episodes: [{ seq: 1, title: '第一集', synopsis: '新梗概', screenplayText: '新正文', targetDurationSeconds: 30 }],
+    entities: [{ kind: 'character', name: '守夜人', aliases: [], description: '新设定', attributes: {}, isActive: true }]
+  };
+  fixture.database.prepare('UPDATE screenplays SET structure_json = ? WHERE run_id = ?').run(JSON.stringify(structure), run.id);
   return run;
 }
 
@@ -170,6 +182,79 @@ test('确认采用：单个短视频更新已有的第 1 集；重新生成后�
     assert.equal(history.run.display, 'history');
     assert.equal(history.merged, false);
     assert.equal(history.actions.canEdit, false);
+  } finally {
+    database.close();
+  }
+});
+
+test('确认采用：新版本里已不存在的旧集没有下游数据时随合并删除，确认前视图列出将被移除的集', async () => {
+  const fixture = await createFixture('多集短片');
+  const { database, screenplays, stages, work } = fixture;
+  try {
+    stages.approve((await generate(fixture)).id);
+    const [first] = screenplays.getView(work.id).episodes;
+    const second = await startKeepingOnlyFirstEpisode(fixture);
+
+    const preview = screenplays.getView(work.id);
+    assert.deepEqual([preview.removedEpisodes, preview.blockedEpisodes], [[2], []]);
+    assert.equal(database.prepare('SELECT COUNT(*) AS n FROM episodes WHERE work_id = ?').get(work.id)?.n, 2, '确认前不改动');
+
+    stages.approve(second.id);
+    const rows = database.prepare('SELECT id, seq, synopsis FROM episodes WHERE work_id = ? ORDER BY seq').all(work.id);
+    assert.deepEqual(rows.map((row) => [row.id, row.seq, row.synopsis]), [[first.ref, 1, '新梗概']]);
+    const merged = screenplays.getView(work.id);
+    assert.deepEqual([merged.merged, merged.episodes.length, merged.removedEpisodes, merged.blockedEpisodes], [true, 1, [], []]);
+  } finally {
+    database.close();
+  }
+});
+
+test('确认采用：新版本里已不存在的旧集已有分镜脚本时拒绝合并并整体回滚；在新版本中保留这些集后可以确认', async () => {
+  const fixture = await createFixture('多集短片');
+  const { database, screenplays, storyboards, stages, runs, work } = fixture;
+  try {
+    stages.approve((await generate(fixture)).id);
+    const [first, second] = screenplays.getView(work.id).episodes;
+    await storyboards.start(work.id, [second.ref], {});
+    await fixture.runner.whenIdle();
+    const next = await startKeepingOnlyFirstEpisode(fixture);
+
+    const preview = screenplays.getView(work.id);
+    assert.deepEqual([preview.removedEpisodes, preview.blockedEpisodes, preview.downstreamEpisodes], [[], [2], [2]]);
+    assert.throws(
+      () => stages.approve(next.id),
+      (error) => error instanceof ValidationError && error.message === REMOVED_EPISODES_BLOCKED_MESSAGE([2])
+    );
+    // 合并整体回滚：集、实体、新版本的确认状态都没有变化。
+    assert.equal(database.prepare('SELECT COUNT(*) AS n FROM episodes WHERE work_id = ?').get(work.id)?.n, 2);
+    assert.equal(database.prepare("SELECT is_active AS active FROM script_entities WHERE name = '灯塔'").get()?.active, 1);
+    assert.equal(database.prepare('SELECT COUNT(*) AS n FROM stage_runs WHERE episode_id = ?').get(second.ref)?.n, 1);
+    assert.deepEqual([runs.findById(next.id)!.isCurrent, runs.findById(next.id)!.appliedAt], [false, null]);
+
+    // 在新版本中补回这一集（序号 2）后可以确认，这一集和它的分镜脚本保留。
+    screenplays.addEpisode(next.id, { title: '第二集', synopsis: '', screenplayText: '正文', targetDurationSeconds: '' });
+    assert.deepEqual([screenplays.getView(work.id).removedEpisodes, screenplays.getView(work.id).blockedEpisodes], [[], []]);
+    stages.approve(next.id);
+    const rows = database.prepare('SELECT id, seq FROM episodes WHERE work_id = ? ORDER BY seq').all(work.id);
+    assert.deepEqual(rows.map((row) => [row.id, row.seq]), [[first.ref, 1], [second.ref, 2]]);
+    assert.equal(database.prepare('SELECT COUNT(*) AS n FROM stage_runs WHERE episode_id = ?').get(second.ref)?.n, 1);
+  } finally {
+    database.close();
+  }
+});
+
+test('确认采用：新版本里已不存在的旧集已有集的生成参数时同样拒绝合并', async () => {
+  const fixture = await createFixture('多集短片');
+  const { database, screenplays, stages, work } = fixture;
+  try {
+    stages.approve((await generate(fixture)).id);
+    const [, second] = screenplays.getView(work.id).episodes;
+    database.prepare("INSERT INTO generation_profiles (scope, episode_id, updated_at) VALUES ('episode', ?, '2026-10-03T00:00:00.000Z')").run(second.ref);
+    const next = await startKeepingOnlyFirstEpisode(fixture);
+
+    assert.deepEqual(screenplays.getView(work.id).blockedEpisodes, [2]);
+    assert.throws(() => stages.approve(next.id), ValidationError);
+    assert.equal(database.prepare('SELECT COUNT(*) AS n FROM episodes WHERE work_id = ?').get(work.id)?.n, 2);
   } finally {
     database.close();
   }

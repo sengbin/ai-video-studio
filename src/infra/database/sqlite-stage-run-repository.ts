@@ -239,4 +239,8 @@ export class SqliteChapterRepository implements ChapterRepository {
       )
       .run(runId, chapter.seq, chapter.title, chapter.content, timestamp);
   }
+
+  clear(runId: number): void {
+    this.database.prepare('DELETE FROM chapters WHERE run_id = ?').run(runId);
+  }
 }

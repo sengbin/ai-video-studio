@@ -1,10 +1,10 @@
 // ------------------------------------------------------------------------
 // 名称：backup.js
-// 说明：数据备份页脚本：显示数据库路径、大小、版本和各类数据数量；“备份到文件…”导出一致的快照；“从文件恢复…”选择并校验备份文件，页内对话框确认后准备恢复，重新加载窗口后生效。
+// 说明：数据备份页脚本：显示数据库路径、大小、版本和各类数据数量；“备份到文件…”导出一致的快照；“从文件恢复…”选择并校验备份文件，页内对话框确认后准备恢复，重新加载窗口后生效；数据库无法打开时只显示原因与恢复。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-03
-// 备注：请求名称与 src/app/pages/backup-handlers.ts 一致；备份文件路径只在宿主内保存，页面确认恢复时不回传路径；操作进行中按钮都禁用，防止重复提交。
+// 备注：请求名称与 src/app/pages/backup-handlers.ts 一致；备份文件路径只在宿主内保存，确认恢复只带选择时返回的标识、取消恢复只带待恢复项的标识；操作进行中按钮都禁用，防止重复提交。
 // ------------------------------------------------------------------------
 
 'use strict';
@@ -110,7 +110,7 @@
     for (const button of [backupButton, restoreButton, ...(pendingButtons || [])]) button.setDisabled(value);
   }
 
-  /** 重新读取概览并刷新显示。 */
+  /** 重新读取概览并刷新显示；数据库无法打开时没有数据库信息可显示。 */
   async function refresh() {
     overview = await window.hostBridge.request(REQUEST_LOAD);
     renderFacts();
@@ -120,6 +120,7 @@
   /** 当前数据库信息：路径、大小、结构版本、各类数据数量、结果视频文件所在目录。 */
   function renderFacts() {
     const { database, latestSchemaVersion } = overview;
+    if (database === null) return;
     const counts = COUNT_LABELS.map(([key, label]) => `${label} ${database.counts[key]}`).join('　');
     const rows = [
       ['数据库文件', database.databasePath],
@@ -149,7 +150,7 @@
       createCard(
         '恢复已准备好，重新加载窗口后生效',
         [
-          `已在 ${formatTime(pending.stagedAt)} 准备好待恢复的数据（${formatBytes(pending.sizeBytes)}）。重新加载窗口时，当前数据库会先自动备份到 ${overview.database.autoBackupDirectory}（文件名带时间戳），再被备份数据替换。`,
+          `已在 ${formatTime(pending.stagedAt)} 准备好待恢复的数据（${formatBytes(pending.sizeBytes)}）。重新加载窗口时，当前数据库会先自动备份到 ${overview.autoBackupDirectory}（文件名带时间戳），再被备份数据替换。`,
           '在重新加载窗口之前，当前数据没有任何改动，可以取消恢复。'
         ],
         aiUi.h('div', { class: 'backup-actions' }, reloadButton.element, cancelButton.element, pendingStatus.element)
@@ -204,7 +205,7 @@
         details: [
           `备份文件：${candidate.filePath}（${formatBytes(candidate.sizeBytes)}）`,
           upgradeText,
-          `重新加载窗口时，当前数据库会先自动备份到 ${overview.database.autoBackupDirectory}。`,
+          `重新加载窗口时，当前数据库会先自动备份到 ${overview.autoBackupDirectory}。`,
           '备份只含数据库，已下载到本地的结果视频文件不会被恢复，也不会被删除。'
         ]
       });
@@ -213,7 +214,7 @@
         return;
       }
       restoreStatus.show(RESTORE_BUSY_TEXT, 'warning');
-      await window.hostBridge.request(REQUEST_RESTORE);
+      await window.hostBridge.request(REQUEST_RESTORE, { token: candidate.token });
       restoreStatus.show('恢复已准备好，请点上方的“重新加载窗口”使其生效。', 'success');
       await refresh();
     });
@@ -222,7 +223,7 @@
   /** 放弃已准备的恢复。 */
   function cancelRestore() {
     return runOperation(pendingStatus, CANCEL_RESTORE_BUSY_TEXT, async () => {
-      await window.hostBridge.request(REQUEST_CANCEL_RESTORE);
+      await window.hostBridge.request(REQUEST_CANCEL_RESTORE, { token: overview.pendingRestore.token });
       restoreStatus.show('已取消恢复，当前数据没有改动。', 'info');
       await refresh();
     });
@@ -250,6 +251,28 @@
       return;
     }
     root.textContent = '';
+    // 数据库无法打开时只显示原因和“恢复”：备份与数据库信息都依赖可用的数据库。
+    const unavailable = overview.database === null;
+    const restoreCard = createCard(
+      '恢复',
+      [
+        '选择之前备份的文件，用它覆盖当前全部数据。结构版本低于当前的备份会在重新加载后自动升级，高于当前扩展的备份会被拒绝。',
+        '确认后需要重新加载窗口才会生效；重新加载时先把当前数据库自动备份（文件名带时间戳），再替换。'
+      ],
+      aiUi.h('div', { class: 'backup-actions' }, restoreButton.element, restoreStatus.element)
+    );
+    if (unavailable) {
+      root.append(
+        createCard(
+          '数据库无法打开',
+          [`数据库无法打开：${overview.databaseUnavailableReason}`, '在恢复之前，除本页外的其他功能暂时不可用。可以从之前备份的文件恢复数据；无法打开的数据库文件会先被自动备份，再被替换。'],
+          aiUi.h('p', { class: 'backup-status status-error', text: '备份功能需要可用的数据库，当前只能恢复。' })
+        ),
+        pendingHost,
+        restoreCard
+      );
+      return;
+    }
     root.append(
       pendingHost,
       createCard('当前数据库', [], factsHost),
@@ -261,14 +284,7 @@
         ],
         aiUi.h('div', { class: 'backup-actions' }, backupButton.element, backupStatus.element)
       ),
-      createCard(
-        '恢复',
-        [
-          '选择之前备份的文件，用它覆盖当前全部数据。结构版本低于当前的备份会在重新加载后自动升级，高于当前扩展的备份会被拒绝。',
-          '确认后需要重新加载窗口才会生效；重新加载时先把当前数据库自动备份（文件名带时间戳），再替换。'
-        ],
-        aiUi.h('div', { class: 'backup-actions' }, restoreButton.element, restoreStatus.element)
-      )
+      restoreCard
     );
   }
 

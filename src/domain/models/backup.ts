@@ -35,8 +35,6 @@ export interface DatabaseStatus {
   readonly counts: BackupDataCounts;
   /** 结果视频文件所在的目录，不包含在备份中。 */
   readonly resultVideoDirectory: string;
-  /** 恢复前自动备份当前数据库的目录，文件名带时间戳。 */
-  readonly autoBackupDirectory: string;
 }
 
 /** 对一个待恢复备份文件的检查结果，由基础设施层读取文件得到，是否合法由领域规则判断。 */
@@ -57,4 +55,6 @@ export interface PendingRestore {
   readonly sizeBytes: number;
   /** 准备恢复的时间，ISO 8601 字符串。 */
   readonly stagedAt: string;
+  /** 待恢复项的标识，由待恢复文件的修改时间与大小得出；取消恢复时带回，用来确认取消的就是页面看到的那一项。 */
+  readonly token: string;
 }

@@ -4,7 +4,7 @@
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
-// 备注：不依赖 VS Code；一轮处理由 pump() 完成，定时器由 start() 启动，测试直接调用 pump()。限流、服务端、网络类的提交失败自动重试，其余失败直接记为失败。等待前序的任务（上一组尾帧作首帧）在前序成功且尾帧入库后转为排队，前序失败或被取消时一并失败。
+// 备注：不依赖 VS Code；一轮处理由 pump() 完成，定时器由 start() 启动（返回的停止函数会等正在进行的一轮处理结束，停止后不再开始新的一轮），测试直接调用 pump()。限流、服务端、网络类的提交失败自动重试，其余失败直接记为失败。等待前序的任务（上一组尾帧作首帧）在前序成功且尾帧入库后转为排队，前序失败或被取消时一并失败。
 // ------------------------------------------------------------------------
 
 import { NotFoundError, ProviderError } from '../../domain/errors';
@@ -34,6 +34,14 @@ export interface JobChange {
   readonly groupId: number;
   /** 为 true 时只要求界面刷新，不弹任务完成的通知（如切换采用的版本）。 */
   readonly quiet?: boolean;
+}
+
+/** 取消任务的结果。 */
+export interface JobCancelResult {
+  /** 为 true 表示已通知服务商取消。 */
+  readonly remoteCanceled: boolean;
+  /** 通知服务商取消失败的原因；没有失败时缺省。此时本地取消仍然成功，但平台上的任务可能仍在继续并计费。 */
+  readonly remoteCancelError?: string;
 }
 
 /** 解析视频模型的调用凭据。 */
@@ -72,6 +80,10 @@ export class JobQueue {
   private readonly transientFailures = new Map<number, number>();
   private pumping = false;
   private pumpAgain = false;
+  /** 正在进行的一轮处理，停止定时处理时据此等待它结束。 */
+  private activePump: Promise<void> | undefined;
+  /** 已停止：为 true 时不再开始新的一轮处理，进行中的一轮在处理完当前任务后结束。 */
+  private stopped = false;
 
   constructor(private readonly dependencies: JobQueueDependencies) {
     this.now = dependencies.now ?? (() => new Date());
@@ -98,50 +110,68 @@ export class JobQueue {
 
   /**
    * 启动定时处理：立即处理一轮，之后每隔 intervalMs 处理一轮。
-   * @returns 停止定时处理的函数。
+   * @returns 停止函数：停止定时器、不再开始新的一轮处理，并等待正在进行的一轮处理结束。
    */
-  start(intervalMs: number): () => void {
+  start(intervalMs: number): () => Promise<void> {
+    this.stopped = false;
     const run = (): void => {
       this.pump().catch((error: unknown) => console.error('处理生成队列时出现未预期的错误：', error));
     };
     run();
     const timer = setInterval(run, intervalMs);
-    return () => clearInterval(timer);
+    return async () => {
+      this.stopped = true;
+      clearInterval(timer);
+      // 进行中的一轮出错时已由发起方记录日志，这里只等它结束。
+      await this.activePump?.then(undefined, () => undefined);
+    };
   }
 
   /**
-   * 处理一轮：先轮询生成中的任务，再处理等待前序的任务，最后提交排队中的任务。正在处理时只登记再来一轮，不并发处理。
+   * 处理一轮：先轮询生成中的任务，再处理等待前序的任务，最后提交排队中的任务。正在处理时只登记再来一轮，不并发处理；已停止时什么也不做。
    */
   async pump(): Promise<void> {
+    if (this.stopped) {
+      return;
+    }
     if (this.pumping) {
       this.pumpAgain = true;
       return;
     }
     this.pumping = true;
+    const round = this.runRounds();
+    this.activePump = round;
     try {
-      do {
-        this.pumpAgain = false;
-        await this.pollRunning();
-        this.releaseWaiting();
-        await this.submitQueued();
-      } while (this.pumpAgain);
+      await round;
     } finally {
       this.pumping = false;
+      this.activePump = undefined;
     }
+  }
+
+  /** 连续处理，直到没有人登记再来一轮或队列已停止。 */
+  private async runRounds(): Promise<void> {
+    do {
+      this.pumpAgain = false;
+      await this.pollRunning();
+      this.releaseWaiting();
+      await this.submitQueued();
+    } while (this.pumpAgain && !this.stopped);
   }
 
   /**
    * 取消进行中的任务：生成中的任务若服务商支持取消则同时取消远端任务；不支持时只停止本地跟踪，远端任务可能仍会继续并计费。
-   * @returns remoteCanceled 为 true 表示已通知服务商取消。
+   * @returns remoteCanceled 为 true 表示已通知服务商取消；通知失败时本地取消仍然成功，失败原因放在 remoteCancelError 里。
    * @throws NotFoundError 任务不存在，或已经结束。
    */
-  async cancel(jobId: number): Promise<{ readonly remoteCanceled: boolean }> {
+  async cancel(jobId: number): Promise<JobCancelResult> {
     const { jobs, calls } = this.dependencies;
     const job = jobs.findJob(jobId);
     if (job === undefined || (job.status !== 'waiting' && job.status !== 'queued' && job.status !== 'running')) {
       throw new NotFoundError('任务不存在或已经结束。');
     }
     let remoteCanceled = false;
+    let remoteCancelError: string | undefined;
     if (job.status === 'running' && job.remoteJobId !== null) {
       try {
         const call = await calls.resolveVideoCall(job.modelId);
@@ -149,20 +179,22 @@ export class JobQueue {
           await call.adapter.cancel({ modelCode: call.modelCode, remoteJobId: job.remoteJobId }, call.context);
           remoteCanceled = true;
         }
-      } catch {
-        // 通知服务商取消失败不影响本地取消。
+      } catch (error) {
+        // 通知服务商取消失败不影响本地取消，但要把原因带给调用方，让用户知道平台上的任务可能仍在计费。
+        remoteCancelError = error instanceof Error ? error.message : String(error);
       }
     }
     if (jobs.markCanceled(jobId, this.timestamp())) {
       this.forget(jobId);
       this.dependencies.notify({ jobId, groupId: job.groupId });
     }
-    return { remoteCanceled };
+    return remoteCancelError === undefined ? { remoteCanceled } : { remoteCanceled, remoteCancelError };
   }
 
   /** 轮询全部生成中的任务。 */
   private async pollRunning(): Promise<void> {
     for (const job of this.dependencies.jobs.listJobsByStatus(['running'])) {
+      if (this.stopped) return;
       await this.pollOne(job);
     }
   }
@@ -192,7 +224,7 @@ export class JobQueue {
     const { jobs } = this.dependencies;
     let running = jobs.listJobsByStatus(['running']).length;
     for (const job of jobs.listJobsByStatus(['queued'])) {
-      if (running >= this.maxConcurrent) {
+      if (running >= this.maxConcurrent || this.stopped) {
         return;
       }
       const retry = this.submitRetries.get(job.id);
@@ -255,7 +287,11 @@ export class JobQueue {
       if (state.status !== 'succeeded') this.transientFailures.delete(job.id);
       switch (state.status) {
         case 'succeeded':
-          if (state.result !== null) await this.saveResult(job, state.result.videoUrl, state.result.durationSeconds);
+          if (state.result === null) {
+            this.fail(job, { category: 'server', code: null, message: '平台报告任务已完成，但没有返回结果视频，请重新生成。' });
+          } else {
+            await this.saveResult(job, state.result.videoUrl, state.result.durationSeconds);
+          }
           return;
         case 'failed':
           this.fail(job, {
@@ -284,6 +320,7 @@ export class JobQueue {
     const { jobs, results } = this.dependencies;
     const location = jobs.getGroupLocation(job.groupId);
     if (location === undefined) {
+      this.fail(job, { category: 'server', code: null, message: '这个任务所在的镜头组已不存在（可能已被删除或重新分组），无法保存结果视频。' });
       return;
     }
     try {

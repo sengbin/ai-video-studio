@@ -116,7 +116,7 @@
     const grid = aiUi.h('div', { class: 'asset-ver__grid' });
     for (const file of detail.files) {
       const checkbox = aiUi.checkbox({
-        label: file.isAdopted ? '采用（已采用）' : '采用',
+        label: isFileAdopted(detail, file) ? '采用（已采用）' : '采用',
         checked: session.selectedFileIds.has(file.id),
         onChange: (value) => {
           if (value) session.selectedFileIds.add(file.id);
@@ -153,7 +153,7 @@
     return aiUi.h(
       'div',
       { class: 'asset-ver__audio' },
-      aiUi.h('span', { text: `${duration}${file.mime.replace('audio/', '').toUpperCase()}${file.isAdopted ? ' · 已采用' : ''}` }),
+      aiUi.h('span', { text: `${duration}${file.mime.replace('audio/', '').toUpperCase()}${isFileAdopted(detail, file) ? ' · 已采用' : ''}` }),
       preview.element
     );
   }
@@ -215,9 +215,19 @@
     return notices;
   }
 
+  /** 结果文件是否已采用：只有资产当前采用的就是这个版本（version.isAdopted，来自资产的 adoptedVersionId）时，标记过的文件才算；手动改文件清掉采用关系后，旧版本不再显示已采用。 */
+  function isFileAdopted(detail, file) {
+    return detail.version.isAdopted && file.isAdopted;
+  }
+
+  /** 版本里已采用的结果文件标识。 */
+  function adoptedFileIds(detail) {
+    return detail.files.filter((file) => isFileAdopted(detail, file)).map((file) => file.id);
+  }
+
   /** 当前勾选的结果是否正是这个版本已采用的那几个；是则再次采用没有意义，“采用此版本”置为不可用，换版本或改勾选后恢复。 */
   function isSelectionAdopted(detail, selectedFileIds) {
-    const adoptedIds = detail.files.filter((file) => file.isAdopted).map((file) => file.id);
+    const adoptedIds = adoptedFileIds(detail);
     return adoptedIds.length > 0 && adoptedIds.length === selectedFileIds.size && adoptedIds.every((id) => selectedFileIds.has(id));
   }
 
@@ -315,7 +325,7 @@
     if (!detail || session !== current || current.versionId !== versionId) return;
     if (!current.detail || current.detail.version.id !== versionId) {
       // 切换到另一个版本：默认勾选全部结果，已采用过的只勾选采用的那几张。
-      const adoptedIds = detail.files.filter((file) => file.isAdopted).map((file) => file.id);
+      const adoptedIds = adoptedFileIds(detail);
       const initial = adoptedIds.length > 0 ? adoptedIds : detail.files.map((file) => file.id);
       current.selectedFileIds = new Set(initial.slice(0, 10));
     }

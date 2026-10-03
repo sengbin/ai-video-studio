@@ -165,6 +165,9 @@ export function readSubmitInput(rawInput: unknown): SubmitInput {
   };
 }
 
+/** 单个结果视频的大小上限（字节）：既是保存结果时的下载上限，也是工作台读取视频（播放、截取尾帧）的上限；两处共用，保证保存下来的视频都能被工作台读取。 */
+export const RESULT_VIDEO_MAX_BYTES = 200 * 1024 * 1024;
+
 /** 尾帧图片的大小上限（字节）与可接受的图片类型。 */
 export const TAIL_FRAME_MAX_BYTES = 10 * 1024 * 1024;
 const TAIL_FRAME_MIME_TYPES: readonly string[] = ['image/jpeg', 'image/png', 'image/webp'];

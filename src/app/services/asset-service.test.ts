@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：asset-service.test.ts
-// 说明：资产应用服务（含资产规则与 SQLite 仓库）的自动化测试：创建、校验、重名、修改、音频、使用情况与删除。
+// 说明：资产应用服务（含资产规则与 SQLite 仓库）的自动化测试：创建、校验、重名、修改、音频、使用情况（绑定与镜头声音）、音色参考保护与删除。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
@@ -13,6 +13,7 @@ import { ConflictError, NotFoundError, ValidationError } from '../../domain/erro
 import { IN_MEMORY_DATABASE_PATH, openDatabase } from '../../infra/database/database-connection';
 import { SqliteAssetRepository } from '../../infra/database/sqlite-asset-repository';
 import { SqliteProjectRepository } from '../../infra/database/sqlite-project-repository';
+import { seedAssetUsage } from '../../infra/database/testing/seed-asset-usage';
 import { AssetService } from './asset-service';
 import { ProjectService } from './project-service';
 
@@ -298,6 +299,76 @@ test('使用情况与删除：被绑定的音频不能改类型；删除资产�
     assert.equal(database.prepare('SELECT COUNT(*) AS n FROM entity_bindings').get()?.n, 0);
     assert.throws(() => service.deleteAsset(asset.id), NotFoundError);
     assert.throws(() => service.getDeletionImpact(asset.id), NotFoundError);
+  } finally {
+    database.close();
+  }
+});
+
+test('被用作音色参考的音频不能清空文件：提示被几个角色使用；替换文件或解除绑定后可以；只被镜头声音引用的不受限', () => {
+  const { database, service, first } = createFixture();
+  try {
+    const voice = service.createAsset('audio', { name: '音色', audioKind: 'voice', files: files(audioItem('v.wav')) });
+    const seed = seedAssetUsage(database, first.id);
+    seed.bindEntity(voice.id, 0, 0, 'voice');
+    seed.bindEntity(voice.id, 0, 1, 'voice');
+    const form = { name: '音色', audioKind: 'voice' };
+
+    assert.equal(service.getDeletionImpact(voice.id).usage.voiceBindingCount, 2);
+    assert.throws(
+      () => service.updateAsset(voice.id, { ...form, files: files() }),
+      (error) => error instanceof ValidationError && error.fieldErrors.files === '该音频已被 2 个角色用作音色参考，请先解除绑定或替换文件。'
+    );
+    assert.throws(() => service.updateAsset(voice.id, form), ValidationError, '不提交文件同样是清空');
+    assert.equal(service.getReferenceFiles(voice.id).length, 1, '被拒绝后文件保持不变');
+
+    // 替换文件不受限；改描述并保留文件也不受限。
+    service.updateAsset(voice.id, { ...form, files: files(audioItem('new.wav', WAV, 5)) });
+    assert.equal(service.getReferenceFiles(voice.id)[0].fileName, 'new.wav');
+    service.updateAsset(voice.id, { ...form, description: '改了描述', files: files(audioItem('new.wav', WAV, 5)) });
+
+    // 解除绑定后可以清空。
+    database.prepare('DELETE FROM entity_bindings').run();
+    assert.equal(service.updateAsset(voice.id, { ...form, files: files() }).id, voice.id);
+    assert.equal(service.getReferenceFiles(voice.id).length, 0);
+
+    // 只被镜头声音引用的音频（不是音色参考绑定）可以清空文件。
+    const music = service.createAsset('audio', { name: '配乐', audioKind: 'music', files: files(audioItem('m.mp3', MP3, 30)) });
+    seed.addSounds(music.id, 0);
+    service.updateAsset(music.id, { name: '配乐', audioKind: 'music', files: files() });
+    assert.equal(service.getReferenceFiles(music.id).length, 0);
+  } finally {
+    database.close();
+  }
+});
+
+test('使用情况含镜头声音直接指定的音频：按集汇总条数，列表的“使用集数”与绑定所在的集合并去重', () => {
+  const { database, service, first } = createFixture();
+  try {
+    const music = service.createAsset('audio', { name: '配乐', audioKind: 'music', files: files(audioItem('m.mp3', MP3, 30)) });
+    assert.equal(service.listAssets('audio')[0].episodeCount, 0);
+    assert.deepEqual(service.getDeletionImpact(music.id).usage, { bindings: [], soundReferences: 0, soundEpisodes: [], voiceBindingCount: 0 });
+
+    const seed = seedAssetUsage(database, first.id, 3);
+    seed.addSounds(music.id, 0, 2);
+    seed.addSounds(music.id, 2, 1);
+    assert.equal(service.listAssets('audio')[0].episodeCount, 2, '只有镜头声音引用时也算被使用');
+    const usage = service.getDeletionImpact(music.id).usage;
+    assert.deepEqual(usage.soundEpisodes, [
+      { workName: '作品甲', episodeSeq: 1, episodeTitle: '第1集标题', soundCount: 2 },
+      { workName: '作品甲', episodeSeq: 3, episodeTitle: '第3集标题', soundCount: 1 }
+    ]);
+    assert.equal(usage.soundReferences, 3);
+    assert.equal(usage.bindings.length, 0);
+
+    // 同一集既有绑定又有声音引用只算一集；另一集的绑定再加一集。
+    seed.bindEntity(music.id, 0, 0, 'visual');
+    assert.equal(service.listAssets('audio')[0].episodeCount, 2);
+    seed.bindEntity(music.id, 1, 0, 'visual');
+    assert.equal(service.listAssets('audio')[0].episodeCount, 3);
+
+    // 删除资产后，镜头声音的引用被置空。
+    service.deleteAsset(music.id);
+    assert.equal(database.prepare('SELECT COUNT(*) AS n FROM shot_sounds WHERE audio_asset_id IS NOT NULL').get()?.n, 0);
   } finally {
     database.close();
   }

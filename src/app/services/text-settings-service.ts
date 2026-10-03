@@ -4,7 +4,7 @@
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-03
-// 备注：不依赖 VS Code；设置即时保存，不合法的值直接拒绝而不是悄悄回退；可选模型 = Copilot（启用时）的模型 + 已启用的服务商文本模型，被关闭或停用的模型不再出现在列表中；作品没有单独选择时使用全局默认。
+// 备注：不依赖 VS Code；设置即时保存，不合法的值直接拒绝而不是悄悄回退；可选模型 = Copilot（启用且检测到可用模型时）的模型 + 已启用的服务商文本模型，被关闭或停用的模型不再出现在列表中；作品没有单独选择时使用全局默认；作品单独选择的模型不可用时通过 unavailableHint 告知当前实际使用的模型。
 // ------------------------------------------------------------------------
 
 import { ValidationError } from '../../domain/errors';
@@ -32,6 +32,12 @@ export const NO_TEXT_MODEL_NOTE = '没有可选的文本模型，生成文本时
 
 /** 默认文本模型已不可用时的提示，参数为当前实际使用的模型名称。 */
 export const DEFAULT_FALLBACK_HINT = (label: string): string => `原来的默认文本模型已不可用，当前使用“${label}”。`;
+
+/** 作品原先单独选择的文本模型已不可用时的提示，参数为当前实际使用的模型名称。 */
+export const WORK_MODEL_UNAVAILABLE_HINT = (label: string): string => `原选择的文本模型已不可用，当前将使用“${label}”。`;
+
+/** 作品原先单独选择的文本模型已不可用、且没有任何可用的文本模型时的提示。 */
+export const WORK_MODEL_UNAVAILABLE_NO_FALLBACK_HINT = '原选择的文本模型已不可用，且当前没有可用的文本模型，生成文本时会失败。';
 
 /** 选用的 Copilot 已被关闭。 */
 export const COPILOT_DISABLED_MESSAGE = 'Copilot 已关闭，不能选用它的模型。';
@@ -72,6 +78,8 @@ export interface WorkTextModelState {
   readonly defaultLabel: string | null;
   /** 作品单独选择且当前仍可用的模型键；沿用默认时为 null。 */
   readonly selectedKey: string | null;
+  /** 作品原先单独选择的模型已不可用时的提示（含当前实际使用的模型）；没有这种情况时为 null。 */
+  readonly unavailableHint: string | null;
 }
 
 /** 设置服务对服务商文本模型的需求。 */
@@ -96,6 +104,8 @@ export class TextSettingsService {
     const stored = choices.find((choice) => choice.key === settings.defaultModel);
     const effective = stored ?? choices[0];
     const fallbackHint = stored === undefined && effective !== undefined ? DEFAULT_FALLBACK_HINT(effective.label) : null;
+    // Copilot 不可用的原因与“默认已回退”的提示可能同时成立，一并告知用户。
+    const modelNote = [note, fallbackHint].filter((text): text is string => text !== null).join('');
     return {
       copilotEnabled: settings.copilotEnabled,
       defaultModel: effective?.key ?? '',
@@ -103,7 +113,7 @@ export class TextSettingsService {
       splitMode: settings.novelSplit.mode,
       maxSegmentChars: settings.novelSplit.maxSegmentChars,
       segmentCharsRange: { min: SEGMENT_CHARS_MIN, max: SEGMENT_CHARS_MAX },
-      modelNote: note ?? fallbackHint,
+      modelNote: modelNote === '' ? null : modelNote,
       engineNote: choices.length === 0 ? NO_TEXT_MODEL_NOTE : null
     };
   }
@@ -137,7 +147,14 @@ export class TextSettingsService {
     const defaultChoice = choices.find((choice) => choice.key === settings.defaultModel) ?? choices[0];
     const stored = workId === null ? null : this.workModels.find(workId);
     const selected = stored === null ? undefined : choices.find((choice) => choice.key === stored);
-    return { choices, defaultLabel: defaultChoice?.label ?? null, selectedKey: selected?.key ?? null };
+    const defaultLabel = defaultChoice?.label ?? null;
+    const unavailableHint =
+      stored === null || selected !== undefined
+        ? null
+        : defaultLabel === null
+          ? WORK_MODEL_UNAVAILABLE_NO_FALLBACK_HINT
+          : WORK_MODEL_UNAVAILABLE_HINT(defaultLabel);
+    return { choices, defaultLabel, selectedKey: selected?.key ?? null, unavailableHint };
   }
 
   /**
@@ -174,7 +191,7 @@ export class TextSettingsService {
   }
 
   /**
-   * 组装可选模型列表：Copilot（启用时）自动与各家族，再加已启用的服务商文本模型。
+   * 组装可选模型列表：Copilot（启用且确有可用模型时）自动与各家族，再加已启用的服务商文本模型。
    * @param copilotEnabled 是否启用 Copilot。
    * @param savedKey 已保存的默认模型键；是 Copilot 的家族但不在可用列表中时，保留为“不可用”的一项，避免选中项凭空消失。
    * @returns 列表，以及 Copilot 不可用或已保存的模型不可用的提示。
@@ -184,9 +201,12 @@ export class TextSettingsService {
     let note: string | null = null;
     if (copilotEnabled) {
       const listed = await this.catalog.listFamilies();
-      choices.push({ key: copilotModelKey(''), label: 'Copilot · 自动' });
-      for (const family of listed.families) {
-        choices.push({ key: copilotModelKey(family), label: `Copilot · ${family}` });
+      // 没有可用的 Copilot 模型时不列出“Copilot · 自动”：选了它生成也会失败，运行时会回退到服务商文本模型。
+      if (listed.families.length > 0) {
+        choices.push({ key: copilotModelKey(''), label: 'Copilot · 自动' });
+        for (const family of listed.families) {
+          choices.push({ key: copilotModelKey(family), label: `Copilot · ${family}` });
+        }
       }
       const saved = parseTextModelKey(savedKey);
       const missing = saved?.engine === 'copilot' && saved.family !== '' && listed.families.length > 0 && !listed.families.includes(saved.family);

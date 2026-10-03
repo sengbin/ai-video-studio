@@ -28,7 +28,7 @@ export class CopilotTextGeneration implements TextGenerationPort {
   private model: vscode.LanguageModelChat | undefined;
 
   /**
-   * @param family 模型家族；空串表示自动选择，所选家族不可用时回退到任意可用的 Copilot 模型。
+   * @param family 模型家族；空串表示自动选择任意可用的 Copilot 模型；指定了家族但没有匹配的模型时报“不可用”，不会换成别的模型。
    */
   constructor(private readonly family: string = '') {}
 
@@ -98,15 +98,19 @@ export class CopilotTextGeneration implements TextGenerationPort {
     return this.model ?? (await this.selectModel());
   }
 
-  /** 按设置选择模型：所选家族不可用时回退到任意可用的 Copilot 模型。 */
+  /** 按设置选择模型：指定了家族只用该家族，没有匹配时报不可用；家族为空（自动）时才选任意可用的 Copilot 模型。 */
   private async selectModel(): Promise<vscode.LanguageModelChat> {
     try {
-      let models = this.family === '' ? [] : await vscode.lm.selectChatModels({ vendor: COPILOT_VENDOR, family: this.family });
+      const models = await vscode.lm.selectChatModels(
+        this.family === '' ? { vendor: COPILOT_VENDOR } : { vendor: COPILOT_VENDOR, family: this.family }
+      );
       if (models.length === 0) {
-        models = await vscode.lm.selectChatModels({ vendor: COPILOT_VENDOR });
-      }
-      if (models.length === 0) {
-        throw new TextGenerationError('unavailable', '没有可用的 Copilot 模型，请确认已安装并登录 GitHub Copilot。');
+        throw new TextGenerationError(
+          'unavailable',
+          this.family === ''
+            ? '没有可用的 Copilot 模型，请确认已安装并登录 GitHub Copilot。'
+            : `所选的 Copilot 模型家族“${this.family}”当前不可用，请到“模型设置”更换文本模型。`
+        );
       }
       return models[0];
     } catch (error) {

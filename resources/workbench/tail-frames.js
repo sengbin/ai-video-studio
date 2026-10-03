@@ -4,7 +4,7 @@
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
-// 备注：请求名称与 src/app/pages/workbench-handlers.ts 一致；视频以 Base64 经消息传来（解码用 pageFormat.decodeBase64），转成 blob 地址播放（CSP 需允许 media-src blob:）；对外是 window.aiTailFrames.sync；截取失败时上报宿主，避免任务一直等待。
+// 备注：请求名称与 src/app/pages/workbench-handlers.ts 一致；视频以 Base64 经消息传来（解码用 pageFormat.decodeBase64），转成 blob 地址播放（CSP 需允许 media-src blob:）；对外是 window.aiTailFrames.sync；截取失败时上报宿主（任务随之失败），上报没有成功时下一次同步会再试；只防同一时刻重复截取同一个结果。
 // ------------------------------------------------------------------------
 
 'use strict';
@@ -21,26 +21,34 @@
   const SEEK_BACK_SECONDS = 0.05;
   const EVENT_TIMEOUT_MS = 30000;
 
-  /** 已经尝试过的结果，页面存在期间不重复截取（失败已上报宿主）。 */
-  const attempted = new Set();
+  /** 正在截取的结果，只用来防止同一时刻重复截取同一个结果；结束后（无论成败）立即清除，下次同步仍可重试。 */
+  const extracting = new Set();
   let syncing = false;
   let syncAgain = false;
 
-  /** 等待元素触发一次事件；出错或超时则拒绝。 */
+  /**
+   * 等待元素触发一次事件；出错或超时则拒绝。
+   * @returns {{ promise: Promise<void>, dispose: () => void }} dispose 清除定时器与监听，调用方提前退出时必须调用。
+   */
   function waitFor(target, eventName) {
-    return new Promise((resolve, reject) => {
+    let dispose = () => {};
+    const promise = new Promise((resolve, reject) => {
       const timer = window.setTimeout(() => finish(reject, new Error('读取视频超时')), EVENT_TIMEOUT_MS);
       const onEvent = () => finish(resolve);
       const onError = () => finish(reject, new Error('无法解码视频'));
-      function finish(settle, value) {
+      dispose = () => {
         window.clearTimeout(timer);
         target.removeEventListener(eventName, onEvent);
         target.removeEventListener('error', onError);
+      };
+      function finish(settle, value) {
+        dispose();
         settle(value);
       }
       target.addEventListener(eventName, onEvent);
       target.addEventListener('error', onError);
     });
+    return { promise, dispose };
   }
 
 
@@ -59,16 +67,23 @@
     const video = document.createElement('video');
     video.muted = true;
     video.preload = 'auto';
+    const waiters = [];
+    const waitForEvent = (eventName) => {
+      const waiter = waitFor(video, eventName);
+      waiters.push(waiter);
+      return waiter.promise;
+    };
+    let canvas = null;
     try {
-      const loaded = waitFor(video, 'loadedmetadata');
+      const loaded = waitForEvent('loadedmetadata');
       video.src = videoUrl;
       await loaded;
       if (!Number.isFinite(video.duration) || video.duration <= 0 || video.videoWidth === 0) throw new Error('视频没有可用的画面');
       const target = Math.max(0, video.duration - SEEK_BACK_SECONDS);
-      const seeked = waitFor(video, 'seeked');
+      const seeked = waitForEvent('seeked');
       video.currentTime = target;
       await seeked;
-      const canvas = document.createElement('canvas');
+      canvas = document.createElement('canvas');
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
       canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
@@ -76,12 +91,19 @@
       if (!blob) throw new Error('无法生成尾帧图片');
       return { mimeType: FRAME_MIME_TYPE, width: canvas.width, height: canvas.height, data: await encodeBlob(blob) };
     } finally {
+      // 无论成败都清理：移除尚未触发的监听与定时器，释放视频与画布占用的资源。
+      for (const waiter of waiters) waiter.dispose();
+      video.pause();
       video.removeAttribute('src');
       video.load();
+      if (canvas) {
+        canvas.width = 0;
+        canvas.height = 0;
+      }
     }
   }
 
-  /** 截取一个结果视频的尾帧并上传；任何一步失败都上报宿主。 */
+  /** 截取一个结果视频的尾帧并上传；任何一步失败都上报宿主（让等待它的任务失败）。 */
   async function extract(resultId) {
     let videoUrl = '';
     try {
@@ -118,9 +140,13 @@
           return;
         }
         for (const { resultId } of pending) {
-          if (attempted.has(resultId)) continue;
-          attempted.add(resultId);
-          await extract(resultId);
+          if (extracting.has(resultId)) continue;
+          extracting.add(resultId);
+          try {
+            await extract(resultId);
+          } finally {
+            extracting.delete(resultId);
+          }
         }
       } while (syncAgain);
     } finally {

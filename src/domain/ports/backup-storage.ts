@@ -14,14 +14,20 @@ export interface BackupStorage {
   /** 当前数据库文件的绝对路径。 */
   readonly databasePath: string;
 
-  /** 读取当前数据库的位置、大小、结构版本和各类数据数量。 */
+  /** 恢复前自动备份当前数据库的目录，文件名带时间戳。 */
+  readonly autoBackupDirectory: string;
+
+  /**
+   * 读取当前数据库的位置、大小、结构版本和各类数据数量。
+   * @throws 数据库无法打开（没有可用的连接）时抛出错误。
+   */
   readStatus(): DatabaseStatus;
 
   /**
    * 把当前数据库导出为一个文件；导出的是一致的快照，目标文件已存在时被替换。
    * @param targetPath 目标文件的绝对路径。
    * @returns 导出文件的大小，单位为字节。
-   * @throws 写入失败时抛出错误，不会留下写了一半的目标文件。
+   * @throws 数据库无法打开时，或写入失败时抛出错误，不会留下写了一半的目标文件。
    */
   exportSnapshot(targetPath: string): number;
 

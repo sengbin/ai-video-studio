@@ -8,9 +8,9 @@
 // ------------------------------------------------------------------------
 
 import * as vscode from 'vscode';
-import { EventEnvelope } from '../messaging/envelope';
 import { MessageRouter } from '../messaging/message-router';
 import { createPageHtml } from './page-html';
+import { connectWebviewMessaging } from './webview-messaging';
 import { getWebviewResourceRoots, toWebviewResourceUri } from './webview-resources';
 
 /** 打开面板所需的选项。 */
@@ -88,24 +88,12 @@ export class PanelManager {
       scriptUris: options.scripts.map(toUri)
     });
 
-    webview.onDidReceiveMessage(async (message: unknown) => {
-      const response = await options.router.handle(message);
-      if (response === undefined) {
-        return;
-      }
-      try {
-        await webview.postMessage(response);
-      } catch {
-        // 处理过程中面板已关闭（如提交成功后自动关闭），无需回复。
-      }
-    });
+    // 消息连接在面板销毁时释放订阅并停止发送，见 webview-messaging.ts。
+    const messaging = connectWebviewMessaging(webview, panel, options.router);
 
     const closeListeners: Array<() => void> = [];
     const handle: OpenedPanel = {
-      postEvent: (name, payload) => {
-        const event: EventEnvelope = { type: 'event', name, payload };
-        void webview.postMessage(event);
-      },
+      postEvent: (name, payload) => messaging.postEvent(name, payload),
       close: () => panel.dispose(),
       onDidClose: (listener) => {
         closeListeners.push(listener);

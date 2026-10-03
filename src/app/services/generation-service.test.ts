@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：generation-service.test.ts
-// 说明：视频生成应用服务的自动化测试：工作台清单与镜头组视图、分镜脚本确认门槛、按组提交（编译、校验、入队、提醒）、重复提交、超过模型时长的组、失败原因展示与再次生成、参考图绑定、重新分组与拆分合并、取消与结果路径、尾帧衔接、采用结果版本及后续组的过期提示。
+// 说明：视频生成应用服务的自动化测试：工作台清单与镜头组视图、分镜脚本确认门槛、按组提交（编译、校验、入队、提醒）、重复提交与并发提交（同一组只有一个进行中的任务）、超过模型时长的组、失败原因展示与再次生成、参考图绑定、重新分组与拆分合并、取消与结果路径、尾帧衔接、采用结果版本及后续组的过期提示、读取镜头组的全部历史成功版本、取消时带回通知平台失败的原因。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
@@ -24,7 +24,7 @@ import { SqliteGenerationRepository } from '../../infra/database/sqlite-generati
 import { SqliteProviderRepository } from '../../infra/database/sqlite-provider-repository';
 import { SqliteScreenplayRepository } from '../../infra/database/sqlite-screenplay-repository';
 import { SqliteStoryboardRepository } from '../../infra/database/sqlite-storyboard-repository';
-import { JobChange } from '../queue/job-queue';
+import { JobCancelResult, JobChange } from '../queue/job-queue';
 import { standardResponder } from '../stages/testing/scripted-text';
 import { AssetService } from './asset-service';
 import { BindingService } from './binding-service';
@@ -81,6 +81,8 @@ async function createFixture(storyboardParams: Record<string, unknown> = {}, cap
 
   const pumps: number[] = [];
   const canceled: number[] = [];
+  /** 假调度器取消任务时返回的结果，测试可改。 */
+  const cancelOutcome: { value: JobCancelResult } = { value: { remoteCanceled: false } };
   const changes = new ChangeNotifier<JobChange>();
   const changed: JobChange[] = [];
   changes.subscribe((change) => changed.push(change));
@@ -106,7 +108,7 @@ async function createFixture(storyboardParams: Record<string, unknown> = {}, cap
       },
       cancel: async (jobId) => {
         canceled.push(jobId);
-        return { remoteCanceled: false };
+        return cancelOutcome.value;
       }
     },
     changes
@@ -116,7 +118,7 @@ async function createFixture(storyboardParams: Record<string, unknown> = {}, cap
   };
   const episode = () => generation.getEpisode(work.id, episodeId);
   const groupIds = (): number[] => episode().groups.map((group) => group.id);
-  return { ...fixture, work, episodeId, run, generation, jobs, provider, providers, providerView, modelId, secondModelId, pumps, canceled, changed, assetRepository, storyboardRepository, approve, episode, groupIds };
+  return { ...fixture, work, episodeId, run, generation, jobs, provider, providers, providerView, modelId, secondModelId, pumps, canceled, cancelOutcome, changed, assetRepository, storyboardRepository, approve, episode, groupIds };
 }
 
 type Fixture = Awaited<ReturnType<typeof createFixture>>;
@@ -285,6 +287,39 @@ test('重复提交：镜头组还有进行中的任务时被拒绝', async () =>
     const again = await submitGroups(fixture);
     assert.equal(again.submitted.length, 0);
     assert.deepEqual(again.rejected.map((item) => [item.groupId, item.issues[0]]), [[groupId, '这一组正在生成，完成或取消后才能再次提交。']]);
+  } finally {
+    fixture.database.close();
+  }
+});
+
+test('并发提交同一个镜头组：只产生一个进行中的任务，另一次被拒绝并说明原因', async () => {
+  const fixture = await createFixture();
+  try {
+    fixture.approve();
+    const [groupId] = fixture.groupIds();
+    const [first, second] = await Promise.all([submitGroups(fixture), submitGroups(fixture)]);
+    assert.deepEqual([first.submitted.length + second.submitted.length, first.rejected.length + second.rejected.length], [1, 1]);
+    const rejected = [...first.rejected, ...second.rejected][0];
+    assert.deepEqual([rejected.groupId, rejected.issues], [groupId, ['这一组正在生成，完成或取消后才能再次提交。']]);
+    assert.equal(fixture.jobs.listJobsByGroups([groupId]).length, 1);
+    assert.equal(fixture.pumps.length, 1, '只有成功提交的那次唤醒队列');
+  } finally {
+    fixture.database.close();
+  }
+});
+
+test('提交时抢在检查之后插入：仓库的冲突转为这一组被拒绝，同一次提交里的其他组照常提交，不报错', async () => {
+  const fixture = await createFixture({ groupMaxSeconds: '4' });
+  try {
+    fixture.approve();
+    const [first, second] = fixture.groupIds();
+    await submitGroups(fixture, [first]);
+    // 模拟检查之后、插入之前另一次提交已经写入：检查看不到进行中的任务，只有仓库的事务内检查与唯一索引能拦住。
+    fixture.jobs.hasActiveJob = () => false;
+    const result = await submitGroups(fixture, [first, second]);
+    assert.deepEqual(result.submitted.map((item) => item.groupId), [second]);
+    assert.deepEqual(result.rejected.map((item) => [item.groupId, item.issues]), [[first, ['这一组正在生成，完成或取消后才能再次提交。']]]);
+    assert.equal(fixture.jobs.listJobsByGroups([first]).length, 1);
   } finally {
     fixture.database.close();
   }
@@ -501,6 +536,10 @@ test('取消：交给调度器，任务标识不合法时报错', async () => {
     assert.deepEqual(await fixture.generation.cancel({ jobId: 7 }), { remoteCanceled: false });
     assert.deepEqual(fixture.canceled, [7]);
     assert.throws(() => fixture.generation.cancel({ jobId: 'x' }), ValidationError);
+
+    // 通知平台取消失败的原因原样带回，页面据此提示平台上的任务可能仍在计费。
+    fixture.cancelOutcome.value = { remoteCanceled: false, remoteCancelError: '平台返回 500' };
+    assert.deepEqual(await fixture.generation.cancel({ jobId: 8 }), { remoteCanceled: false, remoteCancelError: '平台返回 500' });
   } finally {
     fixture.database.close();
   }
@@ -668,6 +707,35 @@ test('采用结果版本：任务很多时，被采用的较早任务仍留在�
     const jobIds = fixture.episode().groups[0].jobs.map((job) => job.id);
     assert.equal(jobIds.length, 11, '最新的 10 条加上被采用的那一条');
     assert.equal(jobIds[jobIds.length - 1], first.job.id);
+  } finally {
+    fixture.database.close();
+  }
+});
+
+test('结果版本页：读取该组全部历史成功版本（不受视图只显示最近 10 条任务的限制），失败的任务不在其中；组不属于这一集时报错', async () => {
+  const fixture = await createFixture({ groupMaxSeconds: '4' });
+  try {
+    fixture.approve();
+    const [groupId, otherGroupId] = fixture.groupIds();
+    const finished: Array<Awaited<ReturnType<typeof finishGroup>>> = [];
+    for (let index = 0; index < 12; index += 1) {
+      finished.push(await finishGroup(fixture, groupId));
+    }
+    await submitGroups(fixture, [groupId]);
+    const [failedJob] = fixture.jobs.listJobsByGroups([groupId]);
+    fixture.jobs.markFailed(failedJob.id, { category: 'server', code: null, message: 'x' }, 't');
+    await finishGroup(fixture, otherGroupId);
+
+    assert.equal(fixture.episode().groups[0].jobs.length, 11, '工作台视图最多带最近 10 条任务加被采用的那一条');
+    const versions = fixture.generation.getGroupVersions({ workId: fixture.work.id, episodeId: fixture.episodeId, groupId });
+    assert.equal(versions.length, 12);
+    assert.deepEqual(versions.map((job) => job.id), finished.map((item) => item.job.id).reverse(), '最新的在前');
+    assert.ok(versions.every((job) => job.status === 'succeeded' && job.result !== null && job.prompt.length > 0));
+    assert.deepEqual(versions.filter((job) => job.result?.isSelected).map((job) => job.id), [finished[0].job.id], '第一个成功的版本被采用');
+
+    assert.throws(() => fixture.generation.getGroupVersions({ workId: fixture.work.id, episodeId: fixture.episodeId, groupId: 99999 }), NotFoundError);
+    assert.throws(() => fixture.generation.getGroupVersions({ workId: fixture.work.id, episodeId: fixture.episodeId, groupId: 'x' }), ValidationError);
+    assert.throws(() => fixture.generation.getGroupVersions({ workId: 99999, episodeId: fixture.episodeId, groupId }), NotFoundError);
   } finally {
     fixture.database.close();
   }

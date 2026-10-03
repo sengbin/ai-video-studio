@@ -59,7 +59,7 @@ export interface AssetListRow extends AssetListItem {
   readonly isPromptOutdated: boolean;
   /** 图片（音频）有改动未生成。 */
   readonly hasUngeneratedChanges: boolean;
-  /** 能否提交图片（音频）生成及不能时的原因。 */
+  /** 能否提交图片（音频）生成及不能时的原因；有无可用模型按这一条资产（音频按其音频类型）计算。 */
   readonly availability: GenerationAvailability;
 }
 
@@ -90,12 +90,13 @@ export function registerAssetListHandlers(
   const { assets, categories, prompts, generation } = services;
 
   router.register(ASSET_LIST_REQUESTS.load, async () => {
-    const hasUsableModel = await generation.hasUsableModel(kind);
+    // 音频资产按各自的音频类型逐条判断有无可用模型，不能按资产大类一刀切。
+    const hasUsableModel = await generation.createUsableModelCheck(kind);
     const rows: AssetListRow[] = assets.listAssets(kind).map((asset) => ({
       ...asset,
       isPromptOutdated: isPromptOutdated(asset),
       hasUngeneratedChanges: hasUngeneratedChanges(asset, asset.generation),
-      availability: checkGenerationAvailability(asset, asset.generation, hasUsableModel)
+      availability: checkGenerationAvailability(asset, asset.generation, hasUsableModel(asset))
     }));
     return { kind, assets: rows, categories: categories.listCategories(kind) };
   });

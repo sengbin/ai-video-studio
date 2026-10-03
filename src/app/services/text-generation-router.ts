@@ -4,7 +4,7 @@
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-03
-// 备注：每次 resolveModel 重新按当时的设置选定模型，之后同一个端口的 countTokens 与 generate 沿用该选择，不同作品的生成互不影响；选择的模型已不可用（被停用、Copilot 已关闭）时依次回退到全局默认、第一个可用模型；服务商调用失败统一转换为 TextGenerationError。
+// 备注：每次 resolveModel 重新按当时的设置选定模型，之后同一个端口的 countTokens 与 generate 沿用该选择，不同作品的生成互不影响；选择的模型已不可用（被停用、Copilot 已关闭、Copilot 没有可用模型或所选家族不存在）时依次回退到全局默认、Copilot 自动（仅当 Copilot 确有可用模型）、第一个可用的服务商文本模型；Copilot 是否可用以其 resolveModel 抛出 unavailable 为准，其他错误（授权、限流等）不回退；服务商调用失败统一转换为 TextGenerationError。
 // ------------------------------------------------------------------------
 
 import { ProviderError, TextGenerationError } from '../../domain/errors';
@@ -24,6 +24,9 @@ import { copilotModelKey, parseTextModelKey, providerModelKey } from '../../doma
 
 /** 没有任何可用的文本模型时的提示。 */
 export const NO_TEXT_ENGINE_MESSAGE = '没有可用的文本模型：请到“模型设置”启用 Copilot，或启用一个千问AI平台的文本模型。';
+
+/** Copilot 已启用但没有可用的模型、又没有可回退的服务商文本模型时，追加在 Copilot 不可用原因之后的提示。 */
+export const NO_PROVIDER_FALLBACK_NOTE = '同时没有可回退的千问AI平台文本模型，请到“模型设置”启用一个。';
 
 /** 路由依赖的服务商能力：列出可选的文本模型、取得调用文本模型所需的内容。 */
 export interface TextProviderCalls {
@@ -67,17 +70,37 @@ class RoutedTextPort implements TextGenerationPort {
   ) {}
 
   async resolveModel(): Promise<TextModelInfo> {
-    const chosen = this.choose();
-    if (chosen.kind === 'copilot') {
+    let copilotUnavailable: TextGenerationError | undefined;
+    for (const chosen of this.candidates()) {
+      if (chosen.kind === 'provider') {
+        return this.resolveProvider(chosen.model);
+      }
       const port = this.dependencies.createCopilot(chosen.family);
-      const info = await port.resolveModel();
-      this.active = { kind: 'copilot', port };
-      return info;
+      try {
+        const info = await port.resolveModel();
+        this.active = { kind: 'copilot', port };
+        return info;
+      } catch (error) {
+        // 只有“Copilot 没有可用模型 / 所选家族不存在”才按回退顺序尝试下一个；授权、限流等其他错误如实抛出。
+        if (error instanceof TextGenerationError && error.category === 'unavailable') {
+          copilotUnavailable = error;
+          continue;
+        }
+        throw error;
+      }
     }
+    throw new TextGenerationError(
+      'unavailable',
+      copilotUnavailable === undefined ? NO_TEXT_ENGINE_MESSAGE : `${copilotUnavailable.message}${NO_PROVIDER_FALLBACK_NOTE}`,
+      copilotUnavailable === undefined ? undefined : { cause: copilotUnavailable }
+    );
+  }
 
+  /** 解析服务商文本模型并设为当前引擎。 */
+  private async resolveProvider(model: UsableModel): Promise<TextModelInfo> {
     let call: ResolvedTextCall;
     try {
-      call = await this.dependencies.providers.resolveTextCall(chosen.model.model.id);
+      call = await this.dependencies.providers.resolveTextCall(model.model.id);
     } catch (error) {
       throw mapProviderError(error);
     }
@@ -118,8 +141,11 @@ class RoutedTextPort implements TextGenerationPort {
     return this.active as ActiveEngine;
   }
 
-  /** 按“作品的选择、全局默认、第一个可用模型”的顺序选出可用的模型。 */
-  private choose(): ChosenModel {
+  /**
+   * 按“作品的选择、全局默认、Copilot 自动、第一个可用的服务商文本模型”的顺序列出候选（已去重）。
+   * Copilot 的候选是否真的可用要等解析时才知道，解析失败（unavailable）后由 resolveModel 继续尝试后面的候选。
+   */
+  private candidates(): ChosenModel[] {
     const { settings, providers, workModels } = this.dependencies;
     const { copilotEnabled, defaultModel } = settings.read();
     const selectable = providers.listSelectableTextModels();
@@ -138,12 +164,15 @@ class RoutedTextPort implements TextGenerationPort {
     };
 
     const workKey = this.workId === null ? null : workModels.find(this.workId);
-    const chosen =
-      toChosen(workKey) ?? toChosen(defaultModel) ?? toChosen(copilotEnabled ? copilotModelKey('') : null) ?? toChosen([...providerKeys.keys()][0] ?? null);
-    if (chosen === undefined) {
-      throw new TextGenerationError('unavailable', NO_TEXT_ENGINE_MESSAGE);
+    const keys = [workKey, defaultModel, copilotEnabled ? copilotModelKey('') : null, [...providerKeys.keys()][0] ?? null];
+    const candidates = new Map<string, ChosenModel>();
+    for (const key of keys) {
+      const chosen = toChosen(key);
+      if (key !== null && chosen !== undefined && !candidates.has(key)) {
+        candidates.set(key, chosen);
+      }
     }
-    return chosen;
+    return [...candidates.values()];
   }
 }
 

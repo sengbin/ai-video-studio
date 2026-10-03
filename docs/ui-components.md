@@ -62,8 +62,11 @@ ui-kit/                        组件库（自绘控件、对话框及其测试�
 | 清单 | 用途 |
 |---|---|
 | `PROJECT_LIST_PAGE_RESOURCES` | 项目列表页（新建、编辑表单在页内弹出，因此一并加载表单引擎 `form/form-runtime.js`） |
-| `WORK_LIST_PAGE_RESOURCES` | 作品列表页（新建、编辑、重新生成、生成剧本表单和各阶段产出层都在页内弹出，因此一并加载 `form/form-runtime.js`、`stage/stage.js` 及各阶段内容脚本 `stage-creative.js`、`stage-screenplay.js`） |
+| `WORK_LIST_PAGE_RESOURCES` | 作品列表页（新建、编辑、重新生成、生成剧本表单和各阶段产出层都在页内弹出，因此一并加载 `form/form-runtime.js`、`stage/stage.js` 及各阶段内容脚本 `stage-creative.js`、`stage-screenplay.js`、`stage-storyboard.js`） |
+| `ASSET_LIST_PAGE_RESOURCES` | 资产列表页（新建、编辑表单在页内弹出，因此一并加载 `form/form-runtime.js`；生成图片（音频）对话框 `asset-generate.js`、版本层 `asset-versions.js`、分类管理页 `asset-categories.js` 在列表脚本 `asset-list.js` 之前加载） |
+| `WORKBENCH_PAGE_RESOURCES` | 生成工作台页（镜头编辑与分镜脚本确认复用阶段产出层，因此一并加载 `form/form-runtime.js`、`stage/stage.js`、`stage/stage-storyboard.js`；右栏检查器 `inspector.js`，其中实体绑定 `bindings.js`、生成参数 `profile.js`、提交 `submit-panel.js`，另有结果播放器 `player.js`、结果版本页 `versions.js`、尾帧截取 `tail-frames.js`） |
 | `SETTINGS_PAGE_RESOURCES` | 模型设置页（设置即时保存，没有弹出表单） |
+| `BACKUP_PAGE_RESOURCES` | 数据备份页（备份与恢复的确认都用组件库的对话框，没有表单） |
 | `SIDEBAR_PAGE_RESOURCES` | 侧栏页面（不加载 `theme.css`，避免影响自己的布局） |
 
 编辑器区页面的加载顺序固定为：令牌样式、页面基础样式、控件与对话框样式、页面自己的样式；脚本为通信桥、组件库脚本、页面自己的脚本。这个顺序由 `createEditorPageResources` 保证。
@@ -704,7 +707,7 @@ await aiForm.open({ form: 'project.edit', params: { id: project.id } }); // 编�
 
 | 项 | 说明 |
 |---|---|
-| 扩展激活失败 | 数据库无法打开时没有任何页面可用，只能用 VS Code 的错误提示告知用户，这是唯一保留的内置弹窗 |
+| 扩展激活失败 | 数据库无法打开时，除侧栏的“数据备份（恢复）”入口和备份页外没有其他页面可用；原因显示在侧栏顶部，同时用 VS Code 的错误提示告知用户。确认、输入、删除确认仍都在页内完成，宿主只用于文件对话框和结果通知 |
 | 弹出页面的键盘调整 | 目前只支持鼠标拖动调整大小 |
 | 拖动与多显示器 | 对话框在 Webview 窗口范围内移动，不能拖到 VS Code 编辑器区之外 |
 | 滚动条样式 | 依赖 Chromium 的 `::-webkit-scrollbar`，只适用于 VS Code Webview |

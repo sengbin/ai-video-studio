@@ -4,12 +4,15 @@
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-09-30
-// 备注：版本号保存在 SQLite 的 PRAGMA user_version，每个迁移在独立事务中执行。
+// 备注：版本号保存在 SQLite 的 PRAGMA user_version，每个迁移在独立事务中执行；重建被引用表的迁移会暂时关闭外键，结束后读取 PRAGMA foreign_keys 确认已重新开启。
 // ------------------------------------------------------------------------
 
 import type { DatabaseSync } from 'node:sqlite';
 import { Migration, MigrationError } from './migration';
 import { runInTransaction } from './transaction';
+
+/** PRAGMA foreign_keys 读取到的“已启用”取值。 */
+const FOREIGN_KEYS_ENABLED = 1;
 
 /**
  * 读取数据库当前的结构版本号；新库为 0。
@@ -66,6 +69,7 @@ function assertMigrationsConsecutive(migrations: readonly Migration[]): void {
 /** 在一个事务中执行单个迁移并更新版本号。 */
 function applyMigration(database: DatabaseSync, migration: Migration): void {
   const rebuilds = migration.rebuildsReferencedTables === true;
+  let failure: MigrationError | undefined;
   try {
     // foreign_keys 在事务内无法切换，必须在事务外关闭。
     if (rebuilds) {
@@ -80,10 +84,26 @@ function applyMigration(database: DatabaseSync, migration: Migration): void {
       database.exec(`PRAGMA user_version = ${migration.version}`);
     });
   } catch (error) {
-    throw new MigrationError(`执行迁移 ${migration.version}-${migration.name} 失败。`, { cause: error });
-  } finally {
-    if (rebuilds) {
-      database.exec('PRAGMA foreign_keys = ON');
-    }
+    failure = new MigrationError(`执行迁移 ${migration.version}-${migration.name} 失败。`, { cause: error });
+  }
+  if (rebuilds) {
+    restoreForeignKeys(database, failure);
+  }
+  if (failure !== undefined) {
+    throw failure;
+  }
+}
+
+/**
+ * 重新开启外键约束并读取 PRAGMA foreign_keys 确认已生效；未生效时拒绝继续使用该连接。
+ * @param database 已打开的数据库连接。
+ * @param migrationFailure 此前迁移本身的失败原因；有时作为新错误的原因保留。
+ * @throws MigrationError 外键约束没有重新开启。
+ */
+function restoreForeignKeys(database: DatabaseSync, migrationFailure: MigrationError | undefined): void {
+  database.exec('PRAGMA foreign_keys = ON');
+  const row = database.prepare('PRAGMA foreign_keys').get() as { foreign_keys: number };
+  if (row.foreign_keys !== FOREIGN_KEYS_ENABLED) {
+    throw new MigrationError('迁移结束后外键约束没有重新开启，已拒绝继续使用该数据库。', { cause: migrationFailure });
   }
 }

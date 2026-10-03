@@ -4,7 +4,7 @@
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-09-30
-// 备注：素材来源由入口决定，所属项目在新建表单里选择（入口可传默认项目）；提交时先校验全部字段，创建作品后再启动生成，启动失败会撤销刚创建的作品，让用户可以直接重试。
+// 备注：素材来源由入口决定，所属项目在新建表单里选择（入口可传默认项目）；提交时先校验全部字段，创建作品后再启动生成，启动失败会撤销刚创建的作品，让用户可以直接重试；作品原先单独选择的文本模型已不可用时，在文本模型字段（新建、编辑）的说明里提示，重新生成表单没有该字段，提示放在第一个字段的说明前。
 // ------------------------------------------------------------------------
 
 import { FORM_LEVEL_ERROR_KEY, ValidationError } from '../../domain/errors';
@@ -80,6 +80,7 @@ const KIND_LOCKED_NOTE = '；剧本已确认，作品形态不能再修改';
 /** 文本模型字段的键。 */
 const TEXT_MODEL_FIELD_KEY = 'textModel';
 const TEXT_MODEL_UNAVAILABLE_MESSAGE = '所选文本模型已不可用，请重新选择。';
+const TEXT_MODEL_DESCRIPTION = '生成创意、剧本、分镜脚本时使用的模型；“沿用默认”使用“模型设置”中的默认文本模型，已关闭或停用的模型不在列表中';
 /** 创作主题或灵感是主要输入，多行文本最多长到 8 行。 */
 const IDEA_MAX_ROWS = 8;
 
@@ -318,11 +319,20 @@ function createTextModelField(state: WorkTextModelState): FormFieldSchema {
   return {
     key: TEXT_MODEL_FIELD_KEY,
     label: '文本模型',
-    description: '生成创意、剧本、分镜脚本时使用的模型；“沿用默认”使用“模型设置”中的默认文本模型，已关闭或停用的模型不在列表中',
+    description: state.unavailableHint === null ? TEXT_MODEL_DESCRIPTION : `${TEXT_MODEL_DESCRIPTION}。${state.unavailableHint}`,
     control: 'select',
     required: true,
     options: [defaultTextModelOption(state), ...state.choices.map((choice) => choice.label)]
   };
+}
+
+/** 重新生成表单没有文本模型字段：作品原选择的模型已不可用时，把提示放在第一个字段的说明前，不新增字段。 */
+function withTextModelNotice(fields: readonly FormFieldSchema[], notice: string | null): FormFieldSchema[] {
+  if (notice === null) {
+    return [...fields];
+  }
+  const [first, ...rest] = fields;
+  return [{ ...first, description: `${notice}${first.description}` }, ...rest];
 }
 
 /** “沿用默认”选项的文字，带上当前默认模型的名称。 */
@@ -422,8 +432,9 @@ function createNewWorkForm(
  * 创建“重新生成创意”表单的定义：作品与素材沿用，只调整生成参数；初始值为上次使用的参数。
  * @param dependencies 服务与回调。
  * @param workId 作品标识。
+ * @param textModelState 作品的文本模型选择状态，只用来提示原选择的模型是否已不可用。
  */
-function createRegenerateForm(dependencies: WorkFormDependencies, workId: number): FormDefinition {
+function createRegenerateForm(dependencies: WorkFormDependencies, workId: number, textModelState: WorkTextModelState): FormDefinition {
   const { works, stages, onStarted } = dependencies;
   const work = works.getWork(workId);
   const lastParams = stages.getLastCreativeParams(workId);
@@ -431,7 +442,7 @@ function createRegenerateForm(dependencies: WorkFormDependencies, workId: number
     schema: {
       title: `重新生成创意：${work.name}`,
       submitLabel: SUBMIT_LABEL_REGENERATE,
-      fields: createParamFields(work.sourceType)
+      fields: withTextModelNotice(createParamFields(work.sourceType), textModelState.unavailableHint)
     },
     initialValues: lastParams === undefined ? DEFAULT_PARAM_VALUES : paramsToValues(lastParams),
     submit: async (values) => {
@@ -502,7 +513,10 @@ export function createWorkFormCatalog(dependencies: WorkFormDependencies): FormC
     ],
     [
       WORK_FORM_NAMES.regenerate,
-      (params) => createRegenerateForm(dependencies, readEntityId({ id: readRecord(params).workId }, '作品'))
+      async (params) => {
+        const workId = readEntityId({ id: readRecord(params).workId }, '作品');
+        return createRegenerateForm(dependencies, workId, await dependencies.textModels.getWorkState(workId));
+      }
     ],
     [
       WORK_FORM_NAMES.edit,

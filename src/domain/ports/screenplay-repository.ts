@@ -13,6 +13,7 @@ import {
   EntityRecord,
   EpisodeEdit,
   EpisodeRecord,
+  RemovedEpisode,
   Screenplay,
   ScreenplayStructure,
   ScreenplayText
@@ -59,9 +60,18 @@ export interface ScreenplayRepository {
   deleteEntity(workId: number, entityId: number): boolean;
 
   /**
+   * 列出确认采用该阶段记录时会从作品中移除的旧集：作品里已有、但该记录的抽取结果里已不存在的集。
+   * 这些集没有下游数据时合并会删除它们；有下游数据（分镜脚本、生成记录、绑定、生成参数）时合并会被拒绝。
+   * 抽取结果为空或记录不存在时返回空数组。
+   */
+  listEpisodesRemovedByMerge(runId: number): RemovedEpisode[];
+
+  /**
    * 把阶段记录的抽取结果合并到作品的集和实体，并记录合并时间：
-   * 集按序号更新或新增，不删除；实体按（类型，名称）更新或新增，保留已有标识，不再出现的置为停用。
+   * 集按序号更新或新增；抽取结果里已不存在的旧集：没有下游数据则删除，有下游数据则拒绝合并（整个合并回滚）。
+   * 实体按（类型，名称）更新或新增，保留已有标识，不再出现的置为停用。
    * @throws Error 抽取结果为空。
+   * @throws ValidationError 有旧集已不在新版本中、但已有下游数据。
    */
   merge(runId: number, timestamp: string): void;
 }

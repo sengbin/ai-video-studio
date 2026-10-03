@@ -83,6 +83,10 @@ export interface ScreenplayStageView {
   readonly stale: boolean;
   /** 下游已有分镜脚本的集序号，确认采用新版本前提示用户它们可能过期。 */
   readonly downstreamEpisodes: number[];
+  /** 确认采用这个版本时会被移除的旧集序号：新版本里已不存在、且没有下游数据；已合并的版本为空。 */
+  readonly removedEpisodes: number[];
+  /** 新版本里已不存在、但已有下游数据的旧集序号：它们存在时确认采用会被拒绝，需先在新版本中保留；已合并的版本为空。 */
+  readonly blockedEpisodes: number[];
   readonly actions: ScreenplayActions;
 }
 
@@ -188,6 +192,7 @@ export class ScreenplayService {
     const { episodes, entities } = merged ? this.readMerged(workId) : readStructure(screenplay?.structure ?? null);
     const source = run.sourceRunId === null ? undefined : runs.findById(run.sourceRunId);
     const canEdit = run.id === latest.id && run.status === 'succeeded';
+    const removal = run.appliedAt === null ? screenplays.listEpisodesRemovedByMerge(run.id) : [];
     return {
       work: { id: work.id, projectId: work.projectId, name: work.name, kind: work.kind, sourceType: work.sourceType },
       versions: versions.map(toVersionItem),
@@ -203,6 +208,8 @@ export class ScreenplayService {
         .listEpisodes(workId)
         .filter((episode) => runs.listVersions({ workId, stage: 'storyboard_script', episodeId: episode.id }).length > 0)
         .map((episode) => episode.seq),
+      removedEpisodes: removal.filter((episode) => !episode.hasDownstream).map((episode) => episode.seq),
+      blockedEpisodes: removal.filter((episode) => episode.hasDownstream).map((episode) => episode.seq),
       actions: {
         canApprove: canApprove(run),
         canCancel: canCancel(run),

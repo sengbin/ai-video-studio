@@ -4,7 +4,7 @@
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-03
-// 备注：必须先于 workbench.js 加载；对外是 window.aiSubmit.create(host)，返回面板元素与 refresh、select；预览只在面板可见时请求，并按选择、参数和镜头组任务状态去重；宿主提供的 host 见 create 的说明。
+// 备注：必须先于 workbench.js 加载；对外是 window.aiSubmit.create(host)，返回面板元素与 refresh、select；预览只在面板可见时请求，并按选择、参数和镜头组任务状态去重；宿主提供的 host 见 create 的说明；提交失败时保留已勾选的镜头组和“已了解提醒”的确认状态。
 // ------------------------------------------------------------------------
 
 'use strict';
@@ -49,8 +49,8 @@
    *   summarize: () => string,
    *   openTab: (id: string) => void,
    *   preview: (groupIds: number[]) => Promise<{ groups: object[] }>,
-   *   submit: (groupIds: number[]) => Promise<void>
-   * }} host 宿主页面提供的状态与操作：isSelectable 判断组能否勾选（没有进行中的任务），isPending 判断组是否“还没有结果也没有进行中任务”。
+   *   submit: (groupIds: number[]) => Promise<boolean>
+   * }} host 宿主页面提供的状态与操作：isSelectable 判断组能否勾选（没有进行中的任务），isPending 判断组是否“还没有结果也没有进行中任务”；submit 提交成功（至少有一组已入队）时返回 true，宿主返回错误或所选组都被拒绝时返回 false，面板据此决定是否清空勾选。
    * @returns {{ element: HTMLElement, refresh: () => void, select: (groupIds: number[]) => void }}
    */
   function create(host) {
@@ -108,15 +108,19 @@
       }, PREVIEW_DELAY_MS);
     }
 
+    /** 提交所选镜头组；只有宿主返回 true（至少有一组已提交）才清空勾选与确认状态，失败时保留，方便修正后重试。 */
     async function submit(ids) {
       isBusy = true;
       render();
+      let succeeded = false;
       try {
-        await host.submit(ids);
+        succeeded = (await host.submit(ids)) === true;
       } finally {
         isBusy = false;
-        selection = new Set();
-        acknowledged = false;
+        if (succeeded) {
+          selection = new Set();
+          acknowledged = false;
+        }
         previewKey = '';
         if (host.isVisible()) render();
       }
