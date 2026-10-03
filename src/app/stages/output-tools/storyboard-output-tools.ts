@@ -29,7 +29,7 @@ function createSoundSchema(params: StoryboardParams): Record<string, unknown> {
           enum: [...params.audioElements],
           description: params.audioElements.map((kind) => `${kind}：${SOUND_KIND_LABELS[kind]}`).join('；')
         },
-        speaker: { type: 'string', description: '说话的角色名称，仅角色对白（dialogue）填写，必须是已有的角色。' },
+        speaker: { type: 'string', description: '说话的角色名称，仅角色对白（dialogue）填写，必须是已有的角色。任何角色（包括动物、拟人角色）说的话都是对白，不能写成旁白。' },
         text: { type: 'string', description: '对白、旁白的台词；音效、背景音乐的描述。' },
         delivery: { type: 'string', description: '说话方式或声音质感，如“低声、急促”“紧张的弦乐”。' },
         startOffsetSeconds: { type: 'number', minimum: 0, description: '相对镜头起点的开始时间（秒），不确定时不填。' },

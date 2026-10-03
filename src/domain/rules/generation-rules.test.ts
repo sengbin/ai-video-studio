@@ -448,6 +448,14 @@ test('编译镜头：选择无声时不写声音提示词；音色参考只给�
   assert.ok(supported.prompt.includes('守夜人形象参考图1，守夜人音色参考音频1。'));
   assert.deepEqual(plan({ sounds }, [voiced]).referenceAudioFileIds, [], '模型不支持参考音频');
   assert.deepEqual(plan({}, [voiced], withVoiceModel).referenceAudioFileIds, [], '没有对白不需要音色参考');
+
+  const narrationOnly = [sound({ kind: 'narration', speakerEntityId: null, text: '要下雨了' })];
+  const unused = plan({ sounds: narrationOnly }, [voiced, { ...GUARD, entityId: 2, name: '新兵', voiceFileId: 202 }], withVoiceModel);
+  assert.deepEqual(unused.referenceAudioFileIds, []);
+  assert.ok(unused.warnings.includes('守夜人、新兵已绑定音色，但本组没有对白条目，音色未使用。'));
+  assert.ok(!supported.warnings.some((warning) => warning.includes('音色未使用')), '有对白时不提醒');
+  assert.ok(!plan({ sounds: narrationOnly }, [voiced], withVoiceModel, { ...PARAMS, audioElements: ['narration'] }).warnings.some((warning) => warning.includes('音色未使用')), '没选对白时不提醒');
+  assert.ok(!plan({ sounds: narrationOnly }, [voiced]).warnings.some((warning) => warning.includes('音色未使用')), '模型不支持参考音频时不提醒');
 });
 
 test('编译镜头：没有上一组可用的尾帧衔接、指定图片已不可用时给出提醒但不阻断', () => {

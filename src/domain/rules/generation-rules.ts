@@ -443,10 +443,20 @@ export function planGroupRequest(input: GroupPlanInput): JobSnapshot {
       shots.flatMap((shot) => shot.sounds.filter((sound) => sound.isEnabled && sound.kind === 'dialogue' && selected.includes('dialogue')).map((sound) => sound.speakerEntityId))
     );
     const audioLimit = hasFirstFrame ? null : capability.audioInputMax;
+    const silentVoiceNames: string[] = [];
     for (const entity of entities) {
-      if (audioLimit === null || entity.voiceFileId === null || !speakerIds.has(entity.entityId) || referenceAudioFileIds.length >= audioLimit.count) continue;
+      if (audioLimit === null || entity.voiceFileId === null) continue;
+      if (!speakerIds.has(entity.entityId)) {
+        if (selected.includes('dialogue')) silentVoiceNames.push(entity.name);
+        continue;
+      }
+      if (referenceAudioFileIds.length >= audioLimit.count) continue;
       referenceAudioFileIds.push(entity.voiceFileId);
       voiceNotes.push(`${entity.name}音色参考音频${referenceAudioFileIds.length}`);
+    }
+    // 绑定了音色却没有对白条目的角色，音色不会传给模型，提醒用户检查分镜里的声音类型和说话人。
+    if (silentVoiceNames.length > 0) {
+      warnings.push(`${silentVoiceNames.join('、')}已绑定音色，但本组没有对白条目，音色未使用。`);
     }
   }
 

@@ -128,8 +128,9 @@ function describeAudio(params: StoryboardParams): string {
     return '这是无声视频，不要生成任何声音条目。';
   }
   const kinds = params.audioElements.map((kind) => `${kind}（${SOUND_KIND_LABELS[kind]}）`).join('、');
+  const narrationRule = params.audioElements.includes('narration') ? '旁白（narration）只用于不属于任何角色的画外解说。' : '';
   const dialogue = params.audioElements.includes('dialogue')
-    ? '角色对白必须填写 speaker（已有的角色名称），台词取自剧本，可适当精简但不得改变原意。'
+    ? `任何角色（包括动物、拟人角色）说出的话，包括剧本里写成“角色名（语气）：台词”的每一行，都必须用 dialogue 并填写 speaker（已有的角色名称），语气和说话方式填在 delivery；${narrationRule}台词取自剧本，可适当精简但不得改变原意。`
     : '';
   return `只生成这些类型的声音条目：${kinds}。声音按出现顺序排列，没有声音的镜头给空数组。${dialogue}`;
 }
