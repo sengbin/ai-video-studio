@@ -1,18 +1,18 @@
 // ------------------------------------------------------------------------
 // 名称：text-settings-service.test.ts
-// 说明：文本生成设置服务的自动化测试：设置视图、修改校验，以及 Copilot 与千问文本模型二选一的规则。
+// 说明：文本模型设置服务的自动化测试：设置视图与可选模型列表、修改校验、作品单独选择文本模型的候选与保存。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-03
-// 备注：使用内存中的设置存储、模型清单与文本模型管理，不依赖 VS Code。
+// 备注：使用内存中的设置存储、Copilot 模型清单、服务商文本模型与作品选择，不依赖 VS Code。
 // ------------------------------------------------------------------------
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { ConflictError, NotFoundError, ValidationError } from '../../domain/errors';
-import { ModelKind } from '../../domain/models/model-capability';
-import { ModelRecord, ProviderView } from '../../domain/models/model-provider';
+import { ValidationError } from '../../domain/errors';
+import { ModelRecord, UsableModel } from '../../domain/models/model-provider';
 import { TextGenerationSettingsStore, TextModelCatalog, TextModelFamilies } from '../../domain/ports/text-generation-settings-store';
+import { WorkTextModelRepository } from '../../domain/ports/work-text-model-repository';
 import {
   SEGMENT_CHARS_MAX,
   SEGMENT_CHARS_MIN,
@@ -20,33 +20,32 @@ import {
   TextGenerationSettingsPatch
 } from '../../domain/rules/text-generation-settings';
 import {
-  COPILOT_OFF_NEEDS_MODEL_MESSAGE,
-  COPILOT_ON_CONFLICT_MESSAGE,
-  LAST_TEXT_MODEL_MESSAGE,
+  COPILOT_DISABLED_MESSAGE,
+  DEFAULT_FALLBACK_HINT,
   MODEL_MISSING_HINT,
-  NO_TEXT_ENGINE_NOTE,
-  TextModelAdmin,
+  MODEL_NOT_ENABLED_MESSAGE,
+  NO_TEXT_MODEL_NOTE,
+  TextModelSource,
   TextSettingsService
 } from './text-settings-service';
 
+const QIANWEN_KEY = 'model:fake/fake-text';
+const QIANWEN_LABEL = '假服务商 · 假文本模型';
+
 /** 内存中的设置存储。 */
 class MemoryStore implements TextGenerationSettingsStore {
-  settings: TextGenerationSettings = { copilotEnabled: true, modelFamily: '', novelSplit: { mode: 'chapter', maxSegmentChars: 20000 } };
+  settings: TextGenerationSettings = { copilotEnabled: true, defaultModel: 'copilot:', novelSplit: { mode: 'chapter', maxSegmentChars: 20000 } };
   readonly writes: TextGenerationSettingsPatch[] = [];
-  failWrites = false;
 
   read(): TextGenerationSettings {
     return this.settings;
   }
 
   async write(patch: TextGenerationSettingsPatch): Promise<void> {
-    if (this.failWrites) {
-      throw new Error('写入失败');
-    }
     this.writes.push(patch);
     this.settings = {
       copilotEnabled: patch.copilotEnabled ?? this.settings.copilotEnabled,
-      modelFamily: patch.modelFamily ?? this.settings.modelFamily,
+      defaultModel: patch.defaultModel ?? this.settings.defaultModel,
       novelSplit: {
         mode: patch.splitMode ?? this.settings.novelSplit.mode,
         maxSegmentChars: patch.maxSegmentChars ?? this.settings.novelSplit.maxSegmentChars
@@ -55,198 +54,154 @@ class MemoryStore implements TextGenerationSettingsStore {
   }
 }
 
-/** 内存中的模型管理：两个文本模型和一个视频模型。 */
-class MemoryModels implements TextModelAdmin {
-  readonly models: ModelRecord[] = [
-    createModel(1, 'text', '千问文本一'),
-    createModel(2, 'text', '千问文本二'),
-    createModel(3, 'video', '视频')
-  ];
+/** 内存中的作品选择。 */
+class MemoryWorkModels implements WorkTextModelRepository {
+  readonly saved = new Map<number, string>();
 
-  findModel(modelId: number): ModelRecord | undefined {
-    return this.models.find((model) => model.id === modelId);
+  find(workId: number): string | null {
+    return this.saved.get(workId) ?? null;
   }
 
-  listTextModels(): ModelRecord[] {
-    return this.models.filter((model) => model.kind === 'text');
-  }
-
-  disableTextModels(): void {
-    this.replaceEach((model) => (model.kind === 'text' ? { ...model, isEnabled: false } : model));
-  }
-
-  async setModelEnabled(rawInput: unknown): Promise<ProviderView> {
-    const { modelId, isEnabled } = rawInput as { modelId: number; isEnabled: boolean };
-    this.replaceEach((model) => (model.id === modelId ? { ...model, isEnabled } : model));
-    return { id: 1 } as ProviderView;
-  }
-
-  enable(...ids: number[]): void {
-    this.replaceEach((model) => (ids.includes(model.id) ? { ...model, isEnabled: true } : model));
-  }
-
-  enabledIds(): number[] {
-    return this.models.filter((model) => model.isEnabled).map((model) => model.id);
-  }
-
-  private replaceEach(change: (model: ModelRecord) => ModelRecord): void {
-    this.models.forEach((model, index) => {
-      this.models[index] = change(model);
-    });
+  save(workId: number, modelKey: string | null): void {
+    if (modelKey === null) this.saved.delete(workId);
+    else this.saved.set(workId, modelKey);
   }
 }
 
-function createModel(id: number, kind: ModelKind, displayName: string): ModelRecord {
-  return {
-    id,
-    providerId: 1,
-    code: `m${id}`,
-    displayName,
-    kind,
-    isEnabled: false,
-    capability: { contextTokens: 1, maxOutputTokens: 1, imageInput: false },
-    createdAt: '2026-10-03T00:00:00.000Z'
-  };
+/** 服务商文本模型：可以切换是否已启用。 */
+class MemoryModels implements TextModelSource {
+  enabled = false;
+
+  listSelectableTextModels(): UsableModel[] {
+    const model = { code: 'fake-text', displayName: '假文本模型', kind: 'text' } as ModelRecord;
+    return this.enabled ? [{ model, providerCode: 'fake', providerName: '假服务商' }] : [];
+  }
 }
 
-function createService(models: TextModelFamilies = { families: [] }) {
+function createService(families: TextModelFamilies = { families: ['claude-sonnet', 'gpt-4o'] }) {
   const store = new MemoryStore();
-  const admin = new MemoryModels();
-  const catalog: TextModelCatalog = { listFamilies: async () => models };
-  return { store, admin, service: new TextSettingsService(store, catalog, admin) };
+  const models = new MemoryModels();
+  const workModels = new MemoryWorkModels();
+  const catalog: TextModelCatalog = { listFamilies: async () => families };
+  return { store, models, workModels, service: new TextSettingsService(store, catalog, models, workModels) };
 }
 
-test('设置视图：默认使用 Copilot，返回可选模型与字数范围', async () => {
-  const { service } = createService({ families: ['claude-sonnet', 'gpt-4o'] });
+test('设置视图：默认启用 Copilot，列表是 Copilot 自动与各家族，字数范围随视图返回', async () => {
+  const { service } = createService();
   assert.deepEqual(await service.getView(), {
     copilotEnabled: true,
-    modelFamily: '',
+    defaultModel: 'copilot:',
+    choices: [
+      { key: 'copilot:', label: 'Copilot · 自动' },
+      { key: 'copilot:claude-sonnet', label: 'Copilot · claude-sonnet' },
+      { key: 'copilot:gpt-4o', label: 'Copilot · gpt-4o' }
+    ],
     splitMode: 'chapter',
     maxSegmentChars: 20000,
     segmentCharsRange: { min: SEGMENT_CHARS_MIN, max: SEGMENT_CHARS_MAX },
-    families: ['claude-sonnet', 'gpt-4o'],
     modelNote: null,
-    enabledTextModels: [],
     engineNote: null
   });
 });
 
-test('设置视图：没有可用模型时说明原因；已保存的模型不可用时提示将使用自动', async () => {
+test('设置视图：已启用的服务商文本模型出现在列表中，停用后不再出现', async () => {
+  const { models, service } = createService({ families: [] });
+  models.enabled = true;
+  assert.deepEqual((await service.getView()).choices.map((choice) => choice.key), ['copilot:', QIANWEN_KEY]);
+  models.enabled = false;
+  assert.deepEqual((await service.getView()).choices.map((choice) => choice.key), ['copilot:']);
+});
+
+test('设置视图：关闭 Copilot 后它的模型不再出现，不再查询 Copilot；没有任何可选模型时给出警告', async () => {
+  const { store, models, service } = createService({ families: ['gpt-4o'], unavailableReason: '不应出现' });
+  store.settings = { ...store.settings, copilotEnabled: false };
+  const none = await service.getView();
+  assert.deepEqual([none.choices, none.defaultModel, none.modelNote, none.engineNote], [[], '', null, NO_TEXT_MODEL_NOTE]);
+
+  models.enabled = true;
+  const view = await service.getView();
+  assert.deepEqual(view.choices, [{ key: QIANWEN_KEY, label: QIANWEN_LABEL }]);
+  assert.deepEqual([view.defaultModel, view.engineNote], [QIANWEN_KEY, null]);
+});
+
+test('设置视图：默认模型已不可用时显示实际使用的模型并提示；Copilot 不可用或所选家族不存在时说明原因', async () => {
+  const { store, models, service } = createService();
+  store.settings = { ...store.settings, copilotEnabled: false, defaultModel: 'copilot:gpt-4o' };
+  models.enabled = true;
+  const fallback = await service.getView();
+  assert.deepEqual([fallback.defaultModel, fallback.modelNote], [QIANWEN_KEY, DEFAULT_FALLBACK_HINT(QIANWEN_LABEL)]);
+
   const none = createService({ families: [], unavailableReason: '未检测到可用的 Copilot 模型。' });
-  none.store.settings = { ...none.store.settings, modelFamily: 'gpt-4o' };
   assert.equal((await none.service.getView()).modelNote, '未检测到可用的 Copilot 模型。');
 
   const missing = createService({ families: ['claude-sonnet'] });
-  missing.store.settings = { ...missing.store.settings, modelFamily: 'gpt-4o' };
-  assert.equal((await missing.service.getView()).modelNote, MODEL_MISSING_HINT);
-
-  const ok = createService({ families: ['gpt-4o'] });
-  ok.store.settings = { ...ok.store.settings, modelFamily: 'gpt-4o' };
-  assert.equal((await ok.service.getView()).modelNote, null);
+  missing.store.settings = { ...missing.store.settings, defaultModel: 'copilot:gpt-4o' };
+  const view = await missing.service.getView();
+  assert.equal(view.modelNote, MODEL_MISSING_HINT);
+  assert.deepEqual([view.defaultModel, view.choices.at(-1)?.label], ['copilot:gpt-4o', 'Copilot · gpt-4o（不可用）']);
 });
 
-test('设置视图：关闭 Copilot 后不再查询 Copilot 模型，显示已启用的千问文本模型；没有启用时给出警告', async () => {
-  const { store, admin, service } = createService({ families: ['gpt-4o'], unavailableReason: '不应出现' });
-  store.settings = { ...store.settings, copilotEnabled: false };
-
-  const warned = await service.getView();
-  assert.deepEqual([warned.families, warned.modelNote, warned.enabledTextModels, warned.engineNote], [[], null, [], NO_TEXT_ENGINE_NOTE]);
-
-  admin.enable(2);
-  const active = await service.getView();
-  assert.deepEqual([active.enabledTextModels, active.engineNote], [['千问文本二'], null]);
-});
-
-test('保存设置：只写出现的项，模型名去除空白，下次读取即为新值', async () => {
-  const { store, service } = createService({ families: ['gpt-4o'] });
-  await service.update({ modelFamily: ' gpt-4o ' });
+test('保存设置：只写出现的项，默认模型去除空白，下次读取即为新值', async () => {
+  const { store, models, service } = createService();
+  models.enabled = true;
+  await service.update({ defaultModel: ` ${QIANWEN_KEY} ` });
   await service.update({ splitMode: 'length', maxSegmentChars: 30000 });
-  assert.deepEqual(store.writes, [{ modelFamily: 'gpt-4o' }, { splitMode: 'length', maxSegmentChars: 30000 }]);
+  await service.update({ copilotEnabled: false });
+  assert.deepEqual(store.writes, [{ defaultModel: QIANWEN_KEY }, { splitMode: 'length', maxSegmentChars: 30000 }, { copilotEnabled: false }]);
   const view = await service.getView();
-  assert.deepEqual([view.modelFamily, view.splitMode, view.maxSegmentChars], ['gpt-4o', 'length', 30000]);
+  assert.deepEqual([view.defaultModel, view.splitMode, view.maxSegmentChars, view.copilotEnabled], [QIANWEN_KEY, 'length', 30000, false]);
 });
 
-test('保存设置：不合法的值被拒绝且不写入', async () => {
+test('保存设置：不合法的值、关闭的 Copilot、未启用的模型被拒绝且不写入', async () => {
   const { store, service } = createService();
-  const rejected = async (patch: unknown) =>
-    assert.rejects(() => service.update(patch), (error) => error instanceof ValidationError);
+  const rejected = async (patch: unknown, message?: string) =>
+    assert.rejects(
+      () => service.update(patch),
+      (error) => error instanceof ValidationError && (message === undefined || Object.values(error.fieldErrors).includes(message))
+    );
 
   await rejected({ splitMode: 'paragraph' });
   await rejected({ maxSegmentChars: SEGMENT_CHARS_MIN - 1 });
-  await rejected({ maxSegmentChars: SEGMENT_CHARS_MAX + 1 });
-  await rejected({ maxSegmentChars: 20000.5 });
   await rejected({ maxSegmentChars: '20000' });
-  await rejected({ modelFamily: 5 });
-  await rejected({ modelFamily: 'x'.repeat(101) });
   await rejected({ copilotEnabled: 'false' });
+  await rejected({ defaultModel: 'gpt-4o' });
+  await rejected({ defaultModel: QIANWEN_KEY }, MODEL_NOT_ENABLED_MESSAGE);
   await rejected({});
   await rejected(null);
   assert.equal(store.writes.length, 0);
-});
 
-test('关闭 Copilot：没有启用的千问文本模型时被拒绝，有则保存', async () => {
-  const { store, admin, service } = createService();
-  await assert.rejects(
-    () => service.update({ copilotEnabled: false }),
-    (error) => error instanceof ValidationError && error.fieldErrors.copilotEnabled === COPILOT_OFF_NEEDS_MODEL_MESSAGE
-  );
-  assert.equal(store.settings.copilotEnabled, true);
-
-  admin.enable(1);
-  await service.update({ copilotEnabled: false });
-  assert.equal(store.settings.copilotEnabled, false);
-});
-
-test('启用 Copilot：自动停用全部千问文本模型，不影响其他类型的模型', async () => {
-  const { store, admin, service } = createService();
   store.settings = { ...store.settings, copilotEnabled: false };
-  admin.enable(1, 2, 3);
-  await service.update({ copilotEnabled: true });
-  assert.equal(store.settings.copilotEnabled, true);
-  assert.deepEqual(admin.enabledIds(), [3]);
+  await rejected({ defaultModel: 'copilot:gpt-4o' }, COPILOT_DISABLED_MESSAGE);
+  assert.equal(store.writes.length, 0);
 });
 
-test('启用千问文本模型：正在使用 Copilot 时必须同意关闭，同意后一并关闭 Copilot', async () => {
-  const { store, admin, service } = createService();
-  await assert.rejects(
-    () => service.setModelEnabled({ modelId: 1, isEnabled: true }),
-    (error) => error instanceof ConflictError && error.message === COPILOT_ON_CONFLICT_MESSAGE
-  );
-  await assert.rejects(() => service.setModelEnabled({ modelId: 1, isEnabled: true, closeCopilot: 'yes' }), ConflictError);
-  assert.deepEqual([store.settings.copilotEnabled, admin.enabledIds()], [true, []]);
+test('作品的文本模型：候选与默认名称随设置变化，选择只在仍可用时生效', async () => {
+  const { models, workModels, service } = createService({ families: ['gpt-4o'] });
+  models.enabled = true;
 
-  await service.setModelEnabled({ modelId: 1, isEnabled: true, closeCopilot: true });
-  assert.deepEqual([store.settings.copilotEnabled, admin.enabledIds()], [false, [1]]);
+  const fresh = await service.getWorkState(null);
+  assert.deepEqual([fresh.defaultLabel, fresh.selectedKey, fresh.choices.map((choice) => choice.key)], ['Copilot · 自动', null, ['copilot:', 'copilot:gpt-4o', QIANWEN_KEY]]);
+
+  service.setWorkModel(7, QIANWEN_KEY);
+  assert.equal(workModels.find(7), QIANWEN_KEY);
+  assert.equal((await service.getWorkState(7)).selectedKey, QIANWEN_KEY);
+  assert.equal((await service.getWorkState(8)).selectedKey, null);
+
+  // 模型被停用后，作品的选择不再出现在候选中，沿用默认；记录保留，重新启用后恢复。
+  models.enabled = false;
+  assert.equal((await service.getWorkState(7)).selectedKey, null);
+  models.enabled = true;
+  assert.equal((await service.getWorkState(7)).selectedKey, QIANWEN_KEY);
+
+  service.setWorkModel(7, null);
+  assert.equal(workModels.find(7), null);
 });
 
-test('启用千问文本模型：没能关闭 Copilot 时撤销启用并抛出原错误', async () => {
-  const { store, admin, service } = createService();
-  store.failWrites = true;
-  await assert.rejects(() => service.setModelEnabled({ modelId: 1, isEnabled: true, closeCopilot: true }), /写入失败/);
-  assert.deepEqual([store.settings.copilotEnabled, admin.enabledIds()], [true, []]);
-});
-
-test('千问文本模型：Copilot 已关闭时可以直接启用其他模型，停用最后一个模型被拒绝', async () => {
-  const { store, admin, service } = createService();
+test('作品的文本模型：选用不可用的模型被拒绝', async () => {
+  const { store, workModels, service } = createService();
+  assert.throws(() => service.setWorkModel(1, QIANWEN_KEY), (error) => error instanceof ValidationError && error.fieldErrors.textModel === MODEL_NOT_ENABLED_MESSAGE);
+  assert.throws(() => service.setWorkModel(1, 'bad'), ValidationError);
   store.settings = { ...store.settings, copilotEnabled: false };
-  admin.enable(1);
-
-  await service.setModelEnabled({ modelId: 2, isEnabled: true });
-  await service.setModelEnabled({ modelId: 1, isEnabled: false });
-  assert.deepEqual(admin.enabledIds(), [2]);
-
-  await assert.rejects(
-    () => service.setModelEnabled({ modelId: 2, isEnabled: false }),
-    (error) => error instanceof ValidationError && error.fieldErrors.isEnabled === LAST_TEXT_MODEL_MESSAGE
-  );
-  assert.deepEqual(admin.enabledIds(), [2]);
-});
-
-test('千问文本模型：使用 Copilot 时停用文本模型不受限制；非文本模型不受二选一规则影响；模型不存在时未找到', async () => {
-  const { admin, service } = createService();
-  await service.setModelEnabled({ modelId: 2, isEnabled: false });
-  await service.setModelEnabled({ modelId: 3, isEnabled: true });
-  assert.deepEqual(admin.enabledIds(), [3]);
-  await assert.rejects(() => service.setModelEnabled({ modelId: 99, isEnabled: true }), NotFoundError);
-  await assert.rejects(() => service.setModelEnabled({ modelId: 1, isEnabled: 'on' }), ValidationError);
+  assert.throws(() => service.setWorkModel(1, 'copilot:gpt-4o'), (error) => error instanceof ValidationError && error.fieldErrors.textModel === COPILOT_DISABLED_MESSAGE);
+  assert.equal(workModels.find(1), null);
 });

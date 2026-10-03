@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：text-generation-settings.ts
-// 说明：文本生成设置的规范化：是否使用 Copilot、Copilot 模型家族、小说分段方式与每段字数上限。
+// 说明：文本生成设置的规范化：是否启用 Copilot、全局默认文本模型、小说分段方式与每段字数上限。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-09-30
@@ -9,27 +9,30 @@
 
 import { FORM_LEVEL_ERROR_KEY, ValidationError } from '../errors';
 import { NovelSplitMode, NovelSplitSettings } from './novel-splitter';
+import { TEXT_MODEL_KEY_MAX_LENGTH, copilotModelKey, parseTextModelKey } from './text-model-selection';
 
 /** 每段字数上限的允许范围与默认值。 */
 export const SEGMENT_CHARS_MIN = 2000;
 export const SEGMENT_CHARS_MAX = 100000;
 export const DEFAULT_SEGMENT_CHARS = 20000;
 export const DEFAULT_SPLIT_MODE: NovelSplitMode = 'chapter';
-/** 默认使用 Copilot 生成文本，已有用户升级后行为不变。 */
+/** 默认启用 Copilot，已有用户升级后行为不变。 */
 export const DEFAULT_COPILOT_ENABLED = true;
 
 /** 文本生成设置。 */
 export interface TextGenerationSettings {
-  /** 是否使用 VS Code 内置的 Copilot 生成文本；为 false 时使用千问AI平台的文本模型。 */
+  /** 是否启用 VS Code 内置的 Copilot：关闭后 Copilot 的模型不再出现在文本模型选择列表中。 */
   readonly copilotEnabled: boolean;
-  /** Copilot 模型家族；空串表示自动选择。 */
-  readonly modelFamily: string;
+  /** 全局默认文本模型的键（见 text-model-selection.ts）；作品没有单独选择时使用。 */
+  readonly defaultModel: string;
   readonly novelSplit: NovelSplitSettings;
 }
 
 /** 从设置中读到的原始值，类型未知。 */
 export interface RawTextGenerationSettings {
   readonly copilotEnabled?: unknown;
+  readonly defaultModel?: unknown;
+  /** 旧版的 Copilot 模型家族；没有设置默认模型时按它推出默认值。 */
   readonly modelFamily?: unknown;
   readonly splitMode?: unknown;
   readonly maxSegmentChars?: unknown;
@@ -41,25 +44,24 @@ export interface RawTextGenerationSettings {
  */
 export function normalizeTextGenerationSettings(raw: RawTextGenerationSettings): TextGenerationSettings {
   const copilotEnabled = typeof raw.copilotEnabled === 'boolean' ? raw.copilotEnabled : DEFAULT_COPILOT_ENABLED;
-  const modelFamily = typeof raw.modelFamily === 'string' ? raw.modelFamily.trim() : '';
+  const legacyFamily = typeof raw.modelFamily === 'string' ? raw.modelFamily.trim() : '';
+  const configuredModel = typeof raw.defaultModel === 'string' ? raw.defaultModel.trim() : '';
+  const defaultModel = parseTextModelKey(configuredModel) === undefined ? copilotModelKey(legacyFamily) : configuredModel;
   const mode: NovelSplitMode = raw.splitMode === 'length' || raw.splitMode === 'chapter' ? raw.splitMode : DEFAULT_SPLIT_MODE;
   const maxSegmentChars =
     typeof raw.maxSegmentChars === 'number' && Number.isFinite(raw.maxSegmentChars)
       ? Math.min(SEGMENT_CHARS_MAX, Math.max(SEGMENT_CHARS_MIN, Math.floor(raw.maxSegmentChars)))
       : DEFAULT_SEGMENT_CHARS;
-  return { copilotEnabled, modelFamily, novelSplit: { mode, maxSegmentChars } };
+  return { copilotEnabled, defaultModel, novelSplit: { mode, maxSegmentChars } };
 }
 
 /** 对文本生成设置的一次修改，只包含要改的项，已经过校验。 */
 export interface TextGenerationSettingsPatch {
   readonly copilotEnabled?: boolean;
-  readonly modelFamily?: string;
+  readonly defaultModel?: string;
   readonly splitMode?: NovelSplitMode;
   readonly maxSegmentChars?: number;
 }
-
-/** 模型家族名称的最大长度。 */
-export const MODEL_FAMILY_MAX_LENGTH = 100;
 
 /**
  * 校验设置页提交的修改：与读取时“回退默认值”不同，这里不合法的值直接拒绝，让用户知道没有保存。
@@ -78,14 +80,15 @@ export function normalizeTextGenerationSettingsPatch(rawInput: unknown): TextGen
     if (typeof source.copilotEnabled === 'boolean') {
       patch.copilotEnabled = source.copilotEnabled;
     } else {
-      errors.copilotEnabled = '是否使用 Copilot 必须是开或关。';
+      errors.copilotEnabled = '是否启用 Copilot 必须是开或关。';
     }
   }
-  if (source.modelFamily !== undefined) {
-    if (typeof source.modelFamily !== 'string' || source.modelFamily.trim().length > MODEL_FAMILY_MAX_LENGTH) {
-      errors.modelFamily = `Copilot 模型必须是不超过 ${MODEL_FAMILY_MAX_LENGTH} 字的文本。`;
+  if (source.defaultModel !== undefined) {
+    const key = typeof source.defaultModel === 'string' ? source.defaultModel.trim() : '';
+    if (key.length > TEXT_MODEL_KEY_MAX_LENGTH || parseTextModelKey(key) === undefined) {
+      errors.defaultModel = '默认文本模型无效，请从列表中选择。';
     } else {
-      patch.modelFamily = source.modelFamily.trim();
+      patch.defaultModel = key;
     }
   }
   if (source.splitMode !== undefined) {

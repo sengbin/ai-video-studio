@@ -23,16 +23,14 @@ const SYSTEM_SEPARATOR = '\n\n---\n\n';
 /** 输出工具追加在用户段末尾的说明。 */
 const TOOL_INSTRUCTION = (name: string): string => `\n\n请调用工具 ${name} 提交结果，工具参数就是上面要求的字段。`;
 
-/** 提供当前设置中的模型家族；空串表示自动选择。 */
-export interface CopilotModelSettings {
-  getModelFamily(): string;
-}
-
-/** 基于 vscode.lm 的 Copilot 文本生成。 */
+/** 基于 vscode.lm 的 Copilot 文本生成；每个实例固定使用一个模型家族。 */
 export class CopilotTextGeneration implements TextGenerationPort {
   private model: vscode.LanguageModelChat | undefined;
 
-  constructor(private readonly settings: CopilotModelSettings) {}
+  /**
+   * @param family 模型家族；空串表示自动选择，所选家族不可用时回退到任意可用的 Copilot 模型。
+   */
+  constructor(private readonly family: string = '') {}
 
   async resolveModel(): Promise<TextModelInfo> {
     const model = await this.selectModel();
@@ -84,7 +82,7 @@ export class CopilotTextGeneration implements TextGenerationPort {
         }
       }
       if (toolInput === undefined) {
-        throw new TextGenerationError('failed', '模型没有通过工具返回结果，当前模型可能不支持工具调用，请在设置中更换 Copilot 模型。');
+        throw new TextGenerationError('failed', '模型没有通过工具返回结果，当前模型可能不支持工具调用，请在“模型设置”中更换文本模型。');
       }
       return toolInput;
     } catch (error) {
@@ -103,8 +101,7 @@ export class CopilotTextGeneration implements TextGenerationPort {
   /** 按设置选择模型：所选家族不可用时回退到任意可用的 Copilot 模型。 */
   private async selectModel(): Promise<vscode.LanguageModelChat> {
     try {
-      const family = this.settings.getModelFamily();
-      let models = family === '' ? [] : await vscode.lm.selectChatModels({ vendor: COPILOT_VENDOR, family });
+      let models = this.family === '' ? [] : await vscode.lm.selectChatModels({ vendor: COPILOT_VENDOR, family: this.family });
       if (models.length === 0) {
         models = await vscode.lm.selectChatModels({ vendor: COPILOT_VENDOR });
       }

@@ -138,7 +138,7 @@ export class SqliteProviderRepository implements ProviderRepository {
         .prepare('SELECT id FROM models WHERE provider_id = ? AND code = ?')
         .get(providerId, descriptor.code) as unknown as { id: number } | undefined;
       if (existing === undefined) {
-        // 文本模型默认不启用：文本生成默认使用 Copilot，启用千问文本模型需要用户确认并关闭 Copilot。
+        // 文本模型默认不启用：用户在服务商设置中主动启用后才出现在文本模型选择列表中。
         const result = this.database
           .prepare('INSERT INTO models (provider_id, code, display_name, kind, is_enabled, created_at) VALUES (?, ?, ?, ?, ?, ?)')
           .run(providerId, descriptor.code, descriptor.displayName, descriptor.kind, descriptor.kind === 'text' ? 0 : 1, timestamp);

@@ -13,6 +13,7 @@ import { ProviderRegistry } from '../../domain/ports/provider-registry';
 import { FakeTextProvider, FakeVideoProvider } from '../../domain/ports/testing/fake-model-providers';
 import { MemorySecretStore } from '../../domain/ports/testing/memory-secret-store';
 import { TextGenerationSettingsStore } from '../../domain/ports/text-generation-settings-store';
+import { WorkTextModelRepository } from '../../domain/ports/work-text-model-repository';
 import { TextGenerationSettings, TextGenerationSettingsPatch } from '../../domain/rules/text-generation-settings';
 import { IN_MEMORY_DATABASE_PATH, openDatabase } from '../../infra/database/database-connection';
 import { SqliteProviderRepository } from '../../infra/database/sqlite-provider-repository';
@@ -23,9 +24,12 @@ import { SETTINGS_REQUESTS, registerSettingsHandlers } from './settings-handlers
 
 /** 不保存任何内容的设置存储，本测试只关心路由。 */
 const STORE: TextGenerationSettingsStore = {
-  read: (): TextGenerationSettings => ({ copilotEnabled: true, modelFamily: '', novelSplit: { mode: 'chapter', maxSegmentChars: 20000 } }),
+  read: (): TextGenerationSettings => ({ copilotEnabled: true, defaultModel: 'copilot:', novelSplit: { mode: 'chapter', maxSegmentChars: 20000 } }),
   write: async () => undefined
 };
+
+/** 不保存任何内容的作品文本模型选择。 */
+const NO_WORK_MODELS: WorkTextModelRepository = { find: () => null, save: () => undefined };
 
 function createRouter() {
   const providers = new ProviderService({
@@ -35,7 +39,7 @@ function createRouter() {
   });
   providers.syncCatalog();
   const router = new MessageRouter();
-  registerSettingsHandlers(router, { text: new TextSettingsService(STORE, { listFamilies: async () => ({ families: ['gpt-4o'] }) }, providers), providers });
+  registerSettingsHandlers(router, { text: new TextSettingsService(STORE, { listFamilies: async () => ({ families: ['gpt-4o'] }) }, providers, NO_WORK_MODELS), providers });
   const send = (name: string, payload?: unknown) => router.handle({ type: 'request', requestId: 1, name, payload });
   /** 发送请求并断言成功，返回响应数据。 */
   const callOk = async <T>(name: string, payload?: unknown): Promise<T> => {
@@ -60,14 +64,14 @@ interface ProviderData {
 }
 
 interface LoadedData {
-  readonly text: { readonly families: string[] };
+  readonly text: { readonly choices: Array<{ key: string }> };
   readonly providers: ProviderData[];
 }
 
 test('加载：同时返回文本生成设置与服务商视图', async () => {
   const { callOk } = createRouter();
   const data = await callOk<LoadedData>(SETTINGS_REQUESTS.load);
-  assert.deepEqual(data.text.families, ['gpt-4o']);
+  assert.deepEqual(data.text.choices.map((choice) => choice.key), ['copilot:', 'copilot:gpt-4o']);
   assert.equal(data.providers.length, 1);
   assert.equal(data.providers[0].models.length, 1);
 });
@@ -110,12 +114,12 @@ test('服务商修改请求：校验失败返回字段错误，服务商不存�
   assert.equal(missing.kind, 'not-found');
 });
 
-test('文本模型请求：Copilot 与千问文本模型二选一，经路由器的错误种类与响应符合约定', async () => {
-  let settings: TextGenerationSettings = { copilotEnabled: true, modelFamily: '', novelSplit: { mode: 'chapter', maxSegmentChars: 20000 } };
+test('文本模型请求：默认模型与 Copilot 开关即时保存，选用未启用的模型返回字段错误，启用服务商文本模型后即可选用', async () => {
+  let settings: TextGenerationSettings = { copilotEnabled: true, defaultModel: 'copilot:', novelSplit: { mode: 'chapter', maxSegmentChars: 20000 } };
   const store: TextGenerationSettingsStore = {
     read: () => settings,
     write: async (patch: TextGenerationSettingsPatch) => {
-      settings = { ...settings, copilotEnabled: patch.copilotEnabled ?? settings.copilotEnabled };
+      settings = { ...settings, copilotEnabled: patch.copilotEnabled ?? settings.copilotEnabled, defaultModel: patch.defaultModel ?? settings.defaultModel };
     }
   };
   const providers = new ProviderService({
@@ -125,31 +129,35 @@ test('文本模型请求：Copilot 与千问文本模型二选一，经路由器
   });
   providers.syncCatalog();
   const router = new MessageRouter();
-  registerSettingsHandlers(router, { text: new TextSettingsService(store, { listFamilies: async () => ({ families: [] }) }, providers), providers });
+  registerSettingsHandlers(router, { text: new TextSettingsService(store, { listFamilies: async () => ({ families: [] }) }, providers, NO_WORK_MODELS), providers });
   const send = async (name: string, payload?: unknown) => {
     const response = await router.handle({ type: 'request', requestId: 1, name, payload });
     assert.ok(response !== undefined);
     return response;
   };
+  const loadChoices = async () => {
+    const loaded = await send(SETTINGS_REQUESTS.load);
+    assert.ok(loaded.ok);
+    return (loaded.data as { text: { choices: Array<{ key: string }> } }).text.choices.map((choice) => choice.key);
+  };
 
-  const textModel = providers.listTextModels()[0];
-  const video = (await providers.listViews())[0].models.find((model) => model.kind === 'video')!;
-  assert.equal(textModel.isEnabled, false);
+  assert.deepEqual(await loadChoices(), ['copilot:']);
+  const rejected = await send(SETTINGS_REQUESTS.update, { defaultModel: 'model:fake/fake-text' });
+  assert.ok(!rejected.ok && rejected.error.kind === 'validation' && rejected.error.fieldErrors?.defaultModel);
 
-  // 正在使用 Copilot：不同意关闭就启用会冲突；关闭 Copilot 前也必须已有启用的文本模型。
-  const conflict = await send(SETTINGS_REQUESTS.modelSetEnabled, { modelId: textModel.id, isEnabled: true });
-  assert.ok(!conflict.ok && conflict.error.kind === 'conflict');
-  const noModel = await send(SETTINGS_REQUESTS.update, { copilotEnabled: false });
-  assert.ok(!noModel.ok && noModel.error.kind === 'validation' && noModel.error.fieldErrors?.copilotEnabled);
+  const text = providers.listSelectableTextModels();
+  assert.equal(text.length, 0);
+  const view = (await providers.listViews())[0];
+  const model = view.models.find((item) => item.kind === 'text')!;
+  assert.ok((await send(SETTINGS_REQUESTS.modelSetEnabled, { modelId: model.id, isEnabled: true })).ok);
+  assert.deepEqual(await loadChoices(), ['copilot:', 'model:fake/fake-text']);
 
-  // 同意后启用文本模型并关闭 Copilot；视频模型不受二选一影响。
-  assert.ok((await send(SETTINGS_REQUESTS.modelSetEnabled, { modelId: textModel.id, isEnabled: true, closeCopilot: true })).ok);
-  assert.equal(settings.copilotEnabled, false);
-  assert.ok((await send(SETTINGS_REQUESTS.modelSetEnabled, { modelId: video.id, isEnabled: false })).ok);
+  assert.ok((await send(SETTINGS_REQUESTS.update, { defaultModel: 'model:fake/fake-text' })).ok);
+  assert.ok((await send(SETTINGS_REQUESTS.update, { copilotEnabled: false })).ok);
+  assert.deepEqual(await loadChoices(), ['model:fake/fake-text']);
+  assert.deepEqual([settings.defaultModel, settings.copilotEnabled], ['model:fake/fake-text', false]);
 
-  // 最后一个文本模型不能停用；重新启用 Copilot 后文本模型自动停用。
-  const last = await send(SETTINGS_REQUESTS.modelSetEnabled, { modelId: textModel.id, isEnabled: false });
-  assert.ok(!last.ok && last.error.kind === 'validation');
-  assert.ok((await send(SETTINGS_REQUESTS.update, { copilotEnabled: true })).ok);
-  assert.deepEqual(providers.listTextModels().map((model) => model.isEnabled), [false]);
+  // 停用模型后它不再出现在列表中。
+  assert.ok((await send(SETTINGS_REQUESTS.modelSetEnabled, { modelId: model.id, isEnabled: false })).ok);
+  assert.deepEqual(await loadChoices(), []);
 });

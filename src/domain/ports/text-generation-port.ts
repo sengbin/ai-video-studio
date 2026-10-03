@@ -44,6 +44,15 @@ export interface TextModelInfo {
   readonly maxInputTokens: number;
 }
 
+/** 按作品提供文本生成端口：作品可以单独选择文本模型，没有单独选择时使用全局默认。 */
+export interface TextGenerationSource {
+  /**
+   * 取得某个作品使用的文本生成端口；返回的端口在 resolveModel 时按当时的设置选定模型，之后的调用沿用该选择。
+   * @param workId 作品标识；null 表示不属于任何作品（如资产提示词），使用全局默认。
+   */
+  forWork(workId: number | null): TextGenerationPort;
+}
+
 /** 文本生成端口。 */
 export interface TextGenerationPort {
   /**

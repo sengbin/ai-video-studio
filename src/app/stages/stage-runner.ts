@@ -10,7 +10,7 @@
 import { NotFoundError, TextGenerationError, ValidationError, FORM_LEVEL_ERROR_KEY } from '../../domain/errors';
 import { StageRun, StageTarget } from '../../domain/models/stage-run';
 import { StageRunRepository } from '../../domain/ports/stage-run-repository';
-import { TextGenerationPort, TextModelInfo } from '../../domain/ports/text-generation-port';
+import { TextGenerationPort, TextGenerationSource, TextModelInfo } from '../../domain/ports/text-generation-port';
 import { UPSTREAM_STAGE, assertCanStart, canRetry } from '../../domain/rules/stage-review-rules';
 import { InvalidOutputError } from './structured-generation';
 import { StageWorkflow } from './stage-workflow';
@@ -28,7 +28,8 @@ export interface StartStageRequest {
 /** 阶段执行器的依赖。 */
 export interface StageRunnerDependencies {
   readonly runs: StageRunRepository;
-  readonly text: TextGenerationPort;
+  /** 文本生成来源：每次生成按作品取得端口，作品可以单独选择文本模型。 */
+  readonly texts: TextGenerationSource;
   readonly workflows: readonly StageWorkflow[];
   /** 时钟，测试时可替换。 */
   readonly now?: () => Date;
@@ -55,9 +56,10 @@ export class StageRunner {
    * @throws TextGenerationError 没有可用的文本模型。
    */
   async start(request: StartStageRequest): Promise<StageRun> {
-    const { runs, text } = this.dependencies;
+    const { runs, texts } = this.dependencies;
     const workflow = this.workflowFor(request.target.stage);
     const input = workflow.normalizeInput(request.input);
+    const text = texts.forWork(request.target.workId);
     const model = await text.resolveModel();
 
     // 模型解析是异步的，检查与创建放在其后同步完成，避免并发启动时重复创建。
@@ -76,7 +78,7 @@ export class StageRunner {
       },
       this.timestamp()
     );
-    this.launch(run, workflow, model);
+    this.launch(run, workflow, model, text);
     return run;
   }
 
@@ -86,7 +88,7 @@ export class StageRunner {
    * @throws ValidationError 记录不是失败或已取消，或同一目标正在生成。
    */
   async resume(runId: number): Promise<StageRun> {
-    const { runs, text } = this.dependencies;
+    const { runs, texts } = this.dependencies;
     const existing = runs.findById(runId);
     if (existing === undefined) {
       throw new NotFoundError('阶段记录不存在。');
@@ -95,6 +97,7 @@ export class StageRunner {
       throw new ValidationError({ [FORM_LEVEL_ERROR_KEY]: '只有失败或已取消的记录才能重试。' });
     }
     const workflow = this.workflowFor(existing.stage);
+    const text = texts.forWork(existing.workId);
     const model = await text.resolveModel();
 
     if (runs.findRunning(existing) !== undefined) {
@@ -105,7 +108,7 @@ export class StageRunner {
       throw new NotFoundError('阶段记录不存在。');
     }
     this.publish(resumed);
-    this.launch(resumed, workflow, model);
+    this.launch(resumed, workflow, model, text);
     return resumed;
   }
 
@@ -117,7 +120,7 @@ export class StageRunner {
    * @throws TextGenerationError 没有可用的文本模型。
    */
   async reextract(runId: number, beforeLaunch: () => void): Promise<StageRun> {
-    const { runs, text } = this.dependencies;
+    const { runs, texts } = this.dependencies;
     const existing = runs.findById(runId);
     if (existing === undefined) {
       throw new NotFoundError('阶段记录不存在。');
@@ -126,6 +129,7 @@ export class StageRunner {
       throw new ValidationError({ [FORM_LEVEL_ERROR_KEY]: '生成成功后才能重新抽取。' });
     }
     const workflow = this.workflowFor(existing.stage);
+    const text = texts.forWork(existing.workId);
     const model = await text.resolveModel();
 
     if (runs.findRunning(existing) !== undefined) {
@@ -137,7 +141,7 @@ export class StageRunner {
       throw new NotFoundError('阶段记录不存在。');
     }
     this.publish(reopened);
-    this.launch(reopened, workflow, model);
+    this.launch(reopened, workflow, model, text);
     return reopened;
   }
 
@@ -186,17 +190,17 @@ export class StageRunner {
   }
 
   /** 在后台启动执行，登记到活动列表，结束后移除。 */
-  private launch(run: StageRun, workflow: StageWorkflow, model: TextModelInfo): void {
+  private launch(run: StageRun, workflow: StageWorkflow, model: TextModelInfo, text: TextGenerationPort): void {
     const controller = new AbortController();
-    const done = this.execute(run, workflow, model, controller.signal).finally(() => {
+    const done = this.execute(run, workflow, model, text, controller.signal).finally(() => {
       this.active.delete(run.id);
     });
     this.active.set(run.id, { controller, done });
   }
 
   /** 执行工作流，并把结果记录为成功、失败或已取消；不向外抛出异常。 */
-  private async execute(run: StageRun, workflow: StageWorkflow, model: TextModelInfo, signal: AbortSignal): Promise<void> {
-    const { runs, text } = this.dependencies;
+  private async execute(run: StageRun, workflow: StageWorkflow, model: TextModelInfo, text: TextGenerationPort, signal: AbortSignal): Promise<void> {
+    const { runs } = this.dependencies;
     try {
       await workflow.execute({
         run,

@@ -442,18 +442,19 @@ stateDiagram-v2
 
 ### 6.5 设置项
 
-在“文本生成”设置页（见 [page-form-design.md](page-form-design.md) F7）中选择，保存到 VS Code 用户设置：
+在“模型设置”页的“文本生成”分组（见 [page-form-design.md](page-form-design.md) F7）中选择，保存到 VS Code 用户设置：
 
 | 设置 | 键 | 取值 | 默认 |
 |---|---|---|---|
-| 使用 Copilot | `aigcVideoStudio.copilot.enabled` | 布尔；为 true 时由 Copilot 生成文本，为 false 时由已启用的千问AI平台文本模型生成；两者二选一且至少启用其一 | 开启 |
-| Copilot 模型 | `aigcVideoStudio.copilot.modelFamily` | 空串表示自动；否则为 `selectChatModels({ vendor: 'copilot' })` 当前可用模型的 `family` | 自动 |
+| 启用 Copilot | `aigcVideoStudio.copilot.enabled` | 布尔；为 false 时 Copilot 的模型不再出现在文本模型选择列表中 | 开启 |
+| 默认文本模型 | `aigcVideoStudio.text.defaultModel` | 文本模型键：`copilot:<家族>`（家族为空表示自动）或 `model:<服务商代码>/<模型代码>`；作品没有单独选择时使用 | 空（沿用下一行的旧设置，仍为空则 Copilot 自动） |
+| Copilot 模型家族（已弃用） | `aigcVideoStudio.copilot.modelFamily` | 仅在没有设置默认文本模型时，作为 Copilot 的模型家族 | 空 |
 | 小说分段方式 | `aigcVideoStudio.novel.splitMode` | `chapter` 按章节、`length` 按字数 | `chapter` |
 | 每段字数上限 | `aigcVideoStudio.novel.maxSegmentChars` | 正整数 | 20000（建议值，实现时可调） |
 
-所选模型不可用时回退到自动并在页面提示。小说分段方式与每段字数上限是公共设置，不论使用 Copilot 还是千问文本模型都生效，也不在每个模型上单独设置。
+可选的文本模型 = Copilot（启用时）的“自动”与各模型家族 + 已启用的服务商文本模型（模型与服务商都启用）；被关闭或停用的不再出现在列表中。已保存的选择不再可用时，作品回退到全局默认，全局默认回退到第一个可用模型，并在页面提示。小说分段方式与每段字数上限是公共设置，不论使用哪个文本模型都生效，也不在每个模型上单独设置。
 
-文本生成端口由路由实现（`TextGenerationRouter`）：每次生成前按“使用 Copilot”选择引擎——启用时走 Copilot；关闭时使用第一个已启用的千问文本模型，通过 OpenAI 兼容的流式对话接口调用，强制模型调用输出工具并关闭思考。二选一的规则由文本设置服务统一校验：启用 Copilot 会自动停用全部千问文本模型；启用千问文本模型时若正在使用 Copilot，需要用户确认并同时关闭 Copilot；关闭 Copilot 前必须已有启用的千问文本模型，关闭 Copilot 后不能停用最后一个文本模型。千问文本模型默认不启用。
+**选择与继承只有两级**：全局默认（模型设置页）→ 作品（新建、编辑作品时的“文本模型”字段，默认“沿用默认”）。作品的选择保存在 `work_text_models` 表，随作品删除而清除；资产提示词不属于任何作品，使用全局默认。文本生成由 `TextGenerationRouter` 按作品取得端口（`forWork`）：每次生成前按“作品的选择、全局默认、第一个可用模型”的顺序选定模型，之后同一次生成沿用该选择，不同作品的并发生成互不影响。千问文本模型通过 OpenAI 兼容的流式对话接口调用，强制模型调用输出工具并关闭思考，输入 token 数按字符估算；服务商文本模型默认不启用，在服务商设置页启用后才可选。
 
 ### 6.6 提示词与输出格式
 

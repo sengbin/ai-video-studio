@@ -53,7 +53,7 @@ test('联合运行：小说改编写入章节与阶段记录，进度保存为�
       prompts: FILE_PROMPTS,
       getSplitSettings: () => ({ mode: 'chapter', maxSegmentChars: 1000 })
     });
-    const runner = new StageRunner({ runs, text, workflows: [workflow] });
+    const runner = new StageRunner({ runs, texts: text, workflows: [workflow] });
 
     const started = await runner.start({ target: TARGET, input: NOVEL_INPUT });
     await runner.whenIdle();
@@ -92,7 +92,7 @@ test('联合运行：失败后继续时，要点与大纲从数据库中的进�
       prompts: FILE_PROMPTS,
       getSplitSettings: () => ({ mode: 'chapter', maxSegmentChars: 1000 })
     });
-    const runner = new StageRunner({ runs, text, workflows: [workflow] });
+    const runner = new StageRunner({ runs, texts: text, workflows: [workflow] });
 
     const started = await runner.start({ target: TARGET, input: NOVEL_INPUT });
     await runner.whenIdle();

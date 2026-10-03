@@ -21,6 +21,7 @@ import { ProviderService } from '../services/provider-service';
 import { ScreenplayService } from '../services/screenplay-service';
 import { StageService } from '../services/stage-service';
 import { StoryboardService } from '../services/storyboard-service';
+import { TextSettingsService } from '../services/text-settings-service';
 import { WorkService } from '../services/work-service';
 import { STAGE_EVENTS } from './stage-handlers';
 import { WORK_LIST_EVENTS, WorkListRequest, WorkListView, registerWorkListHandlers } from './work-list-handlers';
@@ -70,6 +71,7 @@ export class WorkListPages {
       readonly storyboards: StoryboardService;
       readonly profiles: GenerationProfileService;
       readonly providers: ProviderService;
+      readonly textModels: TextSettingsService;
     },
     private readonly panels: PanelManager
   ) {}
@@ -89,7 +91,7 @@ export class WorkListPages {
       return;
     }
 
-    const { projects, works, stages, screenplays, storyboards, profiles, providers } = this.services;
+    const { projects, works, stages, screenplays, storyboards, profiles, providers, textModels } = this.services;
     const entry: OpenedWorkList = { panel: undefined, pending: request };
     const router = new MessageRouter();
     registerWorkListHandlers(router, view, this.services, {
@@ -104,7 +106,7 @@ export class WorkListPages {
     registerFormHandlers(
       router,
       new Map([
-        ...createWorkFormCatalog({ projects, works, stages, onStarted: (workId) => openStage(workId, 'creative') }),
+        ...createWorkFormCatalog({ projects, works, stages, textModels, onStarted: (workId) => openStage(workId, 'creative') }),
         ...createScreenplayFormCatalog({
           projects,
           works,

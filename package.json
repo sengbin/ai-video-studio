@@ -36,12 +36,18 @@
         "aigcVideoStudio.copilot.enabled": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "是否使用 VS Code 内置的 Copilot 生成文本。关闭后需要在“模型设置”中启用千问AI平台的文本生成模型；两者同一时间只能用其一。"
+          "markdownDescription": "是否启用 VS Code 内置的 Copilot 作为文本模型。关闭后 Copilot 的模型不再出现在文本模型选择列表中。"
+        },
+        "aigcVideoStudio.text.defaultModel": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "默认使用的文本模型，作品没有单独选择时使用。建议在“模型设置”页选择；留空时沿用 `aigcVideoStudio.copilot.modelFamily`。"
         },
         "aigcVideoStudio.copilot.modelFamily": {
           "type": "string",
           "default": "",
-          "markdownDescription": "生成文本时使用的 Copilot 模型家族（如 `gpt-4o`）。留空表示自动选择；所选模型不可用时回退到自动。"
+          "deprecationMessage": "已由“模型设置”页的默认文本模型取代；仅在没有设置默认文本模型时作为 Copilot 模型家族使用。",
+          "markdownDescription": "（已弃用）Copilot 模型家族，如 `gpt-4o`。留空表示自动选择。"
         },
         "aigcVideoStudio.novel.splitMode": {
           "type": "string",

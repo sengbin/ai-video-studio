@@ -39,8 +39,9 @@ import {
 } from '../../domain/rules/work-rules';
 import { ProjectService } from '../services/project-service';
 import { StageService } from '../services/stage-service';
+import { WorkTextModelState } from '../services/text-settings-service';
 import { DUPLICATE_WORK_NAME_MESSAGE, WorkService } from '../services/work-service';
-import { SyncFormCatalog, FormDefinition, FormValues } from './form-definition';
+import { AsyncFormFactory, FormCatalog, FormDefinition, FormFactory, FormValues } from './form-definition';
 import { FormFieldSchema } from './form-schema';
 
 /** 作品表单在表单目录中的名称，页面据此请求打开。 */
@@ -50,11 +51,18 @@ export const WORK_FORM_NAMES = {
   edit: 'work.edit'
 } as const;
 
+/** 作品表单对文本模型选择的需求：读取候选与当前选择，保存或清除作品的选择。 */
+export interface WorkTextModels {
+  getWorkState(workId: number | null): Promise<WorkTextModelState>;
+  setWorkModel(workId: number, modelKey: string | null): void;
+}
+
 /** 创意表单依赖的服务与回调。 */
 export interface WorkFormDependencies {
   readonly projects: ProjectService;
   readonly works: WorkService;
   readonly stages: StageService;
+  readonly textModels: WorkTextModels;
   /** 生成已开始（创建作品并启动生成，或重新生成）后调用，用于打开阶段产出页。 */
   readonly onStarted: (workId: number) => void;
 }
@@ -69,6 +77,9 @@ const PROJECT_FIELD_KEY = 'projectName';
 const NO_PROJECT_MESSAGE = '还没有项目，请先在“所有项目”中创建项目。';
 const PROJECT_REQUIRED_MESSAGE = '请选择所属项目。';
 const KIND_LOCKED_NOTE = '；剧本已确认，作品形态不能再修改';
+/** 文本模型字段的键。 */
+const TEXT_MODEL_FIELD_KEY = 'textModel';
+const TEXT_MODEL_UNAVAILABLE_MESSAGE = '所选文本模型已不可用，请重新选择。';
 /** 创作主题或灵感是主要输入，多行文本最多长到 8 行。 */
 const IDEA_MAX_ROWS = 8;
 
@@ -302,6 +313,45 @@ function collectFieldErrors(checks: ReadonlyArray<() => void>): void {
   }
 }
 
+/** 文本模型字段的选项：第一项“沿用默认”，其后是全部可选的文本模型；选项文字就是字段值。 */
+function createTextModelField(state: WorkTextModelState): FormFieldSchema {
+  return {
+    key: TEXT_MODEL_FIELD_KEY,
+    label: '文本模型',
+    description: '生成创意、剧本、分镜脚本时使用的模型；“沿用默认”使用“模型设置”中的默认文本模型，已关闭或停用的模型不在列表中',
+    control: 'select',
+    required: true,
+    options: [defaultTextModelOption(state), ...state.choices.map((choice) => choice.label)]
+  };
+}
+
+/** “沿用默认”选项的文字，带上当前默认模型的名称。 */
+function defaultTextModelOption(state: WorkTextModelState): string {
+  return `沿用默认（${state.defaultLabel ?? '没有可用的文本模型'}）`;
+}
+
+/** 文本模型字段的初始值：作品单独选择且仍可用的模型，否则是“沿用默认”。 */
+function textModelInitialValue(state: WorkTextModelState): string {
+  const selected = state.choices.find((choice) => choice.key === state.selectedKey);
+  return selected === undefined ? defaultTextModelOption(state) : selected.label;
+}
+
+/**
+ * 把表单里的文本模型字段值转换为模型键。
+ * @returns 模型键；“沿用默认”为 null。
+ * @throws ValidationError 所选模型已不在候选列表中。
+ */
+function readTextModelKey(state: WorkTextModelState, value: string | undefined): string | null {
+  if (value === undefined || value === '' || value === defaultTextModelOption(state)) {
+    return null;
+  }
+  const chosen = state.choices.find((choice) => choice.label === value);
+  if (chosen === undefined) {
+    throw new ValidationError({ [TEXT_MODEL_FIELD_KEY]: TEXT_MODEL_UNAVAILABLE_MESSAGE });
+  }
+  return chosen.key;
+}
+
 /**
  * 创建“新建作品并生成”表单的定义。
  * @param dependencies 服务与回调。
@@ -313,18 +363,28 @@ function createNewWorkForm(
   dependencies: WorkFormDependencies,
   projects: readonly ProjectSummary[],
   defaultProjectName: string,
-  sourceType: WorkSourceType
+  sourceType: WorkSourceType,
+  textModelState: WorkTextModelState
 ): FormDefinition {
-  const { works, stages, onStarted } = dependencies;
+  const { works, stages, textModels, onStarted } = dependencies;
   return {
     schema: {
       title: `新建作品（${SOURCE_TYPE_LABELS[sourceType]}）`,
       submitLabel: SUBMIT_LABEL_CREATE,
-      fields: [...createWorkFields(sourceType, projects.map((project) => project.name)), ...createParamFields(sourceType)]
+      fields: [
+        ...createWorkFields(sourceType, projects.map((project) => project.name)),
+        createTextModelField(textModelState),
+        ...createParamFields(sourceType)
+      ]
     },
-    initialValues: { [PROJECT_FIELD_KEY]: defaultProjectName, kind: LABEL_SINGLE_KIND, ...DEFAULT_PARAM_VALUES },
+    initialValues: {
+      [PROJECT_FIELD_KEY]: defaultProjectName,
+      kind: LABEL_SINGLE_KIND,
+      [TEXT_MODEL_FIELD_KEY]: textModelInitialValue(textModelState),
+      ...DEFAULT_PARAM_VALUES
+    },
     submit: async (values) => {
-      const parsed: { project?: ProjectSummary; creation?: NormalizedWorkCreation; params?: CreativeParams } = {};
+      const parsed: { project?: ProjectSummary; creation?: NormalizedWorkCreation; params?: CreativeParams; textModel?: string | null } = {};
       collectFieldErrors([
         () => {
           parsed.project = readProject(projects, values[PROJECT_FIELD_KEY]);
@@ -333,19 +393,23 @@ function createNewWorkForm(
           parsed.creation = normalizeWorkCreation(values, sourceType);
         },
         () => {
+          parsed.textModel = readTextModelKey(textModelState, values[TEXT_MODEL_FIELD_KEY]);
+        },
+        () => {
           parsed.params = normalizeCreativeParams(values);
         }
       ]);
-      const { project, creation, params } = parsed;
-      if (project === undefined || creation === undefined || params === undefined) {
+      const { project, creation, params, textModel } = parsed;
+      if (project === undefined || creation === undefined || params === undefined || textModel === undefined) {
         return;
       }
 
       const work = works.createWork(project.id, creation);
       try {
+        textModels.setWorkModel(work.id, textModel);
         await stages.startCreative(work.id, params);
       } catch (error) {
-        // 没能开始生成（例如 Copilot 不可用）：撤销刚创建的作品，用户修正后可以直接再次提交。
+        // 没能开始生成（例如文本模型不可用）：撤销刚创建的作品，用户修正后可以直接再次提交。
         works.deleteWork(work.id);
         throw error;
       }
@@ -382,12 +446,13 @@ function createRegenerateForm(dependencies: WorkFormDependencies, workId: number
  * @param dependencies 服务与回调。
  * @param workId 作品标识。
  */
-function createEditWorkForm(dependencies: WorkFormDependencies, workId: number): FormDefinition {
-  const { works } = dependencies;
+function createEditWorkForm(dependencies: WorkFormDependencies, workId: number, textModelState: WorkTextModelState): FormDefinition {
+  const { works, textModels } = dependencies;
   const work = works.getWork(workId);
   const canChangeKind = works.canChangeKind(workId);
   const hasImages = work.sourceType === 'image';
   const fields: FormFieldSchema[] = canChangeKind ? [createNameField(true), createKindField()] : [createNameField(true, KIND_LOCKED_NOTE)];
+  fields.push(createTextModelField(textModelState));
   if (hasImages) {
     fields.push(createImageField());
   }
@@ -400,12 +465,15 @@ function createEditWorkForm(dependencies: WorkFormDependencies, workId: number):
     initialValues: {
       workName: work.name,
       kind: WORK_KIND_LABELS[work.kind],
+      [TEXT_MODEL_FIELD_KEY]: textModelInitialValue(textModelState),
       ...(hasImages ? { [IMAGE_FIELD_KEY]: imagesToValue(works.listImageSources(workId)) } : {})
     },
     checkField: (key, value) =>
       key === 'workName' && !works.isWorkNameAvailable(work.projectId, value, work.id) ? DUPLICATE_WORK_NAME_MESSAGE : undefined,
     submit: (values) => {
+      const textModel = readTextModelKey(textModelState, values[TEXT_MODEL_FIELD_KEY]);
       works.updateWork(work.id, values);
+      textModels.setWorkModel(work.id, textModel);
     }
   };
 }
@@ -414,11 +482,11 @@ function createEditWorkForm(dependencies: WorkFormDependencies, workId: number):
  * 创建作品表单目录：新建的参数为 `{ sourceType, projectId? }`（projectId 为默认选中的项目），重新生成和编辑的参数为 `{ workId }`。
  * @param dependencies 服务与回调。
  */
-export function createWorkFormCatalog(dependencies: WorkFormDependencies): SyncFormCatalog {
-  return new Map([
+export function createWorkFormCatalog(dependencies: WorkFormDependencies): FormCatalog {
+  return new Map<string, FormFactory | AsyncFormFactory>([
     [
       WORK_FORM_NAMES.create,
-      (params) => {
+      async (params) => {
         const source = readRecord(params);
         const sourceType = readSourceType(source.sourceType);
         const projects = dependencies.projects.listProjects();
@@ -428,13 +496,20 @@ export function createWorkFormCatalog(dependencies: WorkFormDependencies): SyncF
         // 默认项目：入口指定的项目；没有指定且只有一个项目时选它；否则让用户选。
         const preferred = projects.find((project) => project.id === source.projectId);
         const defaultProject = preferred ?? (projects.length === 1 ? projects[0] : undefined);
-        return createNewWorkForm(dependencies, projects, defaultProject?.name ?? '', sourceType);
+        const textModelState = await dependencies.textModels.getWorkState(null);
+        return createNewWorkForm(dependencies, projects, defaultProject?.name ?? '', sourceType, textModelState);
       }
     ],
     [
       WORK_FORM_NAMES.regenerate,
       (params) => createRegenerateForm(dependencies, readEntityId({ id: readRecord(params).workId }, '作品'))
     ],
-    [WORK_FORM_NAMES.edit, (params) => createEditWorkForm(dependencies, readEntityId({ id: readRecord(params).workId }, '作品'))]
+    [
+      WORK_FORM_NAMES.edit,
+      async (params) => {
+        const workId = readEntityId({ id: readRecord(params).workId }, '作品');
+        return createEditWorkForm(dependencies, workId, await dependencies.textModels.getWorkState(workId));
+      }
+    ]
   ]);
 }

@@ -46,11 +46,12 @@
 | | `models` | 模型 |
 | | `model_capabilities` | 模型能力描述 |
 | | `generation_profiles` | 三级生成参数（作品、集、镜头组） |
+| | `work_text_models` | 作品单独选择的文本模型键（迁移 018）；没有记录表示沿用全局默认，随作品删除而清除 |
 | 生成 | `video_jobs` | 镜头组生成任务 |
 | | `video_results` | 生成结果视频 |
 | | `result_frames` | 结果视频的尾帧图片 |
 
-共 26 张表（迁移 009 已创建 `asset_versions`、`asset_version_files`，迁移 013 创建 `asset_categories`）。
+共 27 张表（迁移 009 已创建 `asset_versions`、`asset_version_files`，迁移 013 创建 `asset_categories`，迁移 018 创建 `work_text_models`）。
 
 ## 3. 关系图
 

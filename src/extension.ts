@@ -65,6 +65,7 @@ import { SqliteScreenplayRepository } from './infra/database/sqlite-screenplay-r
 import { SqliteChapterRepository, SqliteStageRunRepository } from './infra/database/sqlite-stage-run-repository';
 import { SqliteStoryboardRepository } from './infra/database/sqlite-storyboard-repository';
 import { SqliteWorkRepository } from './infra/database/sqlite-work-repository';
+import { SqliteWorkTextModelRepository } from './infra/database/sqlite-work-text-model-repository';
 import { SqliteWorkSourceReader } from './infra/database/sqlite-work-source-reader';
 import { FilePromptTemplates } from './infra/prompts/file-prompt-templates';
 import { createBuiltinProviderRegistry } from './infra/providers/builtin-providers';
@@ -111,18 +112,22 @@ export function activate(context: vscode.ExtensionContext): void {
   const storyboards = new SqliteStoryboardRepository(database);
   const settingsStore = new VsCodeTextGenerationSettings();
   const prompts = new FilePromptTemplates(vscode.Uri.joinPath(context.extensionUri, 'resources', 'prompts').fsPath);
-  // 提供商服务先于文本生成创建：文本生成按设置在 Copilot 与千问文本模型之间选择。
+  // 服务商服务先于文本生成创建：文本生成按作品的选择、全局默认决定使用 Copilot 还是千问文本模型。
   const providerRepository = new SqliteProviderRepository(database);
   const providerService = new ProviderService({
     repository: providerRepository,
     registry: createBuiltinProviderRegistry(),
     secrets: new VsCodeSecretStore(context.secrets)
   });
-  const textGeneration = new TextGenerationRouter({
+  const workTextModels = new SqliteWorkTextModelRepository(database);
+  const textRouter = new TextGenerationRouter({
     settings: settingsStore,
-    copilot: new CopilotTextGeneration(settingsStore),
-    providers: providerService
+    createCopilot: (family) => new CopilotTextGeneration(family),
+    providers: providerService,
+    workModels: workTextModels
   });
+  // 不属于任何作品的文本生成（资产提示词）使用全局默认。
+  const textGeneration = textRouter.forWork(null);
 
   // 应用服务。
   const projectService = new ProjectService(new SqliteProjectRepository(database));
@@ -130,7 +135,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const stageChanges = new ChangeNotifier<StageChange>();
   const runner = new StageRunner({
     runs,
-    text: textGeneration,
+    texts: textRouter,
     workflows: [
       new CreativeWorkflow({
         chapters,
@@ -158,7 +163,7 @@ export function activate(context: vscode.ExtensionContext): void {
     runner,
     stages: stageService
   });
-  const textSettingsService = new TextSettingsService(settingsStore, new CopilotModelCatalog(), providerService);
+  const textSettingsService = new TextSettingsService(settingsStore, new CopilotModelCatalog(), providerService, workTextModels);
   const assetService = new AssetService(assetRepository);
   const assetCategoryService = new AssetCategoryService(new SqliteAssetCategoryRepository(database));
   const bindingService = new BindingService(new SqliteBindingRepository(database), assetRepository);
@@ -243,7 +248,7 @@ export function activate(context: vscode.ExtensionContext): void {
     storyboards: storyboardService
   };
   const projectPages = new ProjectPages(projectService, panels);
-  const workListPages = new WorkListPages({ ...services, profiles: profileService, providers: providerService }, panels);
+  const workListPages = new WorkListPages({ ...services, profiles: profileService, providers: providerService, textModels: textSettingsService }, panels);
   const assetListPages = new AssetListPages(
     { projects: projectService, assets: assetService, categories: assetCategoryService, prompts: assetPromptService, generation: assetGenerationService },
     panels

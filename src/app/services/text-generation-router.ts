@@ -1,68 +1,83 @@
 // ------------------------------------------------------------------------
 // 名称：text-generation-router.ts
-// 说明：文本生成端口的路由实现：按设置选择生成文本的引擎——启用 Copilot 时交给 Copilot，否则使用已启用的千问AI平台文本模型。
+// 说明：文本生成的路由实现：按作品的单独选择、全局默认的顺序决定使用 Copilot 的某个模型还是服务商的某个文本模型。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-03
-// 备注：每次 resolveModel 重新按当前设置选择引擎，之后的 countTokens 与 generate 沿用该选择；多个文本模型同时启用时使用列表中靠前的一个；服务商调用失败统一转换为 TextGenerationError。
+// 备注：每次 resolveModel 重新按当时的设置选定模型，之后同一个端口的 countTokens 与 generate 沿用该选择，不同作品的生成互不影响；选择的模型已不可用（被停用、Copilot 已关闭）时依次回退到全局默认、第一个可用模型；服务商调用失败统一转换为 TextGenerationError。
 // ------------------------------------------------------------------------
 
 import { ProviderError, TextGenerationError } from '../../domain/errors';
-import { ModelRecord } from '../../domain/models/model-provider';
+import { UsableModel } from '../../domain/models/model-provider';
 import { ResolvedTextCall } from '../../domain/ports/provider-adapters';
 import {
   TextGenerationOptions,
   TextGenerationPort,
   TextGenerationRequest,
+  TextGenerationSource,
   TextModelInfo
 } from '../../domain/ports/text-generation-port';
+import { TextGenerationSettingsStore } from '../../domain/ports/text-generation-settings-store';
+import { WorkTextModelRepository } from '../../domain/ports/work-text-model-repository';
 import { estimateTokens } from '../../domain/rules/token-estimate';
+import { copilotModelKey, parseTextModelKey, providerModelKey } from '../../domain/rules/text-model-selection';
 
-/** 未启用任何文本引擎时的提示。 */
-export const NO_TEXT_ENGINE_MESSAGE = '没有可用的文本生成模型：请到“模型设置”启用 Copilot，或启用一个千问AI平台的文本模型。';
+/** 没有任何可用的文本模型时的提示。 */
+export const NO_TEXT_ENGINE_MESSAGE = '没有可用的文本模型：请到“模型设置”启用 Copilot，或启用一个千问AI平台的文本模型。';
 
-/** 路由依赖的设置：是否使用 Copilot。 */
-export interface TextEngineSettings {
-  isCopilotEnabled(): boolean;
-}
-
-/** 路由依赖的服务商能力：列出文本模型、取得调用文本模型所需的内容。 */
+/** 路由依赖的服务商能力：列出可选的文本模型、取得调用文本模型所需的内容。 */
 export interface TextProviderCalls {
-  listTextModels(): ModelRecord[];
+  listSelectableTextModels(): UsableModel[];
   resolveTextCall(modelId: number): Promise<ResolvedTextCall>;
 }
 
 /** 路由的依赖。 */
 export interface TextGenerationRouterDependencies {
-  readonly settings: TextEngineSettings;
-  readonly copilot: TextGenerationPort;
+  readonly settings: Pick<TextGenerationSettingsStore, 'read'>;
+  /** 创建固定使用某个 Copilot 模型家族的端口；空串表示自动选择。 */
+  readonly createCopilot: (family: string) => TextGenerationPort;
   readonly providers: TextProviderCalls;
+  readonly workModels: Pick<WorkTextModelRepository, 'find'>;
 }
 
-/** 当前选定的引擎：Copilot，或某个服务商文本模型的调用。 */
-type ActiveEngine = { readonly kind: 'copilot' } | { readonly kind: 'provider'; readonly call: ResolvedTextCall };
+/** 选定的引擎：Copilot 的某个家族，或服务商的某个文本模型。 */
+type ChosenModel = { readonly kind: 'copilot'; readonly family: string } | { readonly kind: 'provider'; readonly model: UsableModel };
 
-/** 按设置在 Copilot 与服务商文本模型之间选择的文本生成端口。 */
-export class TextGenerationRouter implements TextGenerationPort {
-  private active: ActiveEngine | undefined;
+/** 选定并已解析的引擎，之后的调用沿用。 */
+type ActiveEngine =
+  | { readonly kind: 'copilot'; readonly port: TextGenerationPort }
+  | { readonly kind: 'provider'; readonly call: ResolvedTextCall };
 
+/** 按设置选择 Copilot 或服务商文本模型的文本生成来源。 */
+export class TextGenerationRouter implements TextGenerationSource {
   constructor(private readonly dependencies: TextGenerationRouterDependencies) {}
 
+  forWork(workId: number | null): TextGenerationPort {
+    return new RoutedTextPort(this.dependencies, workId);
+  }
+}
+
+/** 绑定到一个作品的文本生成端口。 */
+class RoutedTextPort implements TextGenerationPort {
+  private active: ActiveEngine | undefined;
+
+  constructor(
+    private readonly dependencies: TextGenerationRouterDependencies,
+    private readonly workId: number | null
+  ) {}
+
   async resolveModel(): Promise<TextModelInfo> {
-    const { settings, copilot, providers } = this.dependencies;
-    if (settings.isCopilotEnabled()) {
-      const info = await copilot.resolveModel();
-      this.active = { kind: 'copilot' };
+    const chosen = this.choose();
+    if (chosen.kind === 'copilot') {
+      const port = this.dependencies.createCopilot(chosen.family);
+      const info = await port.resolveModel();
+      this.active = { kind: 'copilot', port };
       return info;
     }
 
-    const model = providers.listTextModels().find((candidate) => candidate.isEnabled);
-    if (model === undefined) {
-      throw new TextGenerationError('unavailable', NO_TEXT_ENGINE_MESSAGE);
-    }
     let call: ResolvedTextCall;
     try {
-      call = await providers.resolveTextCall(model.id);
+      call = await this.dependencies.providers.resolveTextCall(chosen.model.model.id);
     } catch (error) {
       throw mapProviderError(error);
     }
@@ -79,13 +94,13 @@ export class TextGenerationRouter implements TextGenerationPort {
 
   async countTokens(text: string): Promise<number> {
     const engine = await this.currentEngine();
-    return engine.kind === 'copilot' ? this.dependencies.copilot.countTokens(text) : estimateTokens(text);
+    return engine.kind === 'copilot' ? engine.port.countTokens(text) : estimateTokens(text);
   }
 
   async generate(request: TextGenerationRequest, options?: TextGenerationOptions): Promise<unknown> {
     const engine = await this.currentEngine();
     if (engine.kind === 'copilot') {
-      return this.dependencies.copilot.generate(request, options);
+      return engine.port.generate(request, options);
     }
     const { adapter, modelCode, context } = engine.call;
     try {
@@ -101,6 +116,34 @@ export class TextGenerationRouter implements TextGenerationPort {
       await this.resolveModel();
     }
     return this.active as ActiveEngine;
+  }
+
+  /** 按“作品的选择、全局默认、第一个可用模型”的顺序选出可用的模型。 */
+  private choose(): ChosenModel {
+    const { settings, providers, workModels } = this.dependencies;
+    const { copilotEnabled, defaultModel } = settings.read();
+    const selectable = providers.listSelectableTextModels();
+    const providerKeys = new Map(selectable.map((item) => [providerModelKey(item.providerCode, item.model.code), item]));
+
+    const toChosen = (key: string | null): ChosenModel | undefined => {
+      const selection = key === null ? undefined : parseTextModelKey(key);
+      if (selection === undefined) {
+        return undefined;
+      }
+      if (selection.engine === 'copilot') {
+        return copilotEnabled ? { kind: 'copilot', family: selection.family } : undefined;
+      }
+      const model = providerKeys.get(providerModelKey(selection.providerCode, selection.modelCode));
+      return model === undefined ? undefined : { kind: 'provider', model };
+    };
+
+    const workKey = this.workId === null ? null : workModels.find(this.workId);
+    const chosen =
+      toChosen(workKey) ?? toChosen(defaultModel) ?? toChosen(copilotEnabled ? copilotModelKey('') : null) ?? toChosen([...providerKeys.keys()][0] ?? null);
+    if (chosen === undefined) {
+      throw new TextGenerationError('unavailable', NO_TEXT_ENGINE_MESSAGE);
+    }
+    return chosen;
   }
 }
 

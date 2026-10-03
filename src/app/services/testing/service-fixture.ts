@@ -66,7 +66,7 @@ export function createServiceFixture(responder: Responder = standardResponder, s
   changes.subscribe((change) => changed.push(change));
   const runner = new StageRunner({
     runs,
-    text,
+    texts: text,
     workflows: [
       new CreativeWorkflow({
         chapters,

@@ -14,7 +14,7 @@ import { ChapterDraft } from '../../domain/models/creative';
 import { NewStageRun, ReviewPatch, StageProgress, StageRun, StageTarget } from '../../domain/models/stage-run';
 import { ChapterRepository } from '../../domain/ports/chapter-repository';
 import { StageRunRepository } from '../../domain/ports/stage-run-repository';
-import { ImageInput, TextGenerationRequest, TextModelInfo } from '../../domain/ports/text-generation-port';
+import { ImageInput, TextGenerationRequest, TextGenerationSource, TextModelInfo } from '../../domain/ports/text-generation-port';
 import { NovelSplitSettings } from '../../domain/rules/novel-splitter';
 import { CreativeWorkflow } from './creative-workflow';
 import { INTERRUPTED_MESSAGE, StageRunner } from './stage-runner';
@@ -138,6 +138,8 @@ interface HarnessOptions {
   readonly model?: Partial<TextModelInfo>;
   readonly novelText?: string;
   readonly images?: ImageInput[];
+  /** 自定义文本生成来源；不给则所有作品都用同一个假端口。 */
+  readonly texts?: (text: ScriptedText) => TextGenerationSource;
 }
 
 /** 组装执行器与全部假依赖。 */
@@ -155,7 +157,7 @@ function createHarness(options: HarnessOptions = {}) {
     getSplitSettings: () => SPLIT_SETTINGS,
     now
   });
-  const runner = new StageRunner({ runs, text, workflows: [workflow], now, notify: (run) => notifications.push(run) });
+  const runner = new StageRunner({ runs, texts: options.texts?.(text) ?? text, workflows: [workflow], now, notify: (run) => notifications.push(run) });
   return { runner, runs, chapters, text, notifications };
 }
 
@@ -447,4 +449,27 @@ test('启动恢复：遗留的运行中记录被置为失败', async () => {
   assert.equal(run.status, 'failed');
   assert.equal(run.errorMessage, INTERRUPTED_MESSAGE);
   assert.equal(harness.runner.recoverInterrupted(), 0);
+});
+
+test('文本端口按作品取得：启动与重试都向来源询问该作品的端口', async () => {
+  const asked: Array<number | null> = [];
+  let failNext = true;
+  const harness = createHarness({
+    texts: (text) => ({ forWork: (workId) => (asked.push(workId), text) }),
+    responder: (request) => {
+      if (failNext) {
+        failNext = false;
+        throw new TextGenerationError('failed', '模拟失败');
+      }
+      return standardResponder(request);
+    }
+  });
+
+  const started = await harness.runner.start({ target: TARGET, input: TEXT_INPUT });
+  await harness.runner.whenIdle();
+  assert.equal(harness.runs.findById(started.id)?.status, 'failed');
+  await harness.runner.resume(started.id);
+  await harness.runner.whenIdle();
+  assert.equal(harness.runs.findById(started.id)?.status, 'succeeded');
+  assert.deepEqual(asked, [TARGET.workId, TARGET.workId]);
 });

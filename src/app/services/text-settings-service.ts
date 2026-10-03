@@ -1,161 +1,203 @@
 // ------------------------------------------------------------------------
 // 名称：text-settings-service.ts
-// 说明：文本生成设置服务：整理设置页需要的视图（当前设置、可选模型、提示），校验后保存修改，并维护“Copilot 与千问文本模型二选一”的规则。
+// 说明：文本模型设置服务：整理设置页需要的视图（Copilot 开关、全局默认文本模型、可选模型、小说分段），校验后保存修改，并提供作品单独选择文本模型所需的候选与读写。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-03
-// 备注：不依赖 VS Code；设置即时保存，保存前按规则校验，不合法的值直接拒绝而不是悄悄回退；Copilot 与千问文本模型同一时间只能启用其一，且至少启用其一，规则在这里统一校验，界面的确认提示只是提醒。
+// 备注：不依赖 VS Code；设置即时保存，不合法的值直接拒绝而不是悄悄回退；可选模型 = Copilot（启用时）的模型 + 已启用的服务商文本模型，被关闭或停用的模型不再出现在列表中；作品没有单独选择时使用全局默认。
 // ------------------------------------------------------------------------
 
-import { ConflictError, NotFoundError, ValidationError } from '../../domain/errors';
-import { ModelRecord, ProviderView } from '../../domain/models/model-provider';
+import { ValidationError } from '../../domain/errors';
+import { UsableModel } from '../../domain/models/model-provider';
 import { TextGenerationSettingsStore, TextModelCatalog } from '../../domain/ports/text-generation-settings-store';
-import { readRecord } from '../../domain/rules/field-readers';
+import { WorkTextModelRepository } from '../../domain/ports/work-text-model-repository';
 import { NovelSplitMode } from '../../domain/rules/novel-splitter';
-import { readModelEnabledInput } from '../../domain/rules/provider-rules';
 import {
   SEGMENT_CHARS_MAX,
   SEGMENT_CHARS_MIN,
   normalizeTextGenerationSettingsPatch
 } from '../../domain/rules/text-generation-settings';
+import {
+  TEXT_MODEL_KEY_MAX_LENGTH,
+  copilotModelKey,
+  parseTextModelKey,
+  providerModelKey
+} from '../../domain/rules/text-model-selection';
 
-/** 已保存的模型不在可用列表中时的提示。 */
+/** 已保存的 Copilot 模型不在可用列表中时的提示。 */
 export const MODEL_MISSING_HINT = '所选模型不可用，将使用自动。';
 
-/** 关闭 Copilot 时没有已启用的千问文本模型。 */
-export const COPILOT_OFF_NEEDS_MODEL_MESSAGE = '关闭 Copilot 前，请先在“千问AI平台”的设置中启用一个文本生成模型。';
+/** 没有任何可选文本模型时的提示。 */
+export const NO_TEXT_MODEL_NOTE = '没有可选的文本模型，生成文本时会失败。请启用 Copilot，或在“千问AI平台”的设置中启用一个文本模型。';
 
-/** Copilot 已关闭，却没有已启用的千问文本模型（例如手动改了 VS Code 设置）。 */
-export const NO_TEXT_ENGINE_NOTE = '已关闭 Copilot，但没有启用任何文本生成模型，生成文本时会失败。请启用 Copilot，或启用一个千问文本模型。';
+/** 默认文本模型已不可用时的提示，参数为当前实际使用的模型名称。 */
+export const DEFAULT_FALLBACK_HINT = (label: string): string => `原来的默认文本模型已不可用，当前使用“${label}”。`;
 
-/** 停用最后一个千问文本模型会导致没有可用的文本引擎。 */
-export const LAST_TEXT_MODEL_MESSAGE = '已关闭 Copilot，至少需要保留一个启用的文本生成模型；请先启用其他文本模型，或重新启用 Copilot。';
+/** 选用的 Copilot 已被关闭。 */
+export const COPILOT_DISABLED_MESSAGE = 'Copilot 已关闭，不能选用它的模型。';
 
-/** 启用千问文本模型前需要先关闭 Copilot。 */
-export const COPILOT_ON_CONFLICT_MESSAGE = '当前使用 Copilot 生成文本，启用千问文本模型会关闭 Copilot。';
+/** 选用的服务商文本模型没有启用。 */
+export const MODEL_NOT_ENABLED_MESSAGE = '所选文本模型没有启用，请从列表中选择。';
 
-/** 设置页展示的文本生成设置。 */
+/** 一个可选的文本模型。 */
+export interface TextModelChoice {
+  /** 模型的键，见 text-model-selection.ts。 */
+  readonly key: string;
+  /** 列表中显示的名称，如“Copilot · gpt-4o”“千问AI平台 · Qwen3.8 Max（旗舰）”。 */
+  readonly label: string;
+}
+
+/** 设置页展示的文本模型设置。 */
 export interface TextSettingsView {
-  /** 是否使用 Copilot 生成文本；为 false 时使用千问AI平台的文本模型。 */
+  /** 是否启用 Copilot：关闭后它的模型不再出现在选择列表中。 */
   readonly copilotEnabled: boolean;
-  readonly modelFamily: string;
+  /** 当前生效的全局默认文本模型的键；没有任何可选模型时为空串。 */
+  readonly defaultModel: string;
+  /** 全部可选的文本模型。 */
+  readonly choices: readonly TextModelChoice[];
   readonly splitMode: NovelSplitMode;
   readonly maxSegmentChars: number;
   /** 每段字数上限的允许范围。 */
   readonly segmentCharsRange: { readonly min: number; readonly max: number };
-  /** 当前可选的 Copilot 模型家族；没有启用 Copilot 时为空。 */
-  readonly families: readonly string[];
-  /** Copilot 模型相关的提示：没有可用模型的原因，或已保存的模型不可用；没有问题或没有启用 Copilot 时为 null。 */
+  /** 模型相关的提示：Copilot 不可用的原因、已保存的模型不可用；没有问题时为 null。 */
   readonly modelNote: string | null;
-  /** 已启用的千问文本模型名称；启用 Copilot 时为空。 */
-  readonly enabledTextModels: readonly string[];
-  /** 文本引擎的提示：没有启用 Copilot 也没有启用文本模型时给出警告，否则为 null。 */
+  /** 没有任何可选文本模型时的警告；否则为 null。 */
   readonly engineNote: string | null;
 }
 
-/** 设置服务对服务商与文本模型的需求。 */
-export interface TextModelAdmin {
-  /** 按标识查找模型；不存在返回 undefined。 */
-  findModel(modelId: number): ModelRecord | undefined;
-  /** 列出全部文本模型。 */
-  listTextModels(): ModelRecord[];
-  /** 停用全部文本模型。 */
-  disableTextModels(): void;
-  /** 设置模型的启用状态，返回所属服务商修改后的视图。 */
-  setModelEnabled(rawInput: unknown): Promise<ProviderView>;
+/** 作品表单需要的文本模型选择状态。 */
+export interface WorkTextModelState {
+  readonly choices: readonly TextModelChoice[];
+  /** 全局默认文本模型的名称；没有可选模型时为 null。 */
+  readonly defaultLabel: string | null;
+  /** 作品单独选择且当前仍可用的模型键；沿用默认时为 null。 */
+  readonly selectedKey: string | null;
 }
 
-/** 文本生成设置服务。 */
+/** 设置服务对服务商文本模型的需求。 */
+export interface TextModelSource {
+  /** 列出可供选择的服务商文本模型（模型与服务商都已启用）。 */
+  listSelectableTextModels(): UsableModel[];
+}
+
+/** 文本模型设置服务。 */
 export class TextSettingsService {
   constructor(
     private readonly store: TextGenerationSettingsStore,
     private readonly catalog: TextModelCatalog,
-    private readonly models: TextModelAdmin
+    private readonly models: TextModelSource,
+    private readonly workModels: WorkTextModelRepository
   ) {}
 
-  /** 读取设置页视图；模型清单查询失败不影响设置读取。 */
+  /** 读取设置页视图；Copilot 模型清单查询失败不影响设置读取。 */
   async getView(): Promise<TextSettingsView> {
     const settings = this.store.read();
-    const enabledTextModels = this.enabledTextModels().map((model) => model.displayName);
-    let families: readonly string[] = [];
-    let modelNote: string | null = null;
-    if (settings.copilotEnabled) {
-      const listed = await this.catalog.listFamilies();
-      families = listed.families;
-      const modelMissing = settings.modelFamily !== '' && families.length > 0 && !families.includes(settings.modelFamily);
-      modelNote = listed.unavailableReason ?? (modelMissing ? MODEL_MISSING_HINT : null);
-    }
+    const { choices, note } = await this.buildChoices(settings.copilotEnabled, settings.defaultModel);
+    const stored = choices.find((choice) => choice.key === settings.defaultModel);
+    const effective = stored ?? choices[0];
+    const fallbackHint = stored === undefined && effective !== undefined ? DEFAULT_FALLBACK_HINT(effective.label) : null;
     return {
       copilotEnabled: settings.copilotEnabled,
-      modelFamily: settings.modelFamily,
+      defaultModel: effective?.key ?? '',
+      choices,
       splitMode: settings.novelSplit.mode,
       maxSegmentChars: settings.novelSplit.maxSegmentChars,
       segmentCharsRange: { min: SEGMENT_CHARS_MIN, max: SEGMENT_CHARS_MAX },
-      families,
-      modelNote,
-      enabledTextModels: settings.copilotEnabled ? [] : enabledTextModels,
-      engineNote: !settings.copilotEnabled && enabledTextModels.length === 0 ? NO_TEXT_ENGINE_NOTE : null
+      modelNote: note ?? fallbackHint,
+      engineNote: choices.length === 0 ? NO_TEXT_MODEL_NOTE : null
     };
   }
 
   /**
-   * 保存设置的修改。启用 Copilot 时会同时停用全部千问文本模型；关闭 Copilot 前必须已有启用的千问文本模型。
+   * 保存设置的修改。
    * @param rawPatch 界面提交的原始内容，只包含要改的项。
-   * @throws ValidationError 值不合法、没有要保存的项，或关闭 Copilot 时没有启用的文本模型。
+   * @throws ValidationError 值不合法、没有要保存的项，或选用了不可用的模型。
    */
   async update(rawPatch: unknown): Promise<void> {
     const patch = normalizeTextGenerationSettingsPatch(rawPatch);
-    if (patch.copilotEnabled === false && this.enabledTextModels().length === 0) {
-      throw new ValidationError({ copilotEnabled: COPILOT_OFF_NEEDS_MODEL_MESSAGE });
+    if (patch.defaultModel !== undefined) {
+      this.assertSelectable(patch.defaultModel, patch.copilotEnabled ?? this.store.read().copilotEnabled, 'defaultModel');
     }
     await this.store.write(patch);
-    if (patch.copilotEnabled === true) {
-      this.models.disableTextModels();
+  }
+
+  /** 列出当前全部可选的文本模型。 */
+  async listChoices(): Promise<readonly TextModelChoice[]> {
+    const settings = this.store.read();
+    return (await this.buildChoices(settings.copilotEnabled, settings.defaultModel)).choices;
+  }
+
+  /**
+   * 读取作品表单需要的文本模型选择状态。
+   * @param workId 作品标识；新建作品时为 null，没有单独选择。
+   */
+  async getWorkState(workId: number | null): Promise<WorkTextModelState> {
+    const settings = this.store.read();
+    const { choices } = await this.buildChoices(settings.copilotEnabled, settings.defaultModel);
+    const defaultChoice = choices.find((choice) => choice.key === settings.defaultModel) ?? choices[0];
+    const stored = workId === null ? null : this.workModels.find(workId);
+    const selected = stored === null ? undefined : choices.find((choice) => choice.key === stored);
+    return { choices, defaultLabel: defaultChoice?.label ?? null, selectedKey: selected?.key ?? null };
+  }
+
+  /**
+   * 保存或清除作品单独选择的文本模型。
+   * @param workId 作品标识。
+   * @param modelKey 模型键；null 表示沿用全局默认。
+   * @throws ValidationError 选用了不可用的模型。
+   */
+  setWorkModel(workId: number, modelKey: string | null): void {
+    if (modelKey !== null) {
+      this.assertSelectable(modelKey, this.store.read().copilotEnabled, 'textModel');
+    }
+    this.workModels.save(workId, modelKey);
+  }
+
+  /** 校验键可以选用：格式正确，且 Copilot 已启用或服务商文本模型已启用。 */
+  private assertSelectable(key: string, copilotEnabled: boolean, field: string): void {
+    const selection = key.length > TEXT_MODEL_KEY_MAX_LENGTH ? undefined : parseTextModelKey(key);
+    if (selection === undefined) {
+      throw new ValidationError({ [field]: '文本模型无效，请从列表中选择。' });
+    }
+    if (selection.engine === 'copilot') {
+      if (!copilotEnabled) {
+        throw new ValidationError({ [field]: COPILOT_DISABLED_MESSAGE });
+      }
+      return;
+    }
+    const enabled = this.models
+      .listSelectableTextModels()
+      .some((item) => item.providerCode === selection.providerCode && item.model.code === selection.modelCode);
+    if (!enabled) {
+      throw new ValidationError({ [field]: MODEL_NOT_ENABLED_MESSAGE });
     }
   }
 
   /**
-   * 设置模型的启用状态，返回所属服务商修改后的视图；千问文本模型与 Copilot 二选一，其他类型的模型直接交给服务商处理。
-   * @param rawInput 界面提交的原始内容：modelId、isEnabled，以及启用文本模型时是否同意关闭 Copilot 的 closeCopilot。
-   * @throws ValidationError 内容不合法，或停用最后一个文本模型会导致没有可用的文本引擎。
-   * @throws ConflictError 正在使用 Copilot，且没有同意关闭它。
-   * @throws NotFoundError 模型不存在。
+   * 组装可选模型列表：Copilot（启用时）自动与各家族，再加已启用的服务商文本模型。
+   * @param copilotEnabled 是否启用 Copilot。
+   * @param savedKey 已保存的默认模型键；是 Copilot 的家族但不在可用列表中时，保留为“不可用”的一项，避免选中项凭空消失。
+   * @returns 列表，以及 Copilot 不可用或已保存的模型不可用的提示。
    */
-  async setModelEnabled(rawInput: unknown): Promise<ProviderView> {
-    const { modelId, isEnabled } = readModelEnabledInput(rawInput);
-    const model = this.models.findModel(modelId);
-    if (model === undefined) {
-      throw new NotFoundError(`模型 ${modelId} 不存在。`);
-    }
-    if (model.kind !== 'text') {
-      return this.models.setModelEnabled(rawInput);
-    }
-
-    const settings = this.store.read();
-    if (!isEnabled) {
-      if (model.isEnabled && !settings.copilotEnabled && this.enabledTextModels().length === 1) {
-        throw new ValidationError({ isEnabled: LAST_TEXT_MODEL_MESSAGE });
+  private async buildChoices(copilotEnabled: boolean, savedKey: string): Promise<{ choices: TextModelChoice[]; note: string | null }> {
+    const choices: TextModelChoice[] = [];
+    let note: string | null = null;
+    if (copilotEnabled) {
+      const listed = await this.catalog.listFamilies();
+      choices.push({ key: copilotModelKey(''), label: 'Copilot · 自动' });
+      for (const family of listed.families) {
+        choices.push({ key: copilotModelKey(family), label: `Copilot · ${family}` });
       }
-      return this.models.setModelEnabled(rawInput);
+      const saved = parseTextModelKey(savedKey);
+      const missing = saved?.engine === 'copilot' && saved.family !== '' && listed.families.length > 0 && !listed.families.includes(saved.family);
+      if (saved?.engine === 'copilot' && missing) {
+        choices.push({ key: savedKey, label: `Copilot · ${saved.family}（不可用）` });
+      }
+      note = listed.unavailableReason ?? (missing ? MODEL_MISSING_HINT : null);
     }
-    if (!settings.copilotEnabled) {
-      return this.models.setModelEnabled(rawInput);
+    for (const item of this.models.listSelectableTextModels()) {
+      choices.push({ key: providerModelKey(item.providerCode, item.model.code), label: `${item.providerName} · ${item.model.displayName}` });
     }
-    if (readRecord(rawInput).closeCopilot !== true) {
-      throw new ConflictError('isEnabled', COPILOT_ON_CONFLICT_MESSAGE);
-    }
-    const view = await this.models.setModelEnabled(rawInput);
-    try {
-      await this.store.write({ copilotEnabled: false });
-    } catch (error) {
-      // 没能关闭 Copilot：撤销刚才的启用，避免两个引擎同时启用。
-      await this.models.setModelEnabled({ modelId, isEnabled: false });
-      throw error;
-    }
-    return view;
-  }
-
-  private enabledTextModels(): ModelRecord[] {
-    return this.models.listTextModels().filter((model) => model.isEnabled);
+    return { choices, note };
   }
 }

@@ -9,7 +9,7 @@
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { FAKE_IMAGE_CAPABILITY, FAKE_VIDEO_CAPABILITY } from '../../domain/ports/testing/fake-model-providers';
+import { FAKE_IMAGE_CAPABILITY, FAKE_TEXT_CAPABILITY, FAKE_VIDEO_CAPABILITY } from '../../domain/ports/testing/fake-model-providers';
 import { IN_MEMORY_DATABASE_PATH, openDatabase } from './database-connection';
 import { SqliteProviderRepository } from './sqlite-provider-repository';
 
@@ -88,4 +88,17 @@ test('同步模型：更新名称与能力但保留启用状态；停用不再�
   );
   repository.disableModelsExcept(providerId, []);
   assert.ok(repository.listModels({ providerId }).every((model) => !model.isEnabled));
+});
+
+test('新增文本模型：默认停用，其他类型默认启用；同步更新时保留用户的启用状态', () => {
+  const repository = createRepository();
+  const { id } = repository.insertProvider({ code: 'p', displayName: '甲', settings: {} }, T1);
+  const text = { code: 't1', displayName: '文本一', kind: 'text' as const, capability: FAKE_TEXT_CAPABILITY };
+  const created = repository.upsertModel(id, text, T1);
+  assert.deepEqual([created.kind, created.isEnabled, created.capability], ['text', false, FAKE_TEXT_CAPABILITY]);
+  assert.equal(repository.upsertModel(id, VIDEO_MODEL, T1).isEnabled, true);
+
+  repository.setModelEnabled(created.id, true);
+  assert.equal(repository.upsertModel(id, { ...text, displayName: '文本一（新）' }, T2).isEnabled, true);
+  assert.deepEqual(repository.listModels({ kind: 'text' }).map((model) => model.displayName), ['文本一（新）']);
 });

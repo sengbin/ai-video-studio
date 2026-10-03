@@ -204,23 +204,22 @@ export class ProviderService {
     return this.buildView(provider, descriptor);
   }
 
-  /** 按标识查找模型；不存在返回 undefined。 */
-  findModel(modelId: number): ModelRecord | undefined {
-    return this.repository.findModelById(modelId);
-  }
-
-  /** 列出全部文本模型（含已停用的），不论服务商是否启用。 */
-  listTextModels(): ModelRecord[] {
-    return this.repository.listModels({ kind: 'text' });
-  }
-
-  /** 停用全部文本模型。 */
-  disableTextModels(): void {
-    for (const model of this.listTextModels()) {
-      if (model.isEnabled) {
-        this.repository.setModelEnabled(model.id, false);
+  /**
+   * 列出可供选择的文本模型：模型和服务商都已启用，且服务商有适配器；不要求已配置访问密钥（缺少密钥在生成时给出明确提示）。
+   */
+  listSelectableTextModels(): UsableModel[] {
+    const selectable: UsableModel[] = [];
+    for (const provider of this.repository.listProviders()) {
+      if (!provider.isEnabled || this.registry.find('text', provider.code) === undefined) {
+        continue;
+      }
+      for (const model of this.repository.listModels({ providerId: provider.id, kind: 'text' })) {
+        if (model.isEnabled) {
+          selectable.push({ model, providerCode: provider.code, providerName: provider.displayName });
+        }
       }
     }
+    return selectable;
   }
 
   /**

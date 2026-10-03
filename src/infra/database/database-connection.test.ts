@@ -22,7 +22,7 @@ import { SqliteGenerationProfileRepository } from './sqlite-generation-profile-r
 import { runInTransaction } from './transaction';
 
 const NOW = '2026-01-01T00:00:00.000Z';
-const EXPECTED_TABLE_COUNT = 26;
+const EXPECTED_TABLE_COUNT = 27;
 
 /** 查询库中所有业务表的名称。 */
 function listTableNames(database: DatabaseSync): string[] {
@@ -792,6 +792,28 @@ test('迁移 017：模型类型新增文本，已有模型与引用它的生成�
     assert.deepEqual({ ...database.prepare("SELECT id, kind FROM models WHERE code = 't1'").get() }, { id: 2, kind: 'text' });
     assert.throws(() => database.prepare("INSERT INTO models (provider_id, code, display_name, kind, created_at) VALUES (1, 'x1', '未知', 'unknown', ?)").run(NOW));
     assert.throws(() => database.prepare("INSERT INTO models (provider_id, code, display_name, kind, created_at) VALUES (1, 'v1', '重复', 'video', ?)").run(NOW), '同一服务商的模型代码仍然唯一');
+  } finally {
+    database.close();
+  }
+});
+test('迁移 018：新增作品文本模型表，已有数据不变，每个作品最多一行，作品删除时级联清除', () => {
+  const database = new DatabaseSync(IN_MEMORY_DATABASE_PATH);
+  try {
+    database.exec('PRAGMA foreign_keys = ON');
+    runMigrations(database, MIGRATIONS.slice(0, 17));
+    const { workId } = seedWorkWithEpisode(database);
+
+    runMigrations(database, MIGRATIONS);
+    assert.equal(readSchemaVersion(database), MIGRATIONS.length);
+    assert.equal(countRows(database, 'works'), 1);
+    assert.equal(countRows(database, 'work_text_models'), 0);
+
+    database.prepare("INSERT INTO work_text_models (work_id, model_key, updated_at) VALUES (?, 'copilot:', ?)").run(workId, NOW);
+    assert.throws(() => database.prepare("INSERT INTO work_text_models (work_id, model_key, updated_at) VALUES (?, 'copilot:gpt', ?)").run(workId, NOW), '每个作品最多一行');
+    assert.throws(() => database.prepare("INSERT INTO work_text_models (work_id, model_key, updated_at) VALUES (999, 'copilot:', ?)").run(NOW), '作品必须存在');
+    assert.throws(() => database.prepare("UPDATE work_text_models SET model_key = ''").run(), '模型键不能为空');
+    database.prepare('DELETE FROM works WHERE id = ?').run(workId);
+    assert.equal(countRows(database, 'work_text_models'), 0);
   } finally {
     database.close();
   }
