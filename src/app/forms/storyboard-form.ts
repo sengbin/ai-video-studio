@@ -247,7 +247,7 @@ async function createStartForm(dependencies: StoryboardFormDependencies, workId:
     {
       key: 'audioElements',
       label: '声音内容',
-      description: '决定生成哪些类型的声音条目；声音模式为无声时忽略',
+      description: '决定生成哪些类型的声音条目；不勾选“角色对白”时，角色说的话不会生成，也就用不上角色绑定的音色；声音模式为无声时忽略',
       control: 'checkboxes',
       required: false,
       options: SOUND_KINDS.map((kind) => SOUND_KIND_LABELS[kind])
