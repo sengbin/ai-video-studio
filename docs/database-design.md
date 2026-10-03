@@ -49,9 +49,8 @@
 | 生成 | `video_jobs` | 镜头组生成任务 |
 | | `video_results` | 生成结果视频 |
 | | `result_frames` | 结果视频的尾帧图片 |
-| | `episode_audio_tracks` | 集的独立音轨（预留，本阶段不开发） |
 
-共 27 张表，其中 `episode_audio_tracks` 为预留，实际创建 26 张（迁移 009 已创建 `asset_versions`、`asset_version_files`，迁移 013 创建 `asset_categories`）。
+共 26 张表（迁移 009 已创建 `asset_versions`、`asset_version_files`，迁移 013 创建 `asset_categories`）。
 
 ## 3. 关系图
 
@@ -78,7 +77,6 @@ erDiagram
   shots ||--o{ shot_sounds : 声音
   script_entities ||--o{ shot_sounds : 说话人
   assets ||--o{ shot_sounds : 指定音频
-  episodes ||--o{ episode_audio_tracks : 独立音轨（预留）
   episodes ||--o{ entity_bindings : 绑定
   script_entities ||--o{ entity_bindings : 被绑定
   assets ||--o{ entity_bindings : 被绑定
@@ -272,7 +270,8 @@ erDiagram
 | `transition` | 文本 | 是 | 空串 | 转场 |
 | `continuity_note` | 文本 | 是 | 空串 | 连续性要求 |
 | `first_frame_mode` | 文本 | 是 | `none` | `none`、`prev_tail`、`asset` |
-| `first_frame_asset_file_id` | 整数 | 否 | | `asset` 模式下的首帧图，外键 `asset_files.id`，删除时置空 |
+| `first_frame_asset_file_id` | 整数 | 否 | | 已弃用，从未写入，改用下面的 `first_frame_asset_id`（资产文件在资产编辑、采用生成版本时会整体删除重写，文件标识不稳定；SQLite 不能删除带外键的列，所以保留不用） |
+| `first_frame_asset_id` | 整数 | 否 | | `asset` 模式下指定的资产，外键 `assets.id`，删除资产时置空（迁移 015 新增）；提交时取该资产的第一张参考图作首帧 |
 | `group_id` | 整数 | 否 | | 所属镜头组，外键 `shot_groups.id`，组被删除时置空；空表示尚未分组（新增镜头、旧数据），读取时自动补全 |
 | `prompt_zh` | 文本 | 是 | 空串 | 中文视频提示词 |
 | `prompt_en` | 文本 | 是 | 空串 | 英文视频提示词 |
@@ -283,7 +282,7 @@ erDiagram
 
 - `(storyboard_script_id, seq)` 唯一。
 - 对白、旁白、音效、配乐不在镜头表中，由 `shot_sounds` 保存。
-- `first_frame_mode = 'asset'` 时 `first_frame_asset_file_id` 必须有值，由业务层校验；不做数据库 CHECK，因为删除资产文件时该列会被置空。
+- `first_frame_mode = 'asset'` 时 `first_frame_asset_id` 必须有值，由业务层校验（只能选图片类、至少有一张参考图的资产）；不做数据库 CHECK，因为删除资产时该列会被置空，此时提交这一组会被拒绝并提示重新选择。
 - `first_frame_mode = 'prev_tail'` 时该镜头不能是集内的第 1 个镜头（由业务校验，不做 CHECK）。
 
 #### `shot_groups` 镜头组
@@ -359,7 +358,7 @@ erDiagram
 | `extra_requirements` | 文本 | 是 | 空串 | 补充要求 |
 | `prompt_zh` | 文本 | 是 | 空串 | 中文图像生成提示词 |
 | `prompt_en` | 文本 | 是 | 空串 | 英文图像生成提示词 |
-| `content_revision` | 整数 | 是 | 1 | 表单内容修订号，见 4.9（迁移 009 新增） |
+| `content_revision` | 整数 | 是 | 1 | 表单内容修订号，见 4.8（迁移 009 新增） |
 | `prompt_revision` | 整数 | 是 | 0 | 提示词修订号，0 表示还没有提示词（迁移 009 新增） |
 | `prompt_content_revision` | 整数 | 是 | 0 | 当前提示词依据的 `content_revision`（迁移 009 新增） |
 | `prompt_status` | 文本 | 是 | `none` | 提示词后台生成的状态：`none`、`running`、`succeeded`、`failed`、`canceled`（迁移 009 新增） |
@@ -405,7 +404,7 @@ erDiagram
 
 列表查询只读取缩略图，不读取参考图的 `content`。
 
-实现约定：图片资产的每张参考图对应一条 `role = thumbnail` 的缩略图记录（`sort_order` 与参考图一致，由页面用 canvas 生成 256px 的 JPEG，随表单提交）；列表取 `sort_order` 最小的一条。资产编辑时文件整体替换（先删后写），采用资产版本时同样整体替换（见 4.9）；表单里手动改动了文件时，`assets.adopted_version_id` 置空。音频资产没有缩略图，`duration_seconds` 由页面解码读取。
+实现约定：图片资产的每张参考图对应一条 `role = thumbnail` 的缩略图记录（`sort_order` 与参考图一致，由页面用 canvas 生成 256px 的 JPEG，随表单提交）；列表取 `sort_order` 最小的一条。资产编辑时文件整体替换（先删后写），采用资产版本时同样整体替换（见 4.8）；表单里手动改动了文件时，`assets.adopted_version_id` 置空。音频资产没有缩略图，`duration_seconds` 由页面解码读取。
 
 #### `entity_bindings` 实体与资产绑定
 
@@ -547,7 +546,7 @@ erDiagram
 | `resolution` | 文本 | 否 | 分辨率 |
 | `min_shot_seconds` | 实数 | 否 | 单镜头最短时长，仅作品级使用 |
 | `max_shot_seconds` | 实数 | 否 | 单镜头最长时长，仅作品级使用 |
-| `audio_mode` | 文本 | 否 | `none` 无声、`native` 模型原生生成、`external` 独立音轨（预留，本阶段不可选） |
+| `audio_mode` | 文本 | 否 | `none` 无声、`native` 模型原生生成（CHECK，迁移 014 收窄为这两个值） |
 | `audio_elements_json` | 文本（JSON） | 否 | 启用的声音内容，数组，元素为 `dialogue`、`narration`、`sfx`、`music`，按这个顺序去重保存、至少一项；仅 `audio_mode` 为 `native` 时有意义；为空表示模型支持的全部（已实现，工作台参数页签读写） |
 | `seed` | 整数 | 否 | 随机种子，0 至 2147483647；为空表示随机，不传给模型；仅模型能力声明支持种子时可用（已实现，工作台参数页签读写） |
 | `duration_seconds` | 实数 | 否 | 本组生成时长（秒），迁移 012 新增，大于 0，**仅 `scope = group` 使用**（作品、集不保存）：整组视频的时长；为空表示按组内镜头总时长向上对齐到模型支持的取值 |
@@ -586,7 +585,7 @@ erDiagram
 | `submitted_at` | 文本 | 否 | | 实际提交给模型的时间 |
 | `finished_at` | 文本 | 否 | | |
 
-`request_snapshot_json` 的键（JSON 内使用 camelCase；当前实现，首帧不进快照而是记录在任务的 `prev_job_id`、`first_frame_id`，独立音轨以后再增加键）：
+`request_snapshot_json` 的键（JSON 内使用 camelCase；当前实现，上一组尾帧作首帧不进快照而是记录在任务的 `prev_job_id`、`first_frame_id`）：
 
 | 键 | 含义 |
 |---|---|
@@ -596,6 +595,7 @@ erDiagram
 | `prompt` | 编译后的提示词：参考图编号说明开头；多镜头时每个镜头写成“(开始 - 结束) 镜头提示词 声音：…”的时间段（如 `(0:00 - 0:04)`），单镜头不加时间段 |
 | `referenceImageFileIds` | 组内出场实体（去重）使用的资产图片文件 ID 列表（只存引用，提交给服务商前才读取内容） |
 | `referenceAudioFileIds` | 使用的资产音频文件 ID 列表（含角色音色参考） |
+| `firstFrameFileId` | 指定图片作首帧时使用的资产图片文件 ID（只存引用，提交前才读取内容）；没有指定图片首帧或早期版本提交的快照没有这个键 |
 | `storyboardRunId` | 使用的分镜脚本版本 |
 | `warnings` | 提交时的提醒，如“使用上一组尾帧作首帧，未传参考素材”“某实体没有绑定资产” |
 
@@ -636,27 +636,7 @@ erDiagram
 | `content` | 二进制 | 是 | | 图片内容 |
 | `created_at` | 文本 | 是 | | |
 
-### 4.8 独立音轨（预留）
-
-用于“声音与视频分开生成、再合成”的方式。**本阶段只设计结构，不开发功能，也不建表**；开发时新增迁移 `014-audio-tracks`（011 已用于镜头组参数，012 已用于生成参数的生成时长，013 已用于资产分类）。
-
-#### `episode_audio_tracks` 集的独立音轨
-
-| 字段 | 类型 | 必填 | 默认 | 说明 |
-|---|---|---|---|---|
-| `id` | 整数 | 是 | 自增 | |
-| `episode_id` | 整数 | 是 | | 外键 `episodes.id`，级联删除 |
-| `kind` | 文本 | 是 | | `dialogue`、`narration`、`sfx`、`music`、`mix`（混合后的完整音轨） |
-| `source` | 文本 | 是 | | `generated` 生成、`asset` 来自资产 |
-| `audio_asset_id` | 整数 | 否 | | `source = asset` 时必填，外键 `assets.id`，删除时置空 |
-| `file_path` | 文本 | 否 | | 生成结果文件的相对路径 |
-| `start_seconds` | 实数 | 是 | 0 | 在本集时间轴上的起始时间 |
-| `duration_seconds` | 实数 | 否 | | 时长 |
-| `volume` | 实数 | 是 | 1.0 | 音量倍数 |
-| `sort_order` | 整数 | 是 | 0 | 同一时间点上的排列 |
-| `created_at` | 文本 | 是 | | |
-
-### 4.9 资产生成版本（图像、音频模型）
+### 4.8 资产生成版本（图像、音频模型）
 
 资产的“提示词”和“图片/音频”是两步，流程见 [ARCHITECTURE.md](ARCHITECTURE.md) 6.7：
 
@@ -762,7 +742,6 @@ erDiagram
 | `shots` | `(group_id)` | 按组查询镜头 |
 | `shot_sounds` | `(shot_id, seq)` 唯一 | 镜头内声音顺序 |
 | `shot_sounds` | `(speaker_entity_id)` | 按角色查看对白 |
-| `episode_audio_tracks`（预留） | `(episode_id, start_seconds, sort_order)` | 按时间轴读取音轨 |
 
 ## 6. 删除规则
 
@@ -793,7 +772,7 @@ erDiagram
 5. **启动恢复。** 扩展启动时，把遗留的 `running` 任务按 `remote_job_id` 重新查询状态；无远端标识的置为 `failed`。超过最长等待时间（提交后 60 分钟）的任务也要先查询，平台已完成则照常取回结果，仍在生成中才记为超时失败（关闭 VS Code 期间平台可能已经生成完）；平台只保留结果约 24 小时，超过后查询到“已不再保留”记为失败。遗留的 `running` 阶段记录（`stage_runs`）一律置为 `failed`，原因为“扩展重启，已中断”。
 6. **提交前校验（应用层）。** 实体是否都已绑定、参数是否落在模型能力范围内、参考图数量、密钥是否已配置、`prev_tail` 是否有前序，详见架构文档。
 7. **声音。**
-   - 声音先按“模型原生生成”实现（`audio_mode = native`）；“独立音轨”只预留结构。
+   - 声音按“模型原生生成”实现（`audio_mode = native`）。
    - 提交时，把镜头中启用、且属于 `audio_elements_json` 的 `shot_sounds` 条目编译为声音提示词；对白条目带上说话人的音色设定（实体的 `voice`）。
    - 角色在本集绑定了音色参考音频（`purpose = voice`）且模型支持 `voice_reference` 时，把它作为参考音频一并提交；模型不支持时只使用文字描述，并给出警告。
    - 模型不支持的声音内容（例如不支持背景音乐）不会被提交，提交预览中需要列出。
@@ -803,8 +782,8 @@ erDiagram
    - 产出内容（章节、剧本包正文、集、实体、镜头、声音条目）每次编辑保存，对应阶段记录的 `revision` 加 1；已确认的记录同时回到 `pending` 且 `is_current = 0`。这些编辑统一经服务层保存。
    - 下游过期：下游记录的 `source_revision` 与上游记录现在的 `revision` 不同，或上游记录不再是已确认，则该下游记录显示“上游已变更”；不自动修改或删除下游数据。
    - 下游阶段只能选择已确认（`is_current = 1`）的上游记录作为输入。
-10. **资产提示词不建阶段记录、不做版本管理。** Copilot 在后台生成中英文提示词，状态与结果直接保存在 `assets`（`prompt_status`、`prompt_zh`、`prompt_en`），用户可随时修改；重新生成直接覆盖。提示词的历史不保留，版本只保存当时使用的提示词快照（见 4.9）。
-11. **资产修订号与“有改动未生成”。** 见 4.9：改表单内容、改提示词只修改修订号，不创建空版本；版本号只在真正提交生成时加 1。
+10. **资产提示词不建阶段记录、不做版本管理。** Copilot 在后台生成中英文提示词，状态与结果直接保存在 `assets`（`prompt_status`、`prompt_zh`、`prompt_en`），用户可随时修改；重新生成直接覆盖。提示词的历史不保留，版本只保存当时使用的提示词快照（见 4.8）。
+11. **资产修订号与“有改动未生成”。** 见 4.8：改表单内容、改提示词只修改修订号，不创建空版本；版本号只在真正提交生成时加 1。
 12. **采用资产版本。** 只有成功的版本可以采用，采用时把所选的结果文件（默认全部，最多 10 张）复制为 `asset_files`（整体替换原有的参考文件和缩略图），并记录 `adopted_version_id`。绑定和视频生成只读 `asset_files`，因此未采用的版本不影响任何下游；已提交的视频任务有请求快照，采用新版本不改变它们。
 13. **音频资产的文件可以暂时为空。** 音频资产可先创建、再生成或上传文件；没有文件的音频资产不能绑定为音色参考。
 
@@ -827,11 +806,12 @@ erDiagram
 | 11 | `011-group-profiles` | 重建 `generation_profiles`：范围改为作品、集、镜头组，新增 `group_id` | 已实现 |
 | 12 | `012-profile-duration` | `generation_profiles` 新增 `duration_seconds`（本组生成时长）；种子、声音内容列早已预留，无需改表 | 已实现 |
 | 13 | `013-asset-categories` | 新增 `asset_categories`；`assets` 增加可空的 `category_id`（外键，删除分类时置空），已有资产全部不分类 | 已实现 |
-| 14 | `014-audio-tracks` | `episode_audio_tracks`（预留，开发独立音轨时再新增） | 后续 |
+| 14 | `014-audio-mode-cleanup` | 重建 `generation_profiles`，`audio_mode` 的 CHECK 收窄为 `none`、`native`，数据原样保留 | 已实现 |
+| 15 | `015-shot-first-frame-asset` | `shots` 增加可空的 `first_frame_asset_id`（外键 `assets.id`，删除资产时置空），用于“指定图片作首帧” | 已实现 |
 
 拆分说明：镜头引用资产文件，因此资产在分镜之前建立；前五个迁移创建了 22 张表，迁移 8 再增加镜头组表，各功能的仓库随功能实现逐步补全。
 
-已发布的脚本不再修改；结构变更一律新增下一个编号的脚本。测试阶段不考虑已有数据，需要重建表（例如修改 CHECK 约束）时，新增的迁移可以直接丢弃该表及其下游表的数据，不做数据搬迁；首次发布版本（0.0.1）之后不再允许，迁移 001 至 012 视为已发布。升级前先复制数据库文件作为备份。
+已发布的脚本不再修改；结构变更一律新增下一个编号的脚本。测试阶段不考虑已有数据，需要重建表（例如修改 CHECK 约束）时，新增的迁移可以直接丢弃该表及其下游表的数据，不做数据搬迁；首次发布版本（0.0.1）之后不再允许，迁移 001 至 013 视为已发布（迁移 014 起重建表必须保留数据，见 014）。升级前先复制数据库文件作为备份。
 
 ## 9. 与架构文档的差异说明
 
@@ -844,5 +824,5 @@ erDiagram
 - `GEN_PROFILE` 由“范围 + 范围 ID + JSON 参数”改为结构化列和三个外键。
 - 新增创意阶段相关表 `work_sources`、`chapters`，以及项目级默认值。
 - 生成任务只入库提交后的状态；草稿、就绪是校验阶段的界面状态。
-- 声音从单个模式字段拓展为结构化内容：新增 `shot_sounds`（对白、旁白、音效、配乐），镜头表不再保存对白和声音说明文本；资产新增音频类型；绑定新增用途（形象、音色）；独立音轨只预留。
+- 声音从单个模式字段拓展为结构化内容：新增 `shot_sounds`（对白、旁白、音效、配乐），镜头表不再保存对白和声音说明文本；资产新增音频类型；绑定新增用途（形象、音色）。
 - 阶段记录增加人工确认状态、修订号和上游依赖；剧本包增加结构快照，确认后才合并到集和实体；模型增加类型（图像、音频、视频），能力描述按类型区分；资产生成采用“版本”模型（`asset_versions`、`asset_version_files`），原预留的 `asset_jobs`、`asset_candidates` 合并为这两张表。

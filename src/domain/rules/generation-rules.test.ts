@@ -48,6 +48,7 @@ function shot(overrides: Partial<ShotRecord> = {}): ShotRecord {
     transition: '',
     continuityNote: '',
     firstFrameMode: 'none',
+    firstFrameAssetId: null,
     entityIds: [],
     sounds: [],
     promptZh: '中景，守夜人缓缓登上灯塔',
@@ -118,7 +119,7 @@ test('读取提交请求：标识、镜头组数量、声音模式不合法时�
   rejected({ ...base, groupIds: ['a'] });
   rejected({ ...base, groupIds: Array.from({ length: 101 }, (_, index) => index) });
   rejected({ ...base, params: {} });
-  rejected({ ...base, params: { modelId: 3, audioMode: 'external' } });
+  rejected({ ...base, params: { modelId: 3, audioMode: 'invalid' } });
   rejected({ ...base, params: { modelId: 3, resolution: 'x'.repeat(21) } });
 });
 
@@ -343,10 +344,33 @@ test('编译镜头：选择无声时不写声音提示词；音色参考只给�
   assert.deepEqual(plan({}, [voiced], withVoiceModel).referenceAudioFileIds, [], '没有对白不需要音色参考');
 });
 
-test('编译镜头：没有上一组可用的尾帧衔接与指定图片首帧时给出提醒但不阻断', () => {
+test('编译镜头：没有上一组可用的尾帧衔接、指定图片已不可用时给出提醒但不阻断', () => {
   assert.match(plan({ firstFrameMode: 'prev_tail' }).warnings.join(), /上一镜头尾帧作首帧.*没有上一组可用/);
-  assert.match(plan({ firstFrameMode: 'asset' }).warnings.join(), /指定图片作首帧.*尚未开放/);
+  assert.match(plan({ firstFrameMode: 'asset' }).warnings.join(), /指定图片作首帧.*已不可用/);
   assert.deepEqual(plan({ firstFrameMode: 'none' }).warnings, []);
+});
+
+test('编译镜头组：指定图片作首帧时记下首帧文件，不传参考图和音色参考，快照里没有这个键则表示未指定', () => {
+  const speaker: EntityReferences = { ...GUARD, voiceFileId: 201 };
+  const dialogue = shot({ firstFrameMode: 'asset', firstFrameAssetId: 7, sounds: [sound({ speakerEntityId: 1, text: '要下雨了' })] });
+  const capability = { ...FAKE_VIDEO_CAPABILITY, audioInputMax: { count: 1, maxSeconds: 10 } };
+  const withImage = planGroupRequest({
+    shots: [dialogue],
+    storyboardRunId: 3,
+    providerCode: 'fake',
+    modelCode: 'fake-video',
+    capability,
+    params: PARAMS,
+    entities: [speaker],
+    firstFrameFileId: 301
+  });
+  assert.equal(withImage.firstFrameFileId, 301);
+  assert.deepEqual([withImage.referenceImageFileIds, withImage.referenceAudioFileIds], [[], []]);
+  assert.ok(!withImage.prompt.includes('图1') && !withImage.prompt.includes('音频1'));
+  assert.match(withImage.warnings.join(), /指定的图片作首帧.*不传参考素材/);
+  assert.ok(!withImage.warnings.join().includes('已不可用'));
+
+  assert.ok(!('firstFrameFileId' in planMany([shot()])), '没有指定首帧图片时快照不带这个键');
 });
 
 test('失败原因说明：每一类都有名称与处理建议，内容审核类指引修改镜头', () => {

@@ -21,6 +21,8 @@ import { globalAssetsMigration } from './010-global-assets';
 import { groupProfilesMigration } from './011-group-profiles';
 import { profileDurationMigration } from './012-profile-duration';
 import { assetCategoriesMigration } from './013-asset-categories';
+import { audioModeCleanupMigration } from './014-audio-mode-cleanup';
+import { shotFirstFrameAssetMigration } from './015-shot-first-frame-asset';
 
 /** 全部数据库迁移，版本号从 1 开始连续递增。 */
 export const MIGRATIONS: readonly Migration[] = [
@@ -36,5 +38,7 @@ export const MIGRATIONS: readonly Migration[] = [
   globalAssetsMigration,
   groupProfilesMigration,
   profileDurationMigration,
-  assetCategoriesMigration
+  assetCategoriesMigration,
+  audioModeCleanupMigration,
+  shotFirstFrameAssetMigration
 ];

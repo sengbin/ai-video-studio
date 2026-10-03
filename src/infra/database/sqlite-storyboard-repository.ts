@@ -35,6 +35,7 @@ interface ShotRow {
   readonly transition: string;
   readonly continuity_note: string;
   readonly first_frame_mode: FirstFrameMode;
+  readonly first_frame_asset_id: number | null;
   readonly prompt_zh: string;
   readonly prompt_en: string;
 }
@@ -86,8 +87,8 @@ export class SqliteStoryboardRepository implements StoryboardRepository {
       const insertShot = this.database.prepare(
         `INSERT INTO shots
            (storyboard_script_id, seq, scene_label, shot_size, camera_angle, action, camera_movement, duration_seconds,
-            transition, continuity_note, first_frame_mode, prompt_zh, prompt_en, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+            transition, continuity_note, first_frame_mode, first_frame_asset_id, prompt_zh, prompt_en, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       );
       for (const shot of shots) {
         const inserted = insertShot.run(
@@ -102,6 +103,7 @@ export class SqliteStoryboardRepository implements StoryboardRepository {
           shot.transition,
           shot.continuityNote,
           shot.firstFrameMode,
+          shot.firstFrameAssetId,
           shot.promptZh,
           shot.promptEn,
           timestamp,
@@ -149,6 +151,7 @@ export class SqliteStoryboardRepository implements StoryboardRepository {
       transition: row.transition,
       continuityNote: row.continuity_note,
       firstFrameMode: row.first_frame_mode,
+      firstFrameAssetId: row.first_frame_asset_id,
       entityIds: entityRows.filter((entity) => entity.shot_id === row.id).map((entity) => entity.entity_id),
       sounds: soundRows.filter((sound) => sound.shot_id === row.id).map(toSound),
       promptZh: row.prompt_zh,
@@ -178,7 +181,7 @@ export class SqliteStoryboardRepository implements StoryboardRepository {
       this.database
         .prepare(
           `UPDATE shots SET scene_label = ?, shot_size = ?, camera_angle = ?, action = ?, camera_movement = ?, duration_seconds = ?,
-             transition = ?, continuity_note = ?, first_frame_mode = ?, prompt_zh = ?, prompt_en = ?, updated_at = ?
+             transition = ?, continuity_note = ?, first_frame_mode = ?, first_frame_asset_id = ?, prompt_zh = ?, prompt_en = ?, updated_at = ?
            WHERE id = ?`
         )
         .run(
@@ -191,6 +194,7 @@ export class SqliteStoryboardRepository implements StoryboardRepository {
           edit.transition,
           edit.continuityNote,
           edit.firstFrameMode,
+          edit.firstFrameAssetId,
           edit.promptZh,
           edit.promptEn,
           timestamp,
@@ -213,8 +217,8 @@ export class SqliteStoryboardRepository implements StoryboardRepository {
         .prepare(
           `INSERT INTO shots
              (storyboard_script_id, seq, scene_label, shot_size, camera_angle, action, camera_movement, duration_seconds,
-              transition, continuity_note, first_frame_mode, prompt_zh, prompt_en, created_at, updated_at)
-           VALUES (?, (SELECT COALESCE(MAX(seq), 0) + 1 FROM shots WHERE storyboard_script_id = ?), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+              transition, continuity_note, first_frame_mode, first_frame_asset_id, prompt_zh, prompt_en, created_at, updated_at)
+           VALUES (?, (SELECT COALESCE(MAX(seq), 0) + 1 FROM shots WHERE storyboard_script_id = ?), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
         .run(
           script.id,
@@ -228,6 +232,7 @@ export class SqliteStoryboardRepository implements StoryboardRepository {
           edit.transition,
           edit.continuityNote,
           edit.firstFrameMode,
+          edit.firstFrameAssetId,
           edit.promptZh,
           edit.promptEn,
           timestamp,

@@ -18,7 +18,7 @@ export const PLACEHOLDER_FIRST_FRAME: MediaInput = { mimeType: 'image/jpeg', dat
 /**
  * 按快照读取素材内容并组装生成请求。
  * @param snapshot 任务请求快照。
- * @param firstFrameId 作为首帧的尾帧图片标识；没有首帧为 null。
+ * @param firstFrameId 作为首帧的尾帧图片标识；没有首帧为 null。快照里指定了图片首帧（firstFrameFileId）时，用它读取资产图片作首帧。
  * @param media 素材读取器。
  * @param modelCode 服务商侧的模型代码。
  * @throws ProviderError 参考素材或首帧图片已不存在（分类为参数错误）。
@@ -37,6 +37,11 @@ export function buildVideoRequest(snapshot: JobSnapshot, firstFrameId: number | 
     firstFrame = media.readResultFrame(firstFrameId) ?? null;
     if (firstFrame === null) {
       throw new ProviderError('invalid_request', '首帧图片已不存在，请重新生成前序镜头。');
+    }
+  } else if (snapshot.firstFrameFileId !== undefined && snapshot.firstFrameFileId !== null) {
+    firstFrame = media.readAssetFile(snapshot.firstFrameFileId) ?? null;
+    if (firstFrame === null) {
+      throw new ProviderError('invalid_request', '指定的首帧图片已被删除或替换，请在镜头编辑里重新选择后再生成。');
     }
   }
   return {

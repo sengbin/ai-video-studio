@@ -393,6 +393,7 @@ function parseShot(item: unknown, index: number, context: StoryboardContext, iss
     transition,
     continuityNote,
     firstFrameMode: parseFirstFrame(record, seq, params, label, issues),
+    firstFrameAssetId: null,
     entityIds: [...entityIds],
     sounds,
     promptZh,
@@ -487,9 +488,15 @@ function readSoundEdits(value: unknown, entities: readonly StoryboardEntity[], e
  * @param rawInput 界面提交的原始内容。
  * @param entities 可引用的实体。
  * @param isFirstShot 是否为集内第 1 个镜头：没有上一镜头，首帧不能接上一镜头尾帧。
+ * @param firstFrameAssetIds 可作为首帧图片的资产标识（图片类资产且至少有一张参考图）；首帧来源为“指定图片”时必须从中选择。
  * @throws ValidationError 存在不合法的字段。
  */
-export function normalizeShotEdit(rawInput: unknown, entities: readonly StoryboardEntity[], isFirstShot: boolean): ShotEdit {
+export function normalizeShotEdit(
+  rawInput: unknown,
+  entities: readonly StoryboardEntity[],
+  isFirstShot: boolean,
+  firstFrameAssetIds: readonly number[] = []
+): ShotEdit {
   const source = readRecord(rawInput);
   const errors: FieldErrors = {};
   const text = (key: string, label: string, max: number, required: boolean): string =>
@@ -513,9 +520,19 @@ export function normalizeShotEdit(rawInput: unknown, entities: readonly Storyboa
     errors.durationSeconds = '时长不能为空。';
   }
 
-  const firstFrameMode = readOptionalChoice(source, 'firstFrameMode', '首帧来源', ['none', 'prev_tail'], errors) ?? 'none';
+  const firstFrameMode = readOptionalChoice(source, 'firstFrameMode', '首帧来源', ['none', 'prev_tail', 'asset'], errors) ?? 'none';
   if (firstFrameMode === 'prev_tail' && isFirstShot) {
     errors.firstFrameMode = '第 1 个镜头没有上一镜头，不能接上一镜头尾帧。';
+  }
+  // 指定图片作首帧：必须选一个带参考图的图片资产；其他首帧来源不保存资产。
+  let firstFrameAssetId: number | null = null;
+  if (firstFrameMode === 'asset') {
+    const rawAssetId = source.firstFrameAssetId;
+    if (typeof rawAssetId !== 'number' || !firstFrameAssetIds.includes(rawAssetId)) {
+      errors.firstFrameAssetId = '请选择一个带参考图的资产作为首帧图片。';
+    } else {
+      firstFrameAssetId = rawAssetId;
+    }
   }
 
   const entityIds = new Set<number>();
@@ -545,6 +562,7 @@ export function normalizeShotEdit(rawInput: unknown, entities: readonly Storyboa
     transition,
     continuityNote,
     firstFrameMode: firstFrameMode as FirstFrameMode,
+    firstFrameAssetId,
     entityIds: [...entityIds],
     sounds,
     promptZh,

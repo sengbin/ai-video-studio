@@ -23,7 +23,7 @@ export const MODEL_KIND_LABELS: Readonly<Record<ModelKind, string>> = {
 /** 提示词语言。 */
 export type PromptLanguage = 'zh' | 'en';
 
-/** 视频原生声音模式：无声、模型原生生成；独立音轨本阶段不开发。 */
+/** 视频原生声音模式：无声、模型原生生成。 */
 export type VideoAudioMode = 'none' | 'native';
 
 /** 视频原生声音内容。 */

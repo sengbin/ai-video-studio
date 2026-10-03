@@ -239,7 +239,7 @@ async function createStartForm(dependencies: StoryboardFormDependencies, workId:
     {
       key: 'audioMode',
       label: '声音模式',
-      description: '无声时不生成任何声音条目；独立音轨暂未开放',
+      description: '无声时不生成任何声音条目',
       control: 'select',
       required: true,
       options: Object.values(AUDIO_MODE_LABELS)

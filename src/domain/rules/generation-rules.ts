@@ -282,6 +282,8 @@ export interface GroupPlanInput {
   readonly entities: readonly EntityReferences[];
   /** 本次是否以上一组的尾帧作首帧；为 true 时不再传参考图和音色参考（首帧不能与参考素材同时使用）。 */
   readonly useFirstFrame?: boolean;
+  /** 组内第一个镜头指定图片作首帧时，已解析出的资产图片文件；没有指定或图片已不可用为 null。同样不再传参考图和音色参考，且不会与 useFirstFrame 同时出现。 */
+  readonly firstFrameFileId?: number | null;
 }
 
 /** 声音条目编译成一句提示词。 */
@@ -318,20 +320,23 @@ export function formatTimestamp(seconds: number): string {
 
 /**
  * 把一个镜头组编译为任务请求快照：多镜头用“(开始 - 结束)”时间段依次描述，拼上参考素材与声音说明，按模型能力对齐时长与声音，并列出提醒。
- * 上一组尾帧作首帧由调用方通过 useFirstFrame 告知（尾帧图片不进快照，由任务记录）；指定图片首帧本版本尚未支持：组内第一个镜头设置了它时忽略并提醒；组内其他镜头的首帧设置在同一个视频内自然衔接，不需要处理。
+ * 上一组尾帧作首帧由调用方通过 useFirstFrame 告知（尾帧图片不进快照，由任务记录）；指定图片作首帧由调用方解析出资产图片文件后通过 firstFrameFileId 告知（文件标识进快照）；组内其他镜头的首帧设置在同一个视频内自然衔接，不需要处理。
  * 组总时长超过模型单次最长时长的情况由调用方先用 maxGroupSeconds 拒绝；这里对齐后的时长不会超过模型最长时长。本组指定了生成时长（params.durationSeconds）时直接采用，是否合法由调用方先用 validateGroupParams 检查。
  * @param input 镜头组、模型能力、生成参数与出场实体的绑定。
  */
 export function planGroupRequest(input: GroupPlanInput): JobSnapshot {
   const { shots, capability, params, entities } = input;
   const useFirstFrame = input.useFirstFrame === true;
+  const firstFrameFileId = input.firstFrameFileId ?? null;
+  // 首帧不能与参考图、音色参考同时使用，有首帧时都不传。
+  const hasFirstFrame = useFirstFrame || firstFrameFileId !== null;
   const warnings: string[] = [];
 
   const first = shots[0];
   if (first !== undefined && first.firstFrameMode === 'prev_tail' && !useFirstFrame) {
     warnings.push('这一组设置了“上一镜头尾帧作首帧”，但没有上一组可用，本次不指定首帧。');
-  } else if (first !== undefined && first.firstFrameMode === 'asset') {
-    warnings.push('这一组设置了“指定图片作首帧”，该功能尚未开放，本次不指定首帧。');
+  } else if (first !== undefined && first.firstFrameMode === 'asset' && firstFrameFileId === null) {
+    warnings.push('这一组设置了“指定图片作首帧”，但指定的图片已不可用，本次不指定首帧。');
   }
 
   const audioMode: VideoAudioMode | null = params.audioMode ?? (capability.audioModes.includes('native') ? 'native' : capability.audioModes.includes('none') ? 'none' : null);
@@ -339,10 +344,12 @@ export function planGroupRequest(input: GroupPlanInput): JobSnapshot {
 
   // 参考图：按出场实体顺序，每个实体取形象主资产的第一张图；数量受模型上限限制。用上一组尾帧作首帧时不传参考图。
   const referenceImageFileIds: number[] = [];
-  if (useFirstFrame) {
-    if (entities.length > 0) warnings.push('这一组以上一组的尾帧作首帧，首帧不能与参考图、音色参考同时使用，本次不传参考素材（角色、场景的形象由尾帧延续）。');
+  if (hasFirstFrame) {
+    if (entities.length > 0) {
+      warnings.push(`这一组以${useFirstFrame ? '上一组的尾帧' : '指定的图片'}作首帧，首帧不能与参考图、音色参考同时使用，本次不传参考素材（角色、场景的形象由${useFirstFrame ? '尾帧' : '首帧图片'}延续）。`);
+    }
   }
-  for (const entity of useFirstFrame ? [] : entities) {
+  for (const entity of hasFirstFrame ? [] : entities) {
     if (entity.visualFileId === null) {
       warnings.push(`${ENTITY_KIND_LABELS[entity.kind]}“${entity.name}”还没有绑定资产，只能按文字描述生成。`);
     } else if (referenceImageFileIds.length >= capability.referenceImagesMax) {
@@ -382,7 +389,7 @@ export function planGroupRequest(input: GroupPlanInput): JobSnapshot {
     const speakerIds = new Set(
       shots.flatMap((shot) => shot.sounds.filter((sound) => sound.isEnabled && sound.kind === 'dialogue' && selected.includes('dialogue')).map((sound) => sound.speakerEntityId))
     );
-    const audioLimit = useFirstFrame ? null : capability.audioInputMax;
+    const audioLimit = hasFirstFrame ? null : capability.audioInputMax;
     for (const entity of entities) {
       if (audioLimit === null || entity.voiceFileId === null || !speakerIds.has(entity.entityId) || referenceAudioFileIds.length >= audioLimit.count) continue;
       referenceAudioFileIds.push(entity.voiceFileId);
@@ -430,6 +437,7 @@ export function planGroupRequest(input: GroupPlanInput): JobSnapshot {
     },
     referenceImageFileIds,
     referenceAudioFileIds,
+    ...(firstFrameFileId === null ? {} : { firstFrameFileId }),
     warnings
   };
 }

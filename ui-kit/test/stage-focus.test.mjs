@@ -38,6 +38,7 @@ function makeShot(seq) {
     transition: '',
     continuityNote: '',
     firstFrameMode: 'none',
+    firstFrameAssetId: null,
     entityIds: [],
     sounds: [],
     promptZh: '',
@@ -59,6 +60,7 @@ function makeView() {
     groupMaxSeconds: 12,
     totalSeconds: 36,
     entities: [],
+    firstFrameAssets: [],
     soundKinds: [{ kind: 'dialogue', label: '对白' }],
     stale: false,
     actions: { canEdit: true, canApprove: false, canCancel: false, canRetry: false, editNeedsConfirm: false }

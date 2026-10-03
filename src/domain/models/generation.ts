@@ -64,6 +64,8 @@ export interface JobSnapshot {
   readonly params: SnapshotParams;
   readonly referenceImageFileIds: readonly number[];
   readonly referenceAudioFileIds: readonly number[];
+  /** 指定图片作首帧时使用的资产图片文件；没有指定、或早期版本提交的快照没有这个键。 */
+  readonly firstFrameFileId?: number | null;
   /** 提交时给出的提醒（如参考图被截断），不阻断提交。 */
   readonly warnings: readonly string[];
 }

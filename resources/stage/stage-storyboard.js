@@ -28,6 +28,7 @@
   const ACTION_PREVIEW_LENGTH = 24;
   const FIRST_FRAME_NONE = 'none';
   const FIRST_FRAME_PREV_TAIL = 'prev_tail';
+  const FIRST_FRAME_ASSET = 'asset';
   const SOUND_DIALOGUE = 'dialogue';
   const MAX_SOUNDS = 20;
 
@@ -294,16 +295,37 @@
       const transition = aiUi.textInput({ value: shot.transition, disabled: !canEdit, onChange: markDirty });
       const continuityNote = aiUi.textArea({ value: shot.continuityNote, minRows: 1, maxRows: 3, disabled: !canEdit, onChange: markDirty });
       const firstFrameOptions = [{ value: FIRST_FRAME_NONE, label: '不指定' }];
-      // 第 1 个镜头没有上一镜头；指定资产图的首帧随资产管理实现。
+      // 第 1 个镜头没有上一镜头。
       if (shot.seq > 1) firstFrameOptions.push({ value: FIRST_FRAME_PREV_TAIL, label: '上一镜头尾帧' });
+      firstFrameOptions.push({ value: FIRST_FRAME_ASSET, label: '指定图片' });
+      let firstFrameValue = FIRST_FRAME_NONE;
+      if (shot.firstFrameMode === FIRST_FRAME_PREV_TAIL && shot.seq > 1) firstFrameValue = FIRST_FRAME_PREV_TAIL;
+      if (shot.firstFrameMode === FIRST_FRAME_ASSET) firstFrameValue = FIRST_FRAME_ASSET;
       const firstFrame = aiUi.select({
         options: firstFrameOptions,
-        value: shot.firstFrameMode === FIRST_FRAME_PREV_TAIL && shot.seq > 1 ? FIRST_FRAME_PREV_TAIL : FIRST_FRAME_NONE,
+        value: firstFrameValue,
         allowEmpty: false,
         ariaLabel: '首帧来源',
         disabled: !canEdit,
+        onChange: () => {
+          updateFirstFrameAssetVisibility();
+          markDirty();
+        }
+      });
+      const firstFrameAsset = aiUi.select({
+        options: view.firstFrameAssets.map((asset) => ({ value: String(asset.id), label: `[${asset.kindLabel}] ${asset.name}` })),
+        value: shot.firstFrameAssetId === null || shot.firstFrameAssetId === undefined ? '' : String(shot.firstFrameAssetId),
+        placeholder: view.firstFrameAssets.length === 0 ? '资产库里还没有带参考图的资产' : '选择首帧图片所在的资产',
+        ariaLabel: '首帧图片',
+        disabled: !canEdit,
         onChange: markDirty
       });
+      const firstFrameAssetField = field('首帧图片', firstFrameAsset, '使用该资产的第一张参考图作首帧；资产改了参考图，首帧随之更新');
+      /** 只有选“指定图片”时才需要选择资产。 */
+      function updateFirstFrameAssetVisibility() {
+        firstFrameAssetField.hidden = firstFrame.getValue() !== FIRST_FRAME_ASSET;
+      }
+      updateFirstFrameAssetVisibility();
       const entities = aiUi.checkboxGroup({
         options: view.entities.map((entity) => ({
           value: String(entity.id),
@@ -328,7 +350,8 @@
           field('摄影机运动', cameraMovement),
           field('转场', transition),
           field('连续性要求', continuityNote),
-          field('首帧来源', firstFrame, '以上一镜头尾帧为首帧时，需要等上一镜头生成完成'),
+          field('首帧来源', firstFrame, '以上一镜头尾帧为首帧时，需要等上一镜头生成完成；只在镜头组的第一个镜头上生效'),
+          firstFrameAssetField,
           field('出场实体', entities, '对白的说话人会自动加入出场实体'),
           aiUi.h('div', { class: 'ui-field' }, aiUi.h('div', { class: 'ui-field__label', text: '声音' }), sounds.element),
           field('中文提示词', promptZh),
@@ -344,6 +367,7 @@
           transition: transition.getValue(),
           continuityNote: continuityNote.getValue(),
           firstFrameMode: firstFrame.getValue(),
+          firstFrameAssetId: firstFrame.getValue() === FIRST_FRAME_ASSET && firstFrameAsset.getValue() !== '' ? Number(firstFrameAsset.getValue()) : null,
           entityIds: entities.getValue().map(Number),
           sounds: sounds.collect(),
           promptZh: promptZh.getValue(),
@@ -435,6 +459,7 @@
         transition: '',
         continuityNote: '',
         firstFrameMode: FIRST_FRAME_NONE,
+        firstFrameAssetId: null,
         entityIds: [],
         sounds: [],
         promptZh: '',

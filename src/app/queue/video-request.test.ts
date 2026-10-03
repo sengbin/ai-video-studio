@@ -54,3 +54,15 @@ test('组装请求：参考素材已被删除时抛出参数类错误', () => {
     (error) => error instanceof ProviderError && error.category === 'invalid_request'
   );
 });
+
+test('组装请求：快照指定了首帧图片时读取资产图片作首帧，图片已被删除或替换时抛出参数类错误；尾帧优先于它', () => {
+  assert.equal(buildVideoRequest({ ...snapshot(), firstFrameFileId: 1 }, null, MEDIA, 'fake-video').firstFrame, FILE);
+  assert.equal(buildVideoRequest(snapshot(), null, MEDIA, 'fake-video').firstFrame, null);
+  assert.throws(
+    () => buildVideoRequest({ ...snapshot(), firstFrameFileId: 2 }, null, MEDIA, 'fake-video'),
+    (error) => error instanceof ProviderError && error.category === 'invalid_request' && error.message.includes('首帧图片')
+  );
+  const frame: MediaInput = { mimeType: 'image/jpeg', data: new Uint8Array([9]) };
+  const withFrame: JobMediaReader = { ...MEDIA, readResultFrame: () => frame };
+  assert.equal(buildVideoRequest({ ...snapshot(), firstFrameFileId: 1 }, 5, withFrame, 'fake-video').firstFrame, frame);
+});

@@ -9,6 +9,7 @@
 
 import type { DatabaseSync } from 'node:sqlite';
 import { IN_MEMORY_DATABASE_PATH, openDatabase } from '../../../infra/database/database-connection';
+import { SqliteAssetRepository } from '../../../infra/database/sqlite-asset-repository';
 import { SqliteProjectRepository } from '../../../infra/database/sqlite-project-repository';
 import { SqliteScreenplayRepository } from '../../../infra/database/sqlite-screenplay-repository';
 import { SqliteChapterRepository, SqliteStageRunRepository } from '../../../infra/database/sqlite-stage-run-repository';
@@ -86,6 +87,7 @@ export function createServiceFixture(responder: Responder = standardResponder, s
     runs,
     screenplays: screenplayRepository,
     storyboards: storyboardRepository,
+    assets: new SqliteAssetRepository(database),
     runner,
     stages
   });

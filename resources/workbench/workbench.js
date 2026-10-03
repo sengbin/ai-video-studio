@@ -42,7 +42,7 @@
   const KILOBYTE = 1024;
   const MEGABYTE = 1024 * KILOBYTE;
   const ACTION_PREVIEW_LENGTH = 40;
-  const AUDIO_MODE_LABELS = { native: '模型生成声音', none: '无声', external: '独立音轨' };
+  const AUDIO_MODE_LABELS = { native: '模型生成声音', none: '无声' };
   /** 状态前的图标，让状态不只靠颜色区分。 */
   const STATUS_ICONS = { waiting: '…', queued: '…', running: '●', succeeded: '✓', failed: '✕', canceled: '–' };
   /** 左栏宽度的范围与键盘调整的步长（像素）。 */
@@ -494,6 +494,12 @@
     return seconds < SECONDS_PER_MINUTE ? `${seconds} 秒` : `${Math.floor(seconds / SECONDS_PER_MINUTE)} 分 ${seconds % SECONDS_PER_MINUTE} 秒`;
   }
 
+  /** 任务的首帧来源说明：上一组尾帧、指定图片或无。 */
+  function firstFrameLabel(job) {
+    if (job.usesPreviousTail) return '上一组尾帧';
+    return job.usesFirstFrameImage ? '指定图片' : '无';
+  }
+
   /** 任务提交时的生成参数一行：模型、画幅、分辨率、时长、镜头数、声音、种子。 */
   function describeJobParams(job) {
     const { params } = job;
@@ -503,7 +509,7 @@
       params.resolution,
       params.durationSeconds === null ? '' : `${params.durationSeconds} 秒`,
       `${job.shotCount} 个镜头`,
-      job.usesPreviousTail ? '首帧：上一组尾帧' : '',
+      firstFrameLabel(job) === '无' ? '' : `首帧：${firstFrameLabel(job)}`,
       AUDIO_MODE_LABELS[params.audioMode] || '',
       params.audioMode === 'native' && params.audioElements ? aiProfile.describeElements(params.audioElements) : '',
       params.seed === null ? '' : `种子 ${params.seed}`
@@ -522,7 +528,7 @@
       { label: '分辨率', value: orNone(params.resolution) },
       { label: '整组时长', value: params.durationSeconds === null ? '（未指定）' : `${params.durationSeconds} 秒` },
       { label: '镜头数', value: String(job.shotCount) },
-      { label: '首帧', value: job.usesPreviousTail ? '上一组尾帧' : '无' },
+      { label: '首帧', value: firstFrameLabel(job) },
       { label: '声音', value: AUDIO_MODE_LABELS[params.audioMode] || orNone(params.audioMode) },
       { label: '声音内容', value: params.audioElements ? aiProfile.describeElements(params.audioElements) : '（未指定）' },
       { label: '种子', value: orNone(params.seed) },

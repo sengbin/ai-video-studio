@@ -156,6 +156,8 @@ export interface JobView {
   readonly warnings: readonly string[];
   /** 是否以上一组的尾帧作首帧。 */
   readonly usesPreviousTail: boolean;
+  /** 是否以指定的图片作首帧。 */
+  readonly usesFirstFrameImage: boolean;
   /** 等待前序时说明在等什么；其他状态为 null。 */
   readonly waitNote: string | null;
   readonly result: JobResultView | null;
@@ -235,7 +237,7 @@ export interface GroupPreview {
   readonly totalSeconds: number;
   /** 按模型能力对齐后提交的整组时长（秒）；组不能提交时为 null。 */
   readonly durationSeconds: number | null;
-  readonly firstFrame: 'none' | 'previous_tail';
+  readonly firstFrame: 'none' | 'previous_tail' | 'image';
   readonly referenceImageCount: number;
   readonly referenceAudioCount: number;
   readonly audioMode: VideoAudioMode | null;
@@ -542,6 +544,20 @@ export class GenerationService {
         reject(groupId, group, paramIssues);
         continue;
       }
+      // 组的第一个镜头指定图片作首帧：取该资产的第一张参考图；模型不支持首帧或图片已不可用时拒绝这一组。
+      let firstFrameFileId: number | null = null;
+      if (members[0]?.firstFrameMode === 'asset') {
+        if (!capability.firstFrame) {
+          reject(groupId, group, ['所选模型不支持首帧输入，无法用指定图片作首帧。请换一个支持首帧的模型，或点“编辑镜头”把首帧来源改为“无”。']);
+          continue;
+        }
+        const resolved = this.resolveFirstFrameFile(members[0].firstFrameAssetId);
+        if (typeof resolved === 'string') {
+          reject(groupId, group, [resolved]);
+          continue;
+        }
+        firstFrameFileId = resolved;
+      }
       // 组的第一个镜头设为“上一镜头尾帧作首帧”时，这一组要接在上一组后面（第一组没有上一组，不适用）。
       let link: FirstFrameLink | undefined;
       const previousGroup = groupList[(orderOf.get(group.id) ?? 0) - 1] as ShotGroup | undefined;
@@ -565,7 +581,8 @@ export class GenerationService {
         capability,
         params: groupParams,
         entities: this.collectEntityReferences(input.workId, input.episodeId, [...new Set(members.flatMap((shot) => shot.entityIds))]),
-        useFirstFrame: link !== undefined
+        useFirstFrame: link !== undefined,
+        firstFrameFileId
       });
       let issues: readonly string[];
       try {
@@ -602,7 +619,7 @@ export class GenerationService {
         shotCount: members.length,
         totalSeconds: total,
         durationSeconds: snapshot.params.durationSeconds,
-        firstFrame: link === undefined ? 'none' : 'previous_tail',
+        firstFrame: link === undefined ? (firstFrameFileId === null ? 'none' : 'image') : 'previous_tail',
         referenceImageCount: snapshot.referenceImageFileIds.length,
         referenceAudioCount: snapshot.referenceAudioFileIds.length,
         audioMode: snapshot.params.audioMode,
@@ -896,6 +913,24 @@ export class GenerationService {
     }
   }
 
+  /**
+   * 解析指定图片首帧：取资产的第一张参考图。
+   * @returns 资产图片文件标识；资产或图片不可用时返回说明原因的文字。
+   */
+  private resolveFirstFrameFile(assetId: number | null): number | string {
+    const { assets } = this.dependencies;
+    const advice = '请点“编辑镜头”重新选择首帧图片，或把首帧来源改为“无”。';
+    if (assetId === null) {
+      return `这一组指定了图片作首帧，但指定的资产已被删除。${advice}`;
+    }
+    const asset = assets.findById(assetId);
+    const fileId = assets.listReferenceFiles(assetId)[0]?.id;
+    if (asset === undefined || fileId === undefined) {
+      return `这一组指定了“${asset?.name ?? '图片'}”作首帧，但它已没有可用的参考图。${advice}`;
+    }
+    return fileId;
+  }
+
   /** 收集出场实体的绑定：每个实体取形象主资产与音色主资产的第一个参考文件，顺序与给定的标识一致。 */
   private collectEntityReferences(workId: number, episodeId: number, entityIds: readonly number[]): EntityReferences[] {
     const { screenplays, bindings, assets } = this.dependencies;
@@ -972,6 +1007,7 @@ export class GenerationService {
       failure: job.failure === null ? null : { ...job.failure, ...describeJobFailure(job.failure) },
       warnings: job.snapshot.warnings,
       usesPreviousTail: job.prevJobId !== null || job.firstFrameId !== null,
+      usesFirstFrameImage: job.snapshot.firstFrameFileId != null,
       waitNote: job.status === 'waiting' ? this.describeWaiting(job) : null,
       result:
         result === undefined

@@ -135,17 +135,18 @@ export function activate(context: vscode.ExtensionContext): void {
   runner.recoverInterrupted();
   const stageService = new StageService({ works: workService, runs, chapters, screenplays, runner, changes: stageChanges });
   const screenplayService = new ScreenplayService({ works: workService, runs, screenplays, runner, stages: stageService });
+  const assetRepository = new SqliteAssetRepository(database);
   const storyboardService = new StoryboardService({
     works: workService,
     projects: projectService,
     runs,
     screenplays,
     storyboards,
+    assets: assetRepository,
     runner,
     stages: stageService
   });
   const textSettingsService = new TextSettingsService(settingsStore, new CopilotModelCatalog());
-  const assetRepository = new SqliteAssetRepository(database);
   const assetService = new AssetService(assetRepository);
   const assetCategoryService = new AssetCategoryService(new SqliteAssetCategoryRepository(database));
   const bindingService = new BindingService(new SqliteBindingRepository(database), assetRepository);

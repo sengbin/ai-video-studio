@@ -213,7 +213,7 @@ test('每个实体在本集同一用途下只能有一个主资产', () => {
   }
 });
 
-test('删除资产文件时镜头的首帧图片引用被置空而不是拒绝删除', () => {
+test('删除资产时镜头指定的首帧资产引用被置空而不是拒绝删除', () => {
   const database = openDatabase(IN_MEMORY_DATABASE_PATH);
   try {
     seedWorkWithEpisode(database);
@@ -221,31 +221,30 @@ test('删除资产文件时镜头的首帧图片引用被置空而不是拒绝�
       .prepare("INSERT INTO assets (kind, name, created_at, updated_at) VALUES ('scene', ?, ?, ?)")
       .run('灯塔', NOW, NOW);
     database
-      .prepare(
-        "INSERT INTO asset_files (asset_id, mime, file_name, size_bytes, content, created_at) VALUES (1, 'image/png', 'a.png', 1, x'00', ?)"
-      )
-      .run(NOW);
-    database
       .prepare("INSERT INTO stage_runs (work_id, episode_id, stage, version, input_json, created_at) VALUES (1, 1, 'storyboard_script', 1, '{}', ?)")
       .run(NOW);
     database.prepare('INSERT INTO storyboard_scripts (episode_id, run_id, created_at) VALUES (1, 1, ?)').run(NOW);
     database
       .prepare(
-        "INSERT INTO shots (storyboard_script_id, seq, action, duration_seconds, first_frame_mode, first_frame_asset_file_id, created_at, updated_at) VALUES (1, 1, '远景', 5, 'asset', 1, ?, ?)"
+        "INSERT INTO shots (storyboard_script_id, seq, action, duration_seconds, first_frame_mode, first_frame_asset_id, created_at, updated_at) VALUES (1, 1, '远景', 5, 'asset', 1, ?, ?)"
       )
       .run(NOW, NOW);
+    assert.throws(
+      () => database.prepare('UPDATE shots SET first_frame_asset_id = 99 WHERE id = 1').run(),
+      '不存在的资产违反外键'
+    );
 
-    database.prepare('DELETE FROM asset_files WHERE id = 1').run();
+    database.prepare('DELETE FROM assets WHERE id = 1').run();
 
-    const shot = database.prepare('SELECT first_frame_asset_file_id AS fileId FROM shots WHERE id = 1').get() as {
-      fileId: number | null;
+    const shot = database.prepare('SELECT first_frame_mode AS mode, first_frame_asset_id AS assetId FROM shots WHERE id = 1').get() as {
+      mode: string;
+      assetId: number | null;
     };
-    assert.equal(shot.fileId, null);
+    assert.deepEqual({ ...shot }, { mode: 'asset', assetId: null });
   } finally {
     database.close();
   }
 });
-
 test('模型被生成参数引用时不能删除', () => {
   const database = openDatabase(IN_MEMORY_DATABASE_PATH);
   try {
@@ -680,6 +679,65 @@ test('迁移 013：已有资产的分类为空（不分类），分类在同类�
     database.prepare('DELETE FROM asset_categories WHERE id = 1').run();
     assert.equal(countRows(database, 'assets'), 1);
     assert.deepEqual({ ...database.prepare('SELECT category_id FROM assets').get() }, { category_id: null });
+  } finally {
+    database.close();
+  }
+});
+
+test('迁移 014：生成参数重建后全部记录原样保留，声音模式只允许无声和模型原生生成，旧的 external 取值转为空', () => {
+  const database = new DatabaseSync(IN_MEMORY_DATABASE_PATH);
+  try {
+    database.exec('PRAGMA foreign_keys = ON');
+    runMigrations(database, MIGRATIONS.slice(0, 13));
+    const { workId, episodeId } = seedWorkWithEpisode(database);
+    database
+      .prepare("INSERT INTO generation_profiles (scope, work_id, resolution, audio_mode, audio_elements_json, seed, duration_seconds, updated_at) VALUES ('work', ?, '720P', 'native', '[\"dialogue\"]', 5, NULL, ?)")
+      .run(workId, NOW);
+    database.prepare("INSERT INTO generation_profiles (scope, episode_id, audio_mode, updated_at) VALUES ('episode', ?, 'external', ?)").run(episodeId, NOW);
+    database.prepare("INSERT INTO stage_runs (work_id, episode_id, stage, version, input_json, created_at) VALUES (?, ?, 'storyboard_script', 1, '{}', ?)").run(workId, episodeId, NOW);
+    database.prepare('INSERT INTO storyboard_scripts (run_id, episode_id, created_at) VALUES (1, ?, ?)').run(episodeId, NOW);
+    database.prepare('INSERT INTO shot_groups (storyboard_script_id, seq, created_at) VALUES (1, 1, ?)').run(NOW);
+    database.prepare("INSERT INTO generation_profiles (scope, group_id, audio_mode, duration_seconds, updated_at) VALUES ('group', 1, 'none', 7.5, ?)").run(NOW);
+
+    runMigrations(database, MIGRATIONS);
+    assert.equal(readSchemaVersion(database), MIGRATIONS.length);
+    const rows = database.prepare('SELECT scope, resolution, audio_mode, audio_elements_json, seed, duration_seconds FROM generation_profiles ORDER BY id').all();
+    assert.deepEqual(rows.map((row) => ({ ...row })), [
+      { scope: 'work', resolution: '720P', audio_mode: 'native', audio_elements_json: '["dialogue"]', seed: 5, duration_seconds: null },
+      { scope: 'episode', resolution: null, audio_mode: null, audio_elements_json: null, seed: null, duration_seconds: null },
+      { scope: 'group', resolution: null, audio_mode: 'none', audio_elements_json: null, seed: null, duration_seconds: 7.5 }
+    ]);
+
+    assert.throws(() => database.prepare("UPDATE generation_profiles SET audio_mode = 'external' WHERE scope = 'work'").run(), '不再允许 external');
+    assert.throws(() => database.prepare("INSERT INTO generation_profiles (scope, group_id, updated_at) VALUES ('group', 1, ?)").run(NOW), '镜头组覆盖仍然每组一条');
+    assert.throws(() => database.prepare('UPDATE generation_profiles SET duration_seconds = 0 WHERE scope = \'group\'').run(), '时长必须大于 0');
+    database.prepare('DELETE FROM shot_groups WHERE id = 1').run();
+    assert.equal(countRows(database, 'generation_profiles'), 2, '镜头组删除后它的覆盖随之清除');
+  } finally {
+    database.close();
+  }
+});
+
+test('迁移 015：镜头新增指定首帧的资产列，已有镜头为空，资产被删除后置空', () => {
+  const database = new DatabaseSync(IN_MEMORY_DATABASE_PATH);
+  try {
+    database.exec('PRAGMA foreign_keys = ON');
+    runMigrations(database, MIGRATIONS.slice(0, 14));
+    const { workId, episodeId } = seedWorkWithEpisode(database);
+    database.prepare("INSERT INTO stage_runs (work_id, episode_id, stage, version, input_json, created_at) VALUES (?, ?, 'storyboard_script', 1, '{}', ?)").run(workId, episodeId, NOW);
+    database.prepare('INSERT INTO storyboard_scripts (run_id, episode_id, created_at) VALUES (1, ?, ?)').run(episodeId, NOW);
+    database
+      .prepare("INSERT INTO shots (storyboard_script_id, seq, action, duration_seconds, created_at, updated_at) VALUES (1, 1, '远景', 5, ?, ?)")
+      .run(NOW, NOW);
+
+    runMigrations(database, MIGRATIONS);
+    assert.equal(readSchemaVersion(database), MIGRATIONS.length);
+    assert.deepEqual({ ...database.prepare('SELECT first_frame_mode, first_frame_asset_id FROM shots').get() }, { first_frame_mode: 'none', first_frame_asset_id: null });
+
+    database.prepare("INSERT INTO assets (kind, name, created_at, updated_at) VALUES ('scene', '灯塔', ?, ?)").run(NOW, NOW);
+    database.prepare("UPDATE shots SET first_frame_mode = 'asset', first_frame_asset_id = 1").run();
+    database.prepare('DELETE FROM assets WHERE id = 1').run();
+    assert.deepEqual({ ...database.prepare('SELECT first_frame_mode, first_frame_asset_id FROM shots').get() }, { first_frame_mode: 'asset', first_frame_asset_id: null });
   } finally {
     database.close();
   }

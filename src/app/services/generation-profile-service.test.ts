@@ -83,7 +83,7 @@ test('读取修改请求：空串按恢复继承，未知字段、非法值与�
   assert.ok(fieldErrors({ modelId: 1.5 })?.modelId);
   assert.ok(fieldErrors({ aspectRatio: 'x'.repeat(21) })?.aspectRatio);
   assert.ok(fieldErrors({ resolution: 7 })?.resolution);
-  assert.ok(fieldErrors({ audioMode: 'external' })?.audioMode);
+  assert.ok(fieldErrors({ audioMode: 'invalid' })?.audioMode);
   assert.ok(fieldErrors({ extraParams: {} })?.['']);
   assert.ok(fieldErrors({})?.['']);
   assert.ok(fieldErrors('x')?.['']);

@@ -736,6 +736,68 @@ test('截取尾帧失败：等待这个结果的任务失败并说明原因，�
   }
 });
 
+/** 创建一个带一张参考图的场景资产，并把第一个镜头的首帧来源改为指定它；保存后分镜脚本回到待确认，需要重新确认。 */
+function useAssetFirstFrame(fixture: Fixture): number {
+  const assets = new AssetService(fixture.assetRepository);
+  const asset = assets.createAsset('scene', {
+    name: '灯塔远景',
+    files: JSON.stringify([{ name: 'a.png', mimeType: 'image/png', size: PNG.length, data: PNG.toString('base64'), width: 64, height: 64 }])
+  });
+  const first = fixture.storyboards.getView(fixture.work.id, fixture.episodeId).shots[0];
+  fixture.storyboards.saveShot(fixture.run.id, {
+    ref: first.id,
+    ...first,
+    firstFrameMode: 'asset',
+    firstFrameAssetId: asset.id,
+    entityIds: [...first.entityIds],
+    sounds: []
+  });
+  fixture.approve();
+  return asset.id;
+}
+
+test('指定图片作首帧：取资产的第一张参考图进快照、不传参考图，任务直接排队，预览与版本视图都说明首帧是指定图片', async () => {
+  const fixture = await createFixture();
+  try {
+    const assetId = useAssetFirstFrame(fixture);
+    const [groupId] = fixture.groupIds();
+    const preview = await fixture.generation.previewSubmit({ workId: fixture.work.id, episodeId: fixture.episodeId, groupIds: [groupId], params: { modelId: fixture.modelId, ...PARAMS } });
+    assert.deepEqual([preview.groups[0].firstFrame, preview.groups[0].blocking, preview.groups[0].referenceImageCount], ['image', [], 0]);
+
+    const result = await submitGroups(fixture, [groupId]);
+    assert.equal(result.rejected.length, 0);
+    const [job] = fixture.jobs.listJobsByGroups([groupId]);
+    assert.deepEqual([job.status, job.prevJobId, job.firstFrameId], ['queued', null, null]);
+    assert.equal(job.snapshot.firstFrameFileId, fixture.assetRepository.listReferenceFiles(assetId)[0].id);
+    assert.deepEqual([job.snapshot.referenceImageFileIds, job.snapshot.referenceAudioFileIds], [[], []]);
+    const view = fixture.episode().groups[0].jobs[0];
+    assert.deepEqual([view.usesFirstFrameImage, view.usesPreviousTail], [true, false]);
+  } finally {
+    fixture.database.close();
+  }
+});
+
+test('指定图片作首帧：资产已被删除或没有参考图时拒绝并说明怎么办，模型不支持首帧输入时也拒绝', async () => {
+  const fixture = await createFixture();
+  const noFirstFrame = await createFixture({}, { ...FAKE_VIDEO_CAPABILITY, firstFrame: false });
+  try {
+    const assetId = useAssetFirstFrame(fixture);
+    const [groupId] = fixture.groupIds();
+    fixture.assetRepository.remove(assetId);
+    const removed = await submitGroups(fixture, [groupId]);
+    assert.equal(removed.submitted.length, 0);
+    assert.match(removed.rejected[0].issues[0], /指定的资产已被删除.*首帧来源改为“无”/);
+    assert.equal(fixture.jobs.listJobsByGroups([groupId]).length, 0);
+
+    useAssetFirstFrame(noFirstFrame);
+    const unsupported = await submitGroups(noFirstFrame, [noFirstFrame.groupIds()[0]]);
+    assert.match(unsupported.rejected[0].issues[0], /不支持首帧输入.*指定图片/);
+  } finally {
+    fixture.database.close();
+    noFirstFrame.database.close();
+  }
+});
+
 test('预览提交：逐组汇总时长、首帧、参考素材与声音，阻断问题与提醒分开，不创建任务、不通知、不唤醒队列', async () => {
   const fixture = await createFixture();
   try {

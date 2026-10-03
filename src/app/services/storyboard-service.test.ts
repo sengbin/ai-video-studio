@@ -11,8 +11,10 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { NotFoundError, TextGenerationError, ValidationError } from '../../domain/errors';
 import { normalizeWorkCreation } from '../../domain/rules/work-rules';
+import { SqliteAssetRepository } from '../../infra/database/sqlite-asset-repository';
 import { describeAspectRatio } from '../stages/storyboard-workflow';
 import { Responder, standardResponder } from '../stages/testing/scripted-text';
+import { AssetService } from './asset-service';
 import { createServiceFixture } from './testing/service-fixture';
 
 const CREATIVE_PARAMS = { chapterMinWords: 100, chapterMaxWords: 200, maxChapters: 3 };
@@ -196,6 +198,50 @@ test('编辑：保存镜头与声音后回到待确认；已确认的版本编�
     assert.throws(() => fixture.storyboards.saveShot(run.id, { ...base, action: '' }), ValidationError);
     assert.throws(() => fixture.storyboards.saveShot(run.id, { ...base, ref: 99999 }), NotFoundError);
     assert.equal(fixture.runs.findById(run.id)?.revision, 2, '被拒绝的编辑不改变修订号');
+  } finally {
+    fixture.database.close();
+  }
+});
+
+test('编辑：首帧来源可以指定图片资产；视图只列出带参考图的图片资产；资产被删除后不再有首帧图片', async () => {
+  const fixture = await createFixture();
+  try {
+    const episodeId = firstEpisodeId(fixture);
+    const [run] = await fixture.storyboards.start(fixture.work.id, [episodeId], {});
+    await fixture.runner.whenIdle();
+
+    const assetRepository = new SqliteAssetRepository(fixture.database);
+    const assets = new AssetService(assetRepository);
+    const image = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
+    const scene = assets.createAsset('scene', {
+      name: '灯塔远景',
+      files: JSON.stringify([{ name: 'a.png', mimeType: 'image/png', size: image.length, data: image.toString('base64'), width: 64, height: 64 }])
+    });
+    assets.createAsset('character', { name: '没有参考图的角色' });
+
+    let view = fixture.storyboards.getView(fixture.work.id, episodeId);
+    assert.deepEqual(view.firstFrameAssets, [{ id: scene.id, kindLabel: '场景', name: '灯塔远景' }]);
+    const [first] = view.shots;
+    const base = { ref: first.id, action: first.action, durationSeconds: 5, entityIds: first.entityIds, sounds: [] };
+
+    fixture.storyboards.saveShot(run.id, { ...base, firstFrameMode: 'asset', firstFrameAssetId: scene.id });
+    view = fixture.storyboards.getView(fixture.work.id, episodeId);
+    assert.deepEqual([view.shots[0].firstFrameMode, view.shots[0].firstFrameAssetId], ['asset', scene.id]);
+
+    assert.throws(() => fixture.storyboards.saveShot(run.id, { ...base, firstFrameMode: 'asset', firstFrameAssetId: 99999 }), ValidationError);
+    assert.throws(() => fixture.storyboards.saveShot(run.id, { ...base, firstFrameMode: 'asset' }), ValidationError);
+
+    fixture.storyboards.saveShot(run.id, { ...base, firstFrameMode: 'none', firstFrameAssetId: scene.id });
+    assert.deepEqual(
+      [fixture.storyboards.getView(fixture.work.id, episodeId).shots[0].firstFrameMode, fixture.storyboards.getView(fixture.work.id, episodeId).shots[0].firstFrameAssetId],
+      ['none', null],
+      '改回其他来源时清掉资产'
+    );
+
+    fixture.storyboards.saveShot(run.id, { ...base, firstFrameMode: 'asset', firstFrameAssetId: scene.id });
+    assetRepository.remove(scene.id);
+    view = fixture.storyboards.getView(fixture.work.id, episodeId);
+    assert.deepEqual([view.shots[0].firstFrameMode, view.shots[0].firstFrameAssetId, view.firstFrameAssets], ['asset', null, []]);
   } finally {
     fixture.database.close();
   }

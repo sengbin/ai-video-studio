@@ -251,3 +251,20 @@ test('编辑：规范化镜头字段、出场实体与声音；对白必须选�
       error.fieldErrors.sounds !== undefined
   );
 });
+
+test('编辑：首帧来源为指定图片时必须从可选资产中选一个，其他来源不保存资产', () => {
+  const base = { action: '新动作', durationSeconds: 3, entityIds: [], sounds: [] };
+  const asset = normalizeShotEdit({ ...base, firstFrameMode: 'asset', firstFrameAssetId: 7 }, ENTITIES, true, [7, 8]);
+  assert.deepEqual([asset.firstFrameMode, asset.firstFrameAssetId], ['asset', 7], '第 1 个镜头也可以指定图片');
+
+  const stale = normalizeShotEdit({ ...base, firstFrameMode: 'none', firstFrameAssetId: 7 }, ENTITIES, false, [7]);
+  assert.deepEqual([stale.firstFrameMode, stale.firstFrameAssetId], ['none', null]);
+
+  for (const firstFrameAssetId of [undefined, null, 9, '7']) {
+    assert.throws(
+      () => normalizeShotEdit({ ...base, firstFrameMode: 'asset', firstFrameAssetId }, ENTITIES, false, [7, 8]),
+      (error) => error instanceof ValidationError && error.fieldErrors.firstFrameAssetId !== undefined
+    );
+  }
+  assert.throws(() => normalizeShotEdit({ ...base, firstFrameMode: 'asset', firstFrameAssetId: 7 }, ENTITIES, false), ValidationError, '没有可选资产时不能指定');
+});

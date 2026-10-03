@@ -9,9 +9,11 @@
 
 import { FORM_LEVEL_ERROR_KEY, NotFoundError, ValidationError } from '../../domain/errors';
 import { ENTITY_KIND_LABELS, EntityKind, EpisodeRecord } from '../../domain/models/screenplay';
+import { ASSET_KIND_LABELS, AssetKind } from '../../domain/models/asset';
 import { SOUND_KIND_LABELS, ShotRecord, SoundKind, StoryboardEntity, StoryboardParams } from '../../domain/models/storyboard';
 import { StageDisplayStatus, StageRun, StageTarget } from '../../domain/models/stage-run';
 import { WorkKind, WorkSourceType } from '../../domain/models/work';
+import { AssetRepository } from '../../domain/ports/asset-repository';
 import { ScreenplayRepository } from '../../domain/ports/screenplay-repository';
 import { StageRunRepository } from '../../domain/ports/stage-run-repository';
 import { StoryboardRepository } from '../../domain/ports/storyboard-repository';
@@ -63,6 +65,13 @@ export interface StoryboardEntityView {
   readonly isActive: boolean;
 }
 
+/** 可作为镜头首帧的图片资产：图片类资产且至少有一张参考图。 */
+export interface FirstFrameAssetView {
+  readonly id: number;
+  readonly kindLabel: string;
+  readonly name: string;
+}
+
 /** 分镜脚本阶段产出页展示的镜头组：组序号、组内镜头与总时长。 */
 export interface StoryboardGroupView {
   readonly id: number;
@@ -92,6 +101,8 @@ export interface StoryboardStageView {
   /** 全部镜头时长之和（秒）。 */
   readonly totalSeconds: number;
   readonly entities: StoryboardEntityView[];
+  /** 镜头首帧来源选“指定图片”时可选的资产。 */
+  readonly firstFrameAssets: FirstFrameAssetView[];
   readonly soundKinds: ReadonlyArray<{ readonly kind: SoundKind; readonly label: string }>;
   /** 上游剧本已被修改或不再是已确认版本。 */
   readonly stale: boolean;
@@ -105,6 +116,8 @@ export interface StoryboardServiceDependencies {
   readonly runs: StageRunRepository;
   readonly screenplays: ScreenplayRepository;
   readonly storyboards: StoryboardRepository;
+  /** 资产：列出可作为首帧图片的资产。 */
+  readonly assets: Pick<AssetRepository, 'listNames' | 'countReferenceFiles'>;
   readonly runner: StageRunner;
   /** 阶段服务：提供编辑的通用流程与变化通知。 */
   readonly stages: StageService;
@@ -258,6 +271,7 @@ export class StoryboardService {
         name: entity.name,
         isActive: entity.isActive
       })),
+      firstFrameAssets: this.listFirstFrameAssets().map(({ id, kind, name }) => ({ id, kindLabel: ASSET_KIND_LABELS[kind], name })),
       soundKinds: SOUND_KIND_VIEWS,
       stale: run.status === 'succeeded' && isStale(run, source),
       actions: {
@@ -289,7 +303,7 @@ export class StoryboardService {
       const entities: StoryboardEntity[] = screenplays
         .listEntities(run.workId)
         .map(({ id, kind, name, aliases }) => ({ id, kind, name, aliases }));
-      const edit = normalizeShotEdit(rawInput, entities, shot.seq === 1);
+      const edit = normalizeShotEdit(rawInput, entities, shot.seq === 1, this.listFirstFrameAssets().map((asset) => asset.id));
       if (!storyboards.updateShot(run.id, shot.id, edit, this.timestamp())) {
         throw new NotFoundError('镜头不存在。');
       }
@@ -317,7 +331,7 @@ export class StoryboardService {
       const entities: StoryboardEntity[] = screenplays
         .listEntities(run.workId)
         .map(({ id, kind, name, aliases }) => ({ id, kind, name, aliases }));
-      const edit = normalizeShotEdit(rawInput, entities, count === 0);
+      const edit = normalizeShotEdit(rawInput, entities, count === 0, this.listFirstFrameAssets().map((asset) => asset.id));
       shotId = storyboards.insertShot(run.id, edit, this.timestamp());
       syncShotGroups(storyboards, run.id, groupMaxSecondsOf(readStoryboardParams(run)), this.timestamp());
     });
@@ -404,6 +418,12 @@ export class StoryboardService {
       stale: latest.status === 'succeeded' && isStale(latest, source),
       shotCount: storyboards.countShots(latest.id)
     };
+  }
+
+  /** 可作为镜头首帧的图片资产：不含音频类，且至少有一张参考图。 */
+  private listFirstFrameAssets(): Array<{ readonly id: number; readonly kind: AssetKind; readonly name: string }> {
+    const { assets } = this.dependencies;
+    return assets.listNames().filter((asset) => asset.kind !== 'audio' && assets.countReferenceFiles(asset.id) > 0);
   }
 
   private timestamp(): string {

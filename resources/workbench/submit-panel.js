@@ -11,8 +11,8 @@
 
 (function () {
   const PREVIEW_DELAY_MS = 150;
-  const AUDIO_MODE_LABELS = { native: '模型生成声音', none: '无声', external: '独立音轨' };
-  const FIRST_FRAME_LABELS = { none: '无', previous_tail: '上一组尾帧' };
+  const AUDIO_MODE_LABELS = { native: '模型生成声音', none: '无声' };
+  const FIRST_FRAME_LABELS = { none: '无', previous_tail: '上一组尾帧', image: '指定图片' };
   const GENERIC_ERROR_TEXT = '操作失败，请重试。';
 
   /** 取错误载荷中的说明文字：有字段错误时列出各项，否则用错误说明。 */

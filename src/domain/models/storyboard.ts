@@ -20,13 +20,13 @@ export const SOUND_KIND_LABELS: Readonly<Record<SoundKind, string>> = {
   music: '背景音乐'
 };
 
-/** 镜头首帧来源：无、上一镜头尾帧、指定资产图（资产图随资产管理实现，本阶段不会由生成产出）。 */
+/** 镜头首帧来源：无、上一镜头尾帧、指定资产图（只能由用户在镜头编辑里指定，生成不会产出）。 */
 export type FirstFrameMode = 'none' | 'prev_tail' | 'asset';
 
 /** 镜头连贯策略：无；尾帧接首帧；由模型逐个镜头判断。 */
 export type ContinuityStrategy = 'none' | 'prev_tail' | 'ai';
 
-/** 声音模式：无声；模型原生生成。独立音轨暂未开放。 */
+/** 声音模式：无声；模型原生生成。 */
 export type AudioMode = 'none' | 'native';
 
 /** 分镜脚本阶段的生成参数，已经过规范化。 */
@@ -71,6 +71,8 @@ export interface ShotDraft {
   readonly transition: string;
   readonly continuityNote: string;
   readonly firstFrameMode: FirstFrameMode;
+  /** 首帧来源为指定资产图时的资产标识（取该资产的第一张参考图）；其他来源为 null，资产被删除后也为 null。 */
+  readonly firstFrameAssetId: number | null;
   /** 出场实体标识，已去重；对白的说话人一定在其中。 */
   readonly entityIds: readonly number[];
   readonly sounds: readonly SoundDraft[];
