@@ -8,7 +8,7 @@
 // ------------------------------------------------------------------------
 
 import assert from 'node:assert/strict';
-import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { DatabaseSync } from 'node:sqlite';
@@ -17,8 +17,9 @@ import { openDatabase } from './database-connection';
 import { applyPendingRestore } from './database-restore';
 import { readSchemaVersion } from './migration-runner';
 import { MIGRATIONS } from './migrations';
+import { LocalAssetFileStore } from '../storage/local-asset-file-store';
 import { SqliteBackupStorage } from './sqlite-backup-storage';
-import { createBackupFixture, insertProject, listProjectNames } from './testing/backup-fixture';
+import { createBackupFixture, insertProject, listProjectNames, seedAssetFile } from './testing/backup-fixture';
 
 const RESTORE_TIME = new Date(2026, 9, 3, 6, 5, 2);
 const AUTO_BACKUP_FILE_NAME = 'before-restore-20261003-060502.sqlite';
@@ -252,6 +253,86 @@ test('数据库文件已损坏打不开：仍可准备恢复，重新启动时�
     assert.equal(readFileSync(autoBackupPath ?? '', 'utf8'), corruptContent, '损坏的原文件被原样保留');
     assert.deepEqual(readProjectNamesFrom(fixture.paths.databasePath), ['备份项目']);
     openDatabase(fixture.paths.databasePath).close();
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('备份资产文件：只复制数据库引用的文件到备份文件旁的 .files 文件夹，找不到的文件计入缺失，已有的文件夹先清空', () => {
+  const fixture = createBackupFixture();
+  try {
+    const kept = seedAssetFile(fixture, '灯塔', Buffer.from('lighthouse'));
+    const lost = seedAssetFile(fixture, '客厅', Buffer.from('living room'));
+    new LocalAssetFileStore(fixture.assetDirectory).remove(lost);
+    new LocalAssetFileStore(fixture.assetDirectory).write(Buffer.from('orphan'), 'image/png');
+    const target = join(fixture.directory, 'backup.sqlite');
+    fixture.storage.exportSnapshot(target);
+    mkdirSync(`${target}.files`, { recursive: true });
+    writeFileSync(join(`${target}.files`, 'stale.txt'), '旧文件');
+
+    const result = fixture.storage.exportAssetFiles(target);
+    assert.deepEqual([result.directory, result.fileCount, result.sizeBytes, result.missingCount], [`${target}.files`, 1, 'lighthouse'.length, 1]);
+    assert.deepEqual(readFileSync(join(`${target}.files`, ...kept.split('/'))), Buffer.from('lighthouse'));
+    assert.equal(existsSync(join(`${target}.files`, 'stale.txt')), false, '旧内容被清空');
+    assert.equal(readdirSync(`${target}.files`).length, 1, '没有被引用的文件不复制');
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('备份资产文件：备份位置在资产文件目录之内时拒绝，不会清空正在使用的文件', () => {
+  const fixture = createBackupFixture();
+  try {
+    const kept = seedAssetFile(fixture, '灯塔', Buffer.from('lighthouse'));
+    assert.throws(() => fixture.storage.exportAssetFiles(join(fixture.assetDirectory, 'backup.sqlite')), /资产文件目录之内/);
+    assert.deepEqual(readFileSync(join(fixture.assetDirectory, ...kept.split('/'))), Buffer.from('lighthouse'));
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('检查备份的资产文件：备份文件夹或当前资产目录里能找到就算可用，旧结构的备份没有资产文件', () => {
+  const fixture = createBackupFixture();
+  try {
+    const first = seedAssetFile(fixture, '灯塔', Buffer.from('lighthouse'));
+    seedAssetFile(fixture, '客厅', Buffer.from('living room'));
+    const target = join(fixture.directory, 'backup.sqlite');
+    fixture.storage.exportSnapshot(target);
+    fixture.storage.exportAssetFiles(target);
+
+    assert.deepEqual(fixture.storage.inspectAssetFiles(target), { directory: `${target}.files`, referencedCount: 2, availableCount: 2 });
+    // 备份文件夹缺一个文件，当前资产目录里也没有时才算缺失。
+    rmSync(join(`${target}.files`, ...first.split('/')));
+    assert.equal(fixture.storage.inspectAssetFiles(target)?.availableCount, 2, '当前资产目录里还有');
+    rmSync(join(fixture.assetDirectory, ...first.split('/')));
+    assert.equal(fixture.storage.inspectAssetFiles(target)?.availableCount, 1);
+
+    const legacy = openDatabase(join(fixture.directory, 'legacy.sqlite'), MIGRATIONS.slice(0, 19));
+    legacy.close();
+    assert.equal(fixture.storage.inspectAssetFiles(join(fixture.directory, 'legacy.sqlite')), undefined);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('准备恢复：从备份文件旁的文件夹补回缺少的资产文件，不覆盖也不删除现有文件', () => {
+  const fixture = createBackupFixture();
+  try {
+    const present = seedAssetFile(fixture, '灯塔', Buffer.from('lighthouse'));
+    const lost = seedAssetFile(fixture, '客厅', Buffer.from('living room'));
+    const target = join(fixture.directory, 'backup.sqlite');
+    fixture.storage.exportSnapshot(target);
+    fixture.storage.exportAssetFiles(target);
+    const lostFile = join(fixture.assetDirectory, ...lost.split('/'));
+    rmSync(lostFile);
+    const extra = new LocalAssetFileStore(fixture.assetDirectory).write(Buffer.from('extra'), 'image/png');
+    writeFileSync(join(fixture.assetDirectory, ...present.split('/')), 'changed');
+
+    fixture.storage.stageRestore(target);
+    assert.deepEqual(readFileSync(lostFile), Buffer.from('living room'), '缺少的文件被补回');
+    assert.equal(readFileSync(join(fixture.assetDirectory, ...present.split('/')), 'utf8'), 'changed', '已有的文件不覆盖');
+    assert.ok(existsSync(join(fixture.assetDirectory, ...extra.split('/'))), '现有的其他文件不删除');
+    assert.ok(fixture.storage.readPendingRestore());
   } finally {
     fixture.cleanup();
   }

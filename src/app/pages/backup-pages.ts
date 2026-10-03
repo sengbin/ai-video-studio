@@ -16,7 +16,7 @@ import { registerBackupHandlers } from './backup-handlers';
 const BACKUP_PANEL_KEY = 'data-backup';
 const BACKUP_VIEW_TYPE = 'aigcVideoStudio.dataBackup';
 const BACKUP_TITLE = '数据备份';
-const BACKUP_DESCRIPTION = '把数据库备份到文件，或从备份文件恢复；备份只含数据库，不含已下载的结果视频文件。';
+const BACKUP_DESCRIPTION = '把数据库备份到文件，或从备份文件恢复；备份时资产的图片、音频会复制到备份文件旁的 .files 文件夹，两者需放在一起；不含已下载的结果视频文件。';
 
 /** 数据备份页的入口。 */
 export class BackupPages {

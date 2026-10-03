@@ -16,7 +16,7 @@ import { ValidationError } from '../../domain/errors';
 import { applyPendingRestore } from '../../infra/database/database-restore';
 import { MIGRATIONS } from '../../infra/database/migrations';
 import { SqliteBackupStorage } from '../../infra/database/sqlite-backup-storage';
-import { BackupFixture, createBackupFixture, listProjectNames } from '../../infra/database/testing/backup-fixture';
+import { BackupFixture, createBackupFixture, listProjectNames, seedAssetFile } from '../../infra/database/testing/backup-fixture';
 import { BackupHost, BackupService } from './backup-service';
 
 const LATEST_VERSION = MIGRATIONS.length;
@@ -101,6 +101,28 @@ test('备份：用带时间戳的默认文件名询问位置，导出一致的�
     } finally {
       snapshot.close();
     }
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('备份与恢复带资产文件：备份返回复制结果，选择备份文件时说明资产文件是否齐全', async () => {
+  const fixture = createBackupFixture();
+  try {
+    seedAssetFile(fixture, '灯塔', Buffer.from('lighthouse'));
+    const { host, service } = createService(fixture);
+    host.backupTarget = join(fixture.directory, 'with-files.sqlite');
+    const result = await service.backup();
+    assert.ok(!result.cancelled);
+    assert.deepEqual(
+      [result.assetFiles.directory, result.assetFiles.fileCount, result.assetFiles.missingCount],
+      [`${host.backupTarget}.files`, 1, 0]
+    );
+
+    host.restoreSource = host.backupTarget;
+    const choice = await service.chooseRestoreFile();
+    assert.ok(!choice.cancelled);
+    assert.deepEqual(choice.candidate.assetFiles, { directory: `${host.backupTarget}.files`, referencedCount: 1, availableCount: 1 });
   } finally {
     fixture.cleanup();
   }

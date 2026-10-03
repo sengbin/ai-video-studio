@@ -128,7 +128,7 @@
       ['结构版本', `${database.schemaVersion}（当前扩展支持到 ${latestSchemaVersion}）`],
       ['数据量', counts],
       ['结果视频', `${database.resultVideoDirectory}（不包含在备份中）`],
-      ['资产文件', `${database.assetFileDirectory}（图片、音频，不包含在备份中）`]
+      ['资产文件', `${database.assetFileDirectory}（图片、音频，备份时复制到备份文件旁的 .files 文件夹）`]
     ];
     const list = aiUi.h('dl', { class: 'backup-facts' });
     for (const [label, value] of rows) {
@@ -173,6 +173,14 @@
     }
   }
 
+  /** 恢复确认里关于资产文件的说明：从备份文件旁的 .files 文件夹补回缺少的文件，找不到的文件会让对应的图片、音频无法显示。 */
+  function describeAssetFiles(assetFiles) {
+    if (assetFiles === null || assetFiles.referencedCount === 0) return '备份里没有资产图片、音频文件。';
+    const missing = assetFiles.referencedCount - assetFiles.availableCount;
+    if (missing === 0) return `备份引用的 ${assetFiles.referencedCount} 个资产文件齐全，缺少的会从 ${assetFiles.directory} 补回，不覆盖也不删除现有文件。`;
+    return `备份引用 ${assetFiles.referencedCount} 个资产文件，其中 ${missing} 个在 ${assetFiles.directory} 和当前资产文件目录里都找不到，恢复后对应的图片、音频无法显示；请把备份文件的 .files 文件夹放在备份文件旁再选择。`;
+  }
+
   /** 备份到文件。 */
   function runBackup() {
     return runOperation(backupStatus, BACKUP_BUSY_TEXT, async () => {
@@ -181,7 +189,14 @@
         backupStatus.show(CANCELLED_TEXT, 'info');
         return;
       }
-      backupStatus.show(`已备份到 ${result.filePath}（${formatBytes(result.sizeBytes)}）。`, 'success');
+      const files = result.assetFiles;
+      const filesText = `资产文件 ${files.fileCount} 个（${formatBytes(files.sizeBytes)}）已复制到 ${files.directory}，恢复时请与备份文件放在一起。`;
+      // 数据库引用但磁盘上找不到的文件没有复制，用警告样式单独提醒。
+      if (files.missingCount > 0) {
+        backupStatus.show(`已备份到 ${result.filePath}。注意：有 ${files.missingCount} 个资产文件在磁盘上找不到，没能备份，对应的图片或音频已经无法显示。${filesText}`, 'warning');
+        return;
+      }
+      backupStatus.show(`已备份到 ${result.filePath}（${formatBytes(result.sizeBytes)}）。${filesText}`, 'success');
     });
   }
 
@@ -207,7 +222,8 @@
           `备份文件：${candidate.filePath}（${formatBytes(candidate.sizeBytes)}）`,
           upgradeText,
           `重新加载窗口时，当前数据库会先自动备份到 ${overview.autoBackupDirectory}。`,
-          '备份只含数据库，已下载到本地的结果视频文件不会被恢复，也不会被删除。'
+          describeAssetFiles(candidate.assetFiles),
+          '已下载到本地的结果视频文件不在备份内，不会被恢复，也不会被删除。'
         ]
       });
       if (!confirmed) {

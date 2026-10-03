@@ -7,7 +7,7 @@
 // 备注：实现位于 infra/database/sqlite-backup-storage.ts；恢复只“准备”，替换数据库文件发生在下次启动打开数据库之前。
 // ------------------------------------------------------------------------
 
-import { BackupFileInspection, DatabaseStatus, PendingRestore } from '../models/backup';
+import { BackupAssetFileExport, BackupAssetFileInspection, BackupFileInspection, DatabaseStatus, PendingRestore } from '../models/backup';
 
 /** 备份存储：服务通过它访问数据库文件，不直接依赖具体的数据库实现。 */
 export interface BackupStorage {
@@ -32,6 +32,20 @@ export interface BackupStorage {
   exportSnapshot(targetPath: string): number;
 
   /**
+   * 把数据库引用的资产图片、音频文件复制到备份文件旁的文件夹（备份文件名 + `.files`），已存在的文件夹先清空；应在导出快照之后调用。
+   * @param targetPath 备份文件的绝对路径。
+   * @throws 数据库无法打开、备份位置在资产文件目录之内或复制失败时抛出错误。
+   */
+  exportAssetFiles(targetPath: string): BackupAssetFileExport;
+
+  /**
+   * 以只读方式检查备份文件引用的资产文件是否齐全。
+   * @param filePath 备份文件的绝对路径。
+   * @returns 检查结果；备份是迁移 020 之前的旧结构、没有资产文件路径时返回 undefined。
+   */
+  inspectAssetFiles(filePath: string): BackupAssetFileInspection | undefined;
+
+  /**
    * 以只读方式检查一个文件。
    * @param filePath 文件的绝对路径。
    * @throws 文件无法作为 SQLite 数据库读取时抛出错误。
@@ -39,7 +53,7 @@ export interface BackupStorage {
   inspectFile(filePath: string): BackupFileInspection;
 
   /**
-   * 把备份文件制成一份独立的快照并标记为待恢复，重新加载窗口时才会替换当前数据库；已有的待恢复被替换。
+   * 把备份文件制成一份独立的快照并标记为待恢复，重新加载窗口时才会替换当前数据库；已有的待恢复被替换。备份文件旁的文件夹里缺少的资产文件会立即补回资产文件目录（不覆盖也不删除现有文件）。
    * @param sourcePath 备份文件的绝对路径。
    * @throws 文件无法读取或写入失败时抛出错误。
    */

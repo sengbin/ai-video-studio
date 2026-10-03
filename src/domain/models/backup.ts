@@ -35,7 +35,7 @@ export interface DatabaseStatus {
   readonly counts: BackupDataCounts;
   /** 结果视频文件所在的目录，不包含在备份中。 */
   readonly resultVideoDirectory: string;
-  /** 资产图片、音频文件所在的目录，不包含在备份中；备份里的资产记录只保存文件路径，换电脑恢复时需要一并复制这个目录。 */
+  /** 资产图片、音频文件所在的目录；备份时数据库引用的文件会复制到备份文件旁的同名文件夹，恢复时从那里补回。 */
   readonly assetFileDirectory: string;
 }
 
@@ -49,6 +49,28 @@ export interface BackupFileInspection {
   readonly tableNames: readonly string[];
   /** 完整性检查（PRAGMA quick_check）的结果：通过为 'ok'，否则为第一条问题描述。 */
   readonly integrity: string;
+}
+
+/** 备份时复制资产文件的结果。 */
+export interface BackupAssetFileExport {
+  /** 备份文件旁存放资产文件的文件夹（备份文件名 + `.files`）。 */
+  readonly directory: string;
+  /** 已复制的文件数。 */
+  readonly fileCount: number;
+  /** 已复制文件的总大小，单位为字节。 */
+  readonly sizeBytes: number;
+  /** 数据库引用但磁盘上找不到、没能复制的文件数。 */
+  readonly missingCount: number;
+}
+
+/** 对备份文件所引用资产文件的检查结果。 */
+export interface BackupAssetFileInspection {
+  /** 备份文件旁存放资产文件的文件夹（备份文件名 + `.files`），不一定存在。 */
+  readonly directory: string;
+  /** 备份数据库引用的资产文件数。 */
+  readonly referencedCount: number;
+  /** 其中在备份文件夹或当前资产文件目录里能找到的文件数；少于引用数时，恢复后有图片、音频无法显示。 */
+  readonly availableCount: number;
 }
 
 /** 已准备好、重新加载窗口后生效的恢复。 */

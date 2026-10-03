@@ -10,7 +10,7 @@
 import { randomUUID } from 'node:crypto';
 import * as path from 'node:path';
 import { FORM_LEVEL_ERROR_KEY, ValidationError } from '../../domain/errors';
-import { BackupFileInspection, DatabaseStatus, PendingRestore } from '../../domain/models/backup';
+import { BackupAssetFileExport, BackupAssetFileInspection, BackupFileInspection, DatabaseStatus, PendingRestore } from '../../domain/models/backup';
 import { BackupStorage } from '../../domain/ports/backup-storage';
 import { findBackupFileProblem, formatBackupTimestamp } from '../../domain/rules/backup-rules';
 
@@ -59,7 +59,14 @@ export interface BackupOverview {
 /** 备份到文件的结果。 */
 export type BackupExportResult =
   | { readonly cancelled: true }
-  | { readonly cancelled: false; readonly filePath: string; readonly sizeBytes: number };
+  | {
+      readonly cancelled: false;
+      readonly filePath: string;
+      /** 备份文件（数据库）的大小，单位为字节。 */
+      readonly sizeBytes: number;
+      /** 资产文件的复制结果；恢复时备份文件旁的这个文件夹必须与备份文件放在一起。 */
+      readonly assetFiles: BackupAssetFileExport;
+    };
 
 /** 用户选中的备份文件。 */
 export interface RestoreCandidate {
@@ -73,6 +80,8 @@ export interface RestoreCandidate {
   readonly schemaVersion: number;
   /** 当前扩展支持的最高结构版本；备份版本低于它时，恢复后会自动升级。 */
   readonly latestSchemaVersion: number;
+  /** 备份引用的资产文件是否齐全；备份是旧结构、没有资产文件路径时为 null。 */
+  readonly assetFiles: BackupAssetFileInspection | null;
 }
 
 /** 选择备份文件的结果。 */
@@ -110,9 +119,9 @@ export class BackupService {
   }
 
   /**
-   * 让用户选择位置，把当前数据库备份为一个文件。
-   * @returns 用户取消时 cancelled 为 true；否则返回备份文件路径与大小。
-   * @throws ValidationError 数据库无法打开，或选择的位置是当前正在使用的数据库文件。
+   * 让用户选择位置，把当前数据库备份为一个文件，并把引用的资产图片、音频复制到备份文件旁的同名文件夹。
+   * @returns 用户取消时 cancelled 为 true；否则返回备份文件路径、大小与资产文件的复制结果。
+   * @throws ValidationError 数据库无法打开，选择的位置是当前正在使用的数据库文件，或在资产文件目录之内。
    */
   async backup(): Promise<BackupExportResult> {
     if (this.databaseUnavailableReason !== null) {
@@ -128,7 +137,13 @@ export class BackupService {
       throw new ValidationError({ [FORM_LEVEL_ERROR_KEY]: '不能把备份保存为当前正在使用的数据库文件，请换一个位置。' });
     }
     const sizeBytes = this.storage.exportSnapshot(targetPath);
-    return { cancelled: false, filePath: targetPath, sizeBytes };
+    let assetFiles: BackupAssetFileExport;
+    try {
+      assetFiles = this.storage.exportAssetFiles(targetPath);
+    } catch (error) {
+      throw new ValidationError({ [FORM_LEVEL_ERROR_KEY]: `数据库已备份，但资产文件没能备份：${error instanceof Error ? error.message : String(error)}` });
+    }
+    return { cancelled: false, filePath: targetPath, sizeBytes, assetFiles };
   }
 
   /**
@@ -213,7 +228,8 @@ export class BackupService {
       filePath,
       sizeBytes: inspection.sizeBytes,
       schemaVersion: inspection.schemaVersion,
-      latestSchemaVersion: this.latestSchemaVersion
+      latestSchemaVersion: this.latestSchemaVersion,
+      assetFiles: this.storage.inspectAssetFiles(filePath) ?? null
     };
   }
 }
