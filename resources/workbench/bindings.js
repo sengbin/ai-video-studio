@@ -65,14 +65,16 @@
 
   /** 选择资产的弹出页：可按名称搜索，点“选择”后调用 onPick，返回 true 才关闭。 */
   function openPicker(options) {
-    const { title, assets, emptyText, onPick } = options;
+    const { title, assets, emptyText, onPick, withPreview } = options;
     const message = aiUi.h('p', { class: 'wb-message', hidden: true, attrs: { role: 'status' } });
     let keyword = '';
     const pick = async (asset) => {
       if (await onPick(asset, message)) page.close('api');
     };
     const columns = [
-      { title: '预览', width: 64, render: (asset) => renderThumb({ ...asset, assetName: asset.name }) },
+      withPreview
+        ? { title: '试听', width: 64, render: (asset) => renderVoicePreview({ assetId: asset.id, assetName: asset.name, message }) }
+        : { title: '预览', width: 64, render: (asset) => renderThumb({ ...asset, assetName: asset.name }) },
       { title: '名称', minWidth: 160, render: (asset) => aiUi.tableMainCell({ text: asset.name, description: asset.durationSeconds === null ? '' : `${asset.durationSeconds} 秒` }) },
       { title: '操作', type: 'actions', render: (asset) => aiUi.button({ text: '选择', compact: true, variant: 'primary', ariaLabel: `选择：${asset.name}`, onClick: () => void pick(asset) }).element }
     ];
@@ -110,11 +112,12 @@
     );
   }
 
-  /** 音色参考的试听控件：点击后才向宿主读取音频内容；失败时在面板提示区显示原因。 */
+  /** 音色参考的试听控件：点击后才向宿主读取音频内容；失败时在提示区显示原因，默认是面板提示区，选择页传自己的 message。 */
   function renderVoicePreview(item) {
     return aiUi.audioPreview({
       ariaLabel: `试听音色参考：${item.assetName}`,
-      load: () => request(REQUEST_VOICE_AUDIO, { assetId: item.assetId }, session.message)
+      iconOnly: Boolean(item.message),
+      load: () => request(REQUEST_VOICE_AUDIO, { assetId: item.assetId }, item.message || session.message)
     }).element;
   }
 
@@ -204,6 +207,7 @@
   function pickVoice(entity) {
     openPicker({
       title: `选择音色参考：${entity.name}`,
+      withPreview: true,
       assets: session.view.voiceAssets.filter((asset) => !entity.voice.some((item) => item.assetId === asset.id)),
       emptyText: '本项目没有可用的音色参考音频。请先到侧栏“资产 > 音频”里添加类型为“音色参考”的音频。',
       onPick: async (asset, message) => {

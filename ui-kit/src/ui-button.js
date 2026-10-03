@@ -25,15 +25,20 @@
   const ICON_PATHS = {
     plus: 'M8 3v10M3 8h10',
     pencil: 'M3 13l.7-3.2 7.1-7.1a1.2 1.2 0 011.7 0l.8.8a1.2 1.2 0 010 1.7L6.2 12.3 3 13zM9.8 3.9l2.3 2.3',
-    trash: 'M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.5 8.5h6l.5-8.5M7 7v3.5M9 7v3.5'
+    trash: 'M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.5 8.5h6l.5-8.5M7 7v3.5M9 7v3.5',
+    play: 'M5 3.2v9.6L13 8z',
+    stop: 'M4 4h8v8H4z'
   };
+
+  /** 实心图标：用文字颜色填充，其余图标只描线。 */
+  const SOLID_ICONS = new Set(['play', 'stop']);
 
   /** 创建图标元素；名称不在 ICON_PATHS 中时返回 null。 */
   function createIcon(name) {
     const path = ICON_PATHS[name];
     if (!path) return null;
     const svg = document.createElementNS(SVG_NAMESPACE, 'svg');
-    svg.setAttribute('class', 'ui-button__icon');
+    svg.setAttribute('class', SOLID_ICONS.has(name) ? 'ui-button__icon ui-button__icon--solid' : 'ui-button__icon');
     svg.setAttribute('viewBox', '0 0 16 16');
     svg.setAttribute('aria-hidden', 'true');
     const shape = document.createElementNS(SVG_NAMESPACE, 'path');
@@ -48,10 +53,10 @@
    *   iconOnly?: boolean, compact?: boolean, type?: 'button'|'submit', ariaLabel?: string, disabled?: boolean,
    *   onClick?: (event: MouseEvent) => void }} options 选项：
    *   kind 使用“添加/修改/删除”预设（样式、默认文字、图标），text 与 variant 可覆盖；
-   *   icon 指定图标名（plus、pencil、trash）或 false 去掉预设图标；iconOnly 只显示图标，文字作为可访问名称；
+   *   icon 指定图标名（plus、pencil、trash、play、stop，后两个为实心图标）或 false 去掉预设图标；iconOnly 只显示图标，文字作为可访问名称；
    *   variant 默认 secondary。
    * @returns {{ element: HTMLButtonElement, setDisabled: (disabled: boolean) => void, isDisabled: () => boolean,
-   *   setText: (text: string) => void, focus: () => void }}
+   *   setText: (text: string) => void, setIcon: (name: string) => void, setAriaLabel: (label: string) => void, focus: () => void }}
    */
   aiUi.button = function (options) {
     const settings = options || {};
@@ -61,7 +66,7 @@
     const variant = settings.variant || (kind ? kind.variant : 'secondary');
     const text = settings.text !== undefined ? settings.text : kind ? kind.text : '';
     const iconName = settings.icon === false ? null : settings.icon || (kind ? kind.icon : null);
-    const icon = iconName ? createIcon(iconName) : null;
+    let icon = iconName ? createIcon(iconName) : null;
     const iconOnly = Boolean(settings.iconOnly && icon);
 
     const classNames = ['ui-button', `ui-button--${variant}`];
@@ -91,6 +96,17 @@
       setText(value) {
         textElement.textContent = value;
         if (iconOnly) element.setAttribute('aria-label', value);
+      },
+      /** 换成另一个图标；名称不存在时忽略，按钮原本没有图标时不添加。 */
+      setIcon(name) {
+        const next = icon ? createIcon(name) : null;
+        if (!next) return;
+        icon.replaceWith(next);
+        icon = next;
+      },
+      /** 更新可访问名称，用于状态切换后图标含义改变的按钮。 */
+      setAriaLabel(label) {
+        element.setAttribute('aria-label', label);
       },
       focus() {
         element.focus();

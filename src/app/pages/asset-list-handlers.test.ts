@@ -100,6 +100,23 @@ test('参考原图：返回第一张参考图的类型与内容，没有参考�
   }
 });
 
+test('参考音频：返回音频资产的参考音频类型与内容，没有参考音频时返回错误', async () => {
+  const { database, assets, send } = createFixture();
+  try {
+    const wav = Buffer.concat([Buffer.from('RIFF'), Buffer.from([0, 0, 0, 0]), Buffer.from('WAVEfmt ')]);
+    const file = { name: 'v.wav', mimeType: 'audio/wav', size: wav.length, data: wav.toString('base64'), durationSeconds: 5 };
+    const voice = assets.createAsset('audio', { name: '林夕的声音', audioKind: 'voice', files: JSON.stringify([file]) });
+    const audio = await send(ASSET_LIST_REQUESTS.referenceAudio, { id: voice.id });
+    assert.deepEqual(audio?.ok && audio.data, { mime: 'audio/wav', data: wav.toString('base64') });
+
+    const without = assets.createAsset('audio', { name: '空音频', audioKind: 'sfx' });
+    const missing = await send(ASSET_LIST_REQUESTS.referenceAudio, { id: without.id });
+    assert.ok(missing && !missing.ok && missing.error.kind === 'not-found');
+  } finally {
+    database.close();
+  }
+});
+
 test('删除：先取名称与使用情况，再删除；不存在或标识无效时返回错误', async () => {
   const { database, assets, send } = createFixture();
   try {

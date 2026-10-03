@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：player.js
-// 说明：结果视频的内置播放器：向宿主读取结果视频（Base64），在弹出页里用原生播放控件播放，带声音的结果可用播放控件静音。
+// 说明：结果视频的内置播放器：向宿主读取结果视频（Base64），在弹出页里用原生播放控件播放，按视频文件里实际的声音轨提示能否调节音量。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-03
@@ -22,14 +22,25 @@
     return (error && error.message) || GENERIC_ERROR_TEXT;
   }
 
+  /** 视频文件中是否有声音轨：在 MP4 的 hdlr 盒里找处理器类型 soun（结构为 hdlr + 版本 4 字节 + 预留 4 字节 + 类型）。 */
+  function hasAudioTrack(bytes) {
+    const HDLR = [0x68, 0x64, 0x6c, 0x72];
+    const SOUN = [0x73, 0x6f, 0x75, 0x6e];
+    for (let index = 12; index + SOUN.length <= bytes.length; index += 1) {
+      if (bytes[index] !== SOUN[0] || bytes[index + 1] !== SOUN[1] || bytes[index + 2] !== SOUN[2] || bytes[index + 3] !== SOUN[3]) continue;
+      if (HDLR.every((code, offset) => bytes[index - 12 + offset] === code)) return true;
+    }
+    return false;
+  }
+
   /**
    * 打开播放器弹出页并开始读取视频；同一时间可以打开多个。
-   * @param {{ resultId: number, title: string, hasAudio?: boolean }} options 结果标识、标题与是否带声音。
+   * @param {{ resultId: number, title: string }} options 结果标识与标题。
    */
   function open(options) {
     const status = aiUi.h('p', { class: 'description', text: '正在读取视频…' });
     const video = aiUi.h('video', { class: 'wb-player__video', hidden: true, attrs: { controls: '', preload: 'metadata', playsinline: '' } });
-    const note = aiUi.h('p', { class: 'description', text: options.hasAudio ? '这个视频带声音，可用播放控件调节音量或静音。' : '这个视频没有声音。', hidden: true });
+    const note = aiUi.h('p', { class: 'description', hidden: true });
     const content = aiUi.h('div', { class: 'wb-player' }, status, video, note);
     let videoUrl = '';
     const page = aiUi.openPage({
@@ -57,7 +68,11 @@
     void (async () => {
       try {
         const source = await window.hostBridge.request(REQUEST_VIDEO, { resultId: options.resultId });
-        videoUrl = URL.createObjectURL(new Blob([window.pageFormat.decodeBase64(source.data)], { type: source.mimeType }));
+        const bytes = window.pageFormat.decodeBase64(source.data);
+        note.textContent = hasAudioTrack(bytes)
+          ? '这个视频带声音，可用播放控件调节音量或静音。'
+          : '这个视频文件里没有声音轨（平台没有生成声音），所以播放控件的音量按钮是灰色的，无法调节。';
+        videoUrl = URL.createObjectURL(new Blob([bytes], { type: source.mimeType }));
         video.src = videoUrl;
         status.hidden = true;
         video.hidden = false;

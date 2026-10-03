@@ -85,6 +85,12 @@
   stroke-linejoin: round;
 }
 
+/* 实心图标（播放、停止）：用文字颜色填充，不描线 */
+.ui-button__icon--solid {
+  fill: currentColor;
+  stroke-width: 1;
+}
+
 /* 纯图标按钮：方形，文字只作为可访问名称 */
 .ui-button--icon-only,
 .ui-button--compact.ui-button--icon-only {
@@ -107,17 +113,24 @@
 }
 
 /* ---------- 试听 ---------- */
-/* 按钮与播放器同一行，宽度不够时播放器换到下一行 */
+/* 只有一个按钮；播放用的音频元素是隐藏的 */
 .ui-audio-preview {
   display: inline-flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 6px 8px;
   max-width: 100%;
 }
 
-.ui-audio-preview audio {
-  max-width: 100%;
+/* 播放中：按钮换成主按钮配色，和空闲时区分开 */
+.ui-audio-preview__button--playing,
+.ui-audio-preview__button--playing:hover,
+.ui-audio-preview__button--playing:active {
+  color: var(--vscode-button-foreground);
+  background: var(--vscode-button-background);
+}
+
+.ui-audio-preview__button--playing:hover,
+.ui-audio-preview__button--playing:active {
+  background: var(--vscode-button-hoverBackground);
 }
 
 /* ---------- 单行、多行输入 ---------- */

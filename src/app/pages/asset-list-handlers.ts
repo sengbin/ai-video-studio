@@ -31,6 +31,7 @@ export const ASSET_LIST_REQUESTS = {
   version: 'assets.version',
   fileData: 'assets.fileData',
   referenceImage: 'assets.referenceImage',
+  referenceAudio: 'assets.referenceAudio',
   saveThumbnails: 'assets.saveThumbnails',
   adopt: 'assets.adopt',
   deleteVersion: 'assets.deleteVersion',
@@ -127,14 +128,18 @@ export function registerAssetListHandlers(
   router.register(ASSET_LIST_REQUESTS.versions, (payload) => generation.listVersions(readAssetId(payload)));
   router.register(ASSET_LIST_REQUESTS.version, (payload) => generation.getVersion(readVersionId(payload)));
   router.register(ASSET_LIST_REQUESTS.fileData, (payload) => generation.getFileData(readEntityId({ id: readRecord(payload).fileId }, '文件')));
-  // 列表预览点击查看原图：取资产的第一张参考图，与缩略图显示的是同一张。
-  router.register(ASSET_LIST_REQUESTS.referenceImage, (payload) => {
+  /** 取资产的第一个参考文件（图片或音频）的类型与 Base64 内容；没有时按 emptyMessage 报错。 */
+  const readFirstReferenceFile = (payload: unknown, emptyMessage: string) => {
     const [file] = assets.getReferenceFiles(readEntityId(payload, '资产'));
     if (file === undefined) {
-      throw new NotFoundError('该资产没有参考图。');
+      throw new NotFoundError(emptyMessage);
     }
     return { mime: file.mime, data: file.content.toString('base64') };
-  });
+  };
+  // 列表预览点击查看原图：取资产的第一张参考图，与缩略图显示的是同一张。
+  router.register(ASSET_LIST_REQUESTS.referenceImage, (payload) => readFirstReferenceFile(payload, '该资产没有参考图。'));
+  // 音频列表点击试听：取资产的参考音频。
+  router.register(ASSET_LIST_REQUESTS.referenceAudio, (payload) => readFirstReferenceFile(payload, '该资产还没有参考音频。'));
   router.register(ASSET_LIST_REQUESTS.saveThumbnails, (payload) => {
     generation.saveThumbnails(payload);
     return { saved: true };

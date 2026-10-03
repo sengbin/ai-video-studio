@@ -175,6 +175,29 @@ test('setValue 直接设置文件列表，不触发变化通知', () => {
   assert.deepEqual(changes, []);
 });
 
+test('音频文件：行内有试听按钮，点击播放已选内容并变为停止，非音频文件没有试听按钮', async () => {
+  const ui = setup();
+  const proto = env.window.HTMLMediaElement.prototype;
+  proto.play = () => Promise.resolve();
+  proto.pause = function () {
+    this.dispatchEvent(new env.window.Event('pause'));
+  };
+  const control = ui.filePicker({});
+  control.setValue([
+    { name: 'v.wav', mimeType: 'audio/wav', size: 3, data: 'AAEC' },
+    { name: 'a.txt', mimeType: 'text/plain', size: 1, data: 'YQ==' }
+  ]);
+  const rows = control.element.querySelectorAll('.ui-file-picker__item');
+  const button = rows[0].querySelector('.ui-audio-preview button');
+  assert.ok(button, '音频文件有试听按钮');
+  assert.equal(button.getAttribute('aria-label'), '试听：v.wav');
+  assert.equal(rows[1].querySelector('.ui-audio-preview'), null, '非音频文件没有试听按钮');
+
+  fire(env, button, 'click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(rows[0].querySelector('audio').getAttribute('src'), 'data:audio/wav;base64,AAEC');
+  assert.equal(button.getAttribute('aria-label'), '停止试听：v.wav');
+});
 /** 取缩略图网格中各卡片的缩略图地址。 */
 function thumbnailSources(control) {
   return [...control.element.querySelectorAll('.ui-file-picker__thumb-image')].map((image) => image.getAttribute('src'));

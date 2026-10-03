@@ -67,7 +67,14 @@
   object-fit: cover;
 }
 
+/* 音频：试听按钮在左，类型与时长在右侧竖排 */
 .asset-audio {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.asset-audio__info {
   display: flex;
   flex-direction: column;
   align-items: flex-start;

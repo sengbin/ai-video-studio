@@ -17,6 +17,7 @@
   const REQUEST_GENERATE_PROMPT = 'assets.generatePrompt';
   const REQUEST_CANCEL_PROMPT = 'assets.cancelPrompt';
   const REQUEST_REFERENCE_IMAGE = 'assets.referenceImage';
+  const REQUEST_REFERENCE_AUDIO = 'assets.referenceAudio';
   const EVENT_CHANGED = 'assets.changed';
   const EVENT_ACTION = 'assets.action';
   const ACTION_CREATE = 'create';
@@ -171,15 +172,25 @@
     return `${Number.isInteger(seconds) ? seconds : seconds.toFixed(1)} 秒`;
   }
 
-  /** 预览单元格：图片类显示缩略图，音频显示类型与时长。 */
+  /** 预览单元格：图片类显示缩略图，音频显示试听按钮（点击播放，播放时再点停止）、类型与时长。 */
   function renderPreview(asset) {
     if (asset.kind === KIND_AUDIO) {
       const audioKind = AUDIO_KIND_LABELS[asset.attributes.audio_kind] || '音频';
+      const preview = aiUi.audioPreview({
+        iconOnly: true,
+        ariaLabel: `试听：${asset.name}`,
+        load: () => runAction(REQUEST_REFERENCE_AUDIO, { id: asset.id })
+      });
       return aiUi.h(
         'div',
         { class: 'asset-audio' },
-        aiUi.chip({ text: audioKind }),
-        asset.durationSeconds === null ? null : aiUi.h('span', { class: 'description', text: formatDuration(asset.durationSeconds) })
+        preview.element,
+        aiUi.h(
+          'div',
+          { class: 'asset-audio__info' },
+          aiUi.chip({ text: audioKind }),
+          asset.durationSeconds === null ? null : aiUi.h('span', { class: 'description', text: formatDuration(asset.durationSeconds) })
+        )
       );
     }
     if (!asset.thumbnail) return aiUi.h('div', { class: 'asset-thumb asset-thumb--empty', text: '无图' });
@@ -310,7 +321,9 @@
   function buildColumns() {
     const categoryNames = new Map(categories.map((category) => [category.id, category.name]));
     return [
-      { title: '预览', width: 80, minWidth: 64, render: (asset) => renderPreview(asset) },
+      kind === KIND_AUDIO
+        ? { title: '试听', width: 130, minWidth: 110, render: (asset) => renderPreview(asset) }
+        : { title: '预览', width: 80, minWidth: 64, render: (asset) => renderPreview(asset) },
       { title: '名称', width: '20%', minWidth: 140, render: (asset) => aiUi.tableMainCell({ text: asset.name, description: describeAsset(asset) }) },
       { title: '分类', width: 100, minWidth: 80, emptyText: '未分类', render: (asset) => categoryNames.get(asset.categoryId) },
       { title: '提示词', width: 110, minWidth: 90, render: renderPromptStatus },

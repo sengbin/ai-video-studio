@@ -28,7 +28,7 @@ ui-kit/                        组件库（自绘控件、对话框及其测试�
     ui-core.js                 命名空间 aiUi、元素创建 h、唯一 id、事件发射器、层容器、指针跟踪、控件基类
     ui-scrollbar.js            悬停标记（data-ui-hover），配合 ui-scrollbar.css 显示滚动条
     ui-button.js               按钮（含添加、修改、删除预设）
-    ui-audio-preview.js        试听：“试听”按钮，点击后才读取音频并显示播放器
+    试听按钮，点击后才读取音频并显示播放器“试听”按钮，点击后才读取音频并显示播放器
     ui-input-controls.js       单行输入框、多行文本框
     ui-select.js               下拉列表
     ui-choice-controls.js      单选组、复选框、复选框组、开关
@@ -44,7 +44,7 @@ ui-kit/                        组件库（自绘控件、对话框及其测试�
     ui-file-picker.test.mjs    文件选择测试（Base64 读取、限制、排序、变化通知）
     ui-dialog.test.mjs         对话框测试（确认、删除确认、拖动、调整大小）
     ui-table.test.mjs          表格测试（表头与行、列类型、占位与淡色、重设行数据、标签）
-    ui-audio-preview.test.mjs  试听测试（点击才读取、读取期间禁用、失败不显示播放器、再次点击从头播放）
+    ui-audio-preview.test.mjs  试听测试（点击才读取、读取期间禁用、播放时变停止并可再点停止、播完恢复、失败可重试、同时只试听一个）
     stage-focus.test.mjs       分镜脚本产出层定位到所选镜头的页面测试（加载 resources/stage 脚本，放在这里随 npm test 运行）
     ui-styles.test.mjs         样式静态检查（滚动条、禁用态令牌）
 ```
@@ -164,14 +164,14 @@ aiUi.button({ kind: 'add', text: '创建项目' });   // 文字可覆盖
 | `text` | 按钮文字；使用 `kind` 时可省略 |
 | `kind` | 操作预设：`add` 添加（主要样式、“+”图标）、`edit` 修改（次要样式、铅笔图标）、`delete` 删除（危险样式、垃圾桶图标）；未知预设会报错 |
 | `variant` | `primary` 主要、`secondary` 次要（默认）、`danger` 危险；可覆盖预设的样式 |
-| `icon` | 图标名（`plus`、`pencil`、`trash`）；传 `false` 去掉预设的图标 |
+| `icon` | 图标名（`plus`、`pencil`、`trash`，实心的 `play`、`stop`）；传 `false` 去掉预设的图标 |
 | `iconOnly` | 只显示图标，文字作为可访问名称；需要有图标才生效 |
 | `compact` | 紧凑尺寸，用于表格行内操作 |
 | `type` | `button`（默认）或 `submit` |
 | `ariaLabel` | 可访问名称，图标或同名按钮必须提供 |
 | `disabled`、`onClick` | 禁用状态与点击处理 |
 
-图标是内联 SVG，颜色跟随文字，禁用时一起变灰。返回 `{ element, setDisabled, isDisabled, setText, focus }`。
+图标是内联 SVG，颜色跟随文字，禁用时一起变灰。返回 `{ element, setDisabled, isDisabled, setText, setIcon, setAriaLabel, focus }`；`setIcon(name)` 在有图标的按钮上换图标，`setAriaLabel(label)` 更新可访问名称。
 
 ### 5.2 单行输入 `aiUi.textInput`
 
@@ -328,7 +328,7 @@ const files = images.getValue();   // [{ name, mimeType, size, data }]，data �
 - 类型、数量、大小不符或空文件不会加入列表，原因显示在控件下方的提示行（`role="status"`），其余合法文件仍然加入。
 - 多选时每个文件一行，带“上移”“下移”“移除”按钮（列表顺序就是 `getValue()` 的顺序，边界按钮禁用）；单选时只有“移除”。图片预览模式下每张图是一张卡片，按钮为“前移”“后移”“移除”。
 - `setValue(files)` 可直接设置已有文件（与 `getValue()` 同样的数组），用于编辑时带出已保存的图片，不触发变化通知；数量上限包含已有文件。
-- 查看原图依赖 `ui-dialog.js`，页面 CSP 需允许 `img-src data:`（`createPageHtml` 已包含）。
+- 已选的音频文件（类型为 `audio/*`）在行内带页面 CSP 需允许 `img-src data:`（`createPageHtml` 已包含）。
 - 文件内容异步读取，读取中显示“读取中…”；提交前用 `whenReady()` 等待读取完成（表单引擎已自动处理）。
 - 前端限制只是体验层，宿主必须按内容重新校验（文件头、编码、大小），见 `src/domain/rules/work-rules.ts`。
 - 控件对象的 `focusTarget` 为选择按钮，`ariaTarget` 为外层 `role="group"`，`labelable` 为 false，因此字段包装用 `aria-labelledby` 关联标签。
@@ -341,19 +341,25 @@ const preview = aiUi.audioPreview({
   load: () => window.hostBridge.request('bindings.voiceAudio', { assetId })   // 返回 { mime, data }，data 为不带前缀的 Base64
 });
 container.append(preview.element);
+
+// 表格行内只放图标
+aiUi.audioPreview({ iconOnly: true, ariaLabel: `试听：${name}`, load });
 ```
 
 | 选项 | 说明 |
 |---|---|
-| `load` | 必填；读取音频内容，返回 `{ mime, data }`。读取失败时由调用方自己提示原因并返回 `undefined`，控件不显示播放器 |
-| `text`、`ariaLabel` | 按钮文字（默认“试听”）与无障碍名称；同一页有多个试听按钮时用 `ariaLabel` 区分 |
+| `load` | 必填；读取音频内容，返回 `{ mime, data }`。读取失败时由调用方自己提示原因并返回 `undefined`，控件保持可再次尝试 |
+| `text`、`stopText` | 空闲时与播放时的按钮文字，默认“试听”“停止” |
+| `ariaLabel` | 空闲时的无障碍名称，同一页有多个试听按钮时用它区分；播放时自动变为“停止”加这个名称 |
+| `iconOnly`、`compact` | 只显示图标；紧凑尺寸（默认开启，传 `false` 用普通尺寸） |
 
 行为：
 
-- 点击按钮才调用 `load`；读取期间按钮禁用，成功后在按钮旁显示带控件的 `<audio>`（`data:` 地址）并自动播放；之后再点按钮不重复读取，从头播放。浏览器拒绝自动播放时，用户仍可点播放器上的按钮。
-- 页面 CSP 需允许 `media-src data:`（`createPageHtml` 已包含）；返回对象的 `element` 为根元素，`button` 为试听按钮的控件对象。
-- 资产版本层（音频版本）与工作台实体绑定页（音色参考）共用。
-
+- 空闲时按钮是三角形播放图标加“试听”；点击才调用 `load`，读取期间按钮禁用，成功后立即播放，图标变为方块停止图标、文字变为“停止”、按钮换成主按钮配色。播放中再点击停止并回到开头；播完、出错或被浏览器拒绝自动播放时自动回到空闲。
+- 已读取后再试听不重复读取；同一页同一时间只试听一个，开始新的会停掉上一个。
+- 音频元素是隐藏的，没有进度条；控件元素从页面移除时浏览器会暂停播放。
+- 页面 CSP 需允许 `media-src data:`（`createPageHtml` 已包含）；返回 `{ element, button, stop, isPlaying }`，`element` 为根元素，`button` 为按钮的控件对象，`stop()` 可由调用方主动停止。
+试听列）、资产版本层（音频版本）与工作台实体绑定页（音色参考）共用。“试听”列）、资产版本层（音频版本）与工作台实体绑定页（音色参考）共用。
 ## 6. 字段包装 `aiUi.field`
 
 给任意控件加上标签、说明和错误提示，并建立无障碍关联：

@@ -4,7 +4,7 @@
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-09-30
-// 备注：依赖 ui-core.js、ui-button.js、ui-dialog.js（查看原图）；类型、数量、大小不符的文件不会加入，原因显示在控件下方；用法见 docs/ui-components.md。
+// 备注：依赖 ui-core.js、ui-button.js、ui-dialog.js（查看原图）、ui-audio-preview.js（音频文件的试听）；类型、数量、大小不符的文件不会加入，原因显示在控件下方；用法见 docs/ui-components.md。
 // ------------------------------------------------------------------------
 
 'use strict';
@@ -111,6 +111,11 @@
       message.classList.toggle('ui-is-error', Boolean(isError));
     }
 
+    /** 音频文件的试听按钮：播放已选文件的内容，不需要宿主参与。 */
+    function renderAudioPreview(item) {
+      return aiUi.audioPreview({ iconOnly: true, ariaLabel: `试听：${item.name}`, load: async () => ({ mime: item.mimeType, data: item.data }) }).element;
+    }
+
     /** 重新绘制文件列表。 */
     function renderList() {
       list.textContent = '';
@@ -137,6 +142,7 @@
           : aiUi.h(
               'li',
               { class: 'ui-file-picker__item' },
+              item.mimeType.startsWith('audio/') ? renderAudioPreview(item) : null,
               aiUi.h('span', { class: 'ui-file-picker__name', text: item.name, attrs: { title: item.name } }),
               aiUi.h('span', { class: 'ui-file-picker__size', text: formatSize(item.size) })
             );
