@@ -16,6 +16,7 @@
   const REQUEST_SET_PRIMARY = 'bindings.setPrimary';
   const REQUEST_SUGGEST = 'bindings.suggest';
   const REQUEST_VOICE_AUDIO = 'bindings.voiceAudio';
+  const REQUEST_REFERENCE_IMAGE = 'bindings.referenceImage';
 
   const GENERIC_ERROR_TEXT = '操作失败，请重试。';
   const MAX_SUGGESTION_LINES = 12;
@@ -51,16 +52,25 @@
     }
   }
 
-  /** 资产缩略图；音频显示“音频”，没有图显示“无图”。 */
-  function renderThumb(item) {
+  /** 资产缩略图：点击弹出原图；音频显示“音频”，没有图显示“无图”。message 为失败提示的显示位置，默认随弹出页。 */
+  function renderThumb(item, message) {
     if (item.thumbnail) {
+      const name = item.assetName || item.name;
       return aiUi.h(
-        'div',
-        { class: 'wb-bind-thumb' },
-        aiUi.h('img', { class: 'wb-bind-thumb__image', attrs: { src: `data:${item.thumbnail.mime};base64,${item.thumbnail.data}`, alt: item.assetName || item.name } })
+        'button',
+        { class: 'wb-bind-thumb wb-bind-thumb--button', attrs: { type: 'button', title: '查看原图', 'aria-label': `查看原图：${name}` }, on: { click: () => void viewOriginal(item.assetId, name, message) } },
+        aiUi.h('img', { class: 'wb-bind-thumb__image', attrs: { src: `data:${item.thumbnail.mime};base64,${item.thumbnail.data}`, alt: name } })
       );
     }
     return aiUi.h('div', { class: 'wb-bind-thumb wb-bind-thumb--empty', text: item.durationSeconds === null ? '无图' : '音频' });
+  }
+
+  /** 向宿主取资产的原图并弹出页查看；原图按页面大小缩放，过大时在页内滚动。 */
+  async function viewOriginal(assetId, name, message) {
+    const data = await request(REQUEST_REFERENCE_IMAGE, { assetId }, message || messageTarget());
+    if (!data) return;
+    const image = aiUi.h('img', { class: 'wb-bind-original', attrs: { src: `data:${data.mime};base64,${data.data}`, alt: name } });
+    aiUi.openPage({ title: name, content: aiUi.h('div', { class: 'wb-bind-viewer' }, image), width: 640, height: 520, minWidth: 320, minHeight: 240, buttons: [{ id: 'close', text: '关闭', isCancel: true }] });
   }
 
   /** 选择资产的弹出页：可按名称搜索，点“选择”后调用 onPick，返回 true 才关闭。 */
@@ -74,7 +84,7 @@
     const columns = [
       withPreview
         ? { title: '试听', width: 64, render: (asset) => renderVoicePreview({ assetId: asset.id, assetName: asset.name, message }) }
-        : { title: '预览', width: 64, render: (asset) => renderThumb({ ...asset, assetName: asset.name }) },
+        : { title: '预览', width: 64, render: (asset) => renderThumb({ ...asset, assetId: asset.id, assetName: asset.name }, message) },
       { title: '名称', minWidth: 160, render: (asset) => aiUi.tableMainCell({ text: asset.name, description: asset.durationSeconds === null ? '' : `${asset.durationSeconds} 秒` }) },
       { title: '操作', type: 'actions', render: (asset) => aiUi.button({ text: '选择', compact: true, variant: 'primary', ariaLabel: `选择：${asset.name}`, onClick: () => void pick(asset) }).element }
     ];
@@ -251,7 +261,7 @@
       return;
     }
     dialog.body.textContent = '';
-    dialog.body.append(renderVisualCell(entity), renderVoiceCell(entity));
+    dialog.body.append(...[renderVisualCell(entity), renderVoiceCell(entity)].filter(Boolean));
   }
 
   /** 解除、设为主资产这类单次请求，完成后重新读取。 */

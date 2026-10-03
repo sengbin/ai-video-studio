@@ -800,6 +800,7 @@ F7 不是单独的表单，而是 P6 服务商“设置”弹出页里的设置�
 | 设为主资产 | 该实体本集、同一用途下的其他绑定 `is_primary` 置 0 |
 | 移除绑定 | 删除对应行 |
 | 自动匹配 | 确认后批量新增绑定，已有绑定不覆盖 |
+| 查看资产原图 | 只读：点击资产缩略图才读取参考图原图（`bindings.referenceImage`），在弹出页查看，不写库 |
 | 试听音色参考 | 只读：点“试听”才读取音色参考音频的内容（`bindings.voiceAudio`），不写库 |
 
 ### F10 提交预览
@@ -965,7 +966,7 @@ Webview 只发送“意图”，宿主完成校验、写库并返回结果。
 | P8（目标） | `assets.versions`、`assets.version`、`assets.saveThumbnails`、`assets.adopt`、`assets.deleteVersion`、`assets.cancelVersion`、`assets.retryVersion` | 读取版本列表和单个版本（含缩略图）、回传补生成的缩略图、采用（整体替换 `asset_files`，写 `adopted_version_id`）、删除、取消、重试；事件沿用 `assets.changed` |
 | P3 资产列表 | `assets.load`、`assets.takePending`、`assets.prepareDelete`、`assets.delete` | 读取页面绑定类型的资产（带缩略图、文件数、使用集数、所属分类标识）和该类型的分类（含资产数量）、取待处理请求、取删除前的使用情况、删除；事件 `assets.changed`、`assets.action` |
 | P3 资产分类管理 | `assetCategories.prepareDelete`、`assetCategories.delete` | 取删除分类前的名称与受影响的资产数量、删除分类（归入该分类的资产变为不分类，资产保留）；分类的创建与重命名走表单 F15 |
-| F9 绑定 | `bindings.view`、`bindings.list`、`bindings.bind`、`bindings.unbind`、`bindings.setPrimary`、`bindings.suggest`、`bindings.voiceAudio` | 已在工作台路由器上注册：`view` 读取一集的绑定界面视图（启用的实体及其形象、音色绑定与缩略图，可选资产）；`list` 读取原始绑定；绑定（形象要求资产与实体同类型，音色要求角色与“音色参考”音频）、解除、切换主资产、按名称或别名自动匹配出建议（不写入）；`voiceAudio` 按资产标识读取“音色参考”音频的第一个参考文件（MIME 与 Base64，只读），用于试听 |
+| F9 绑定 | `bindings.view`、`bindings.list`、`bindings.bind`、`bindings.unbind`、`bindings.setPrimary`、`bindings.suggest`、`bindings.voiceAudio`、`bindings.referenceImage` | 已在工作台路由器上注册：`view` 读取一集的绑定界面视图（启用的实体及其形象、音色绑定与缩略图，可选资产）；`list` 读取原始绑定；绑定（形象要求资产与实体同类型，音色要求角色与“音色参考”音频）、解除、切换主资产、按名称或别名自动匹配出建议（不写入）；`voiceAudio` 按资产标识读取“音色参考”音频的第一个参考文件（MIME 与 Base64，只读），用于试听；`referenceImage` 按资产标识读取图片资产的第一张参考图（MIME 与 Base64，只读），点击缩略图时弹出原图 |
 | F7 | `settings.load`、`settings.update`（文本生成设置）、`settings.providerUpdate`、`settings.providerSetKey`、`settings.providerClearKey`、`settings.modelSetEnabled` | `settings.load` 同时返回文本生成设置和全部服务商视图；服务商相关的修改请求返回该服务商修改后的视图（`{ provider }`）；写 `providers`（启用、设置）与 `models`（启用），密钥写 `SecretStorage` 且不返回给界面；文本生成设置写 VS Code 用户设置 |
 | F8 | `workbench.profile`、`workbench.saveProfile`、`workbench.saveGroupProfile` | 读取一集的作品默认、本集覆盖与合并后的生效值；保存某一级（作品或集）的修改，`null` 恢复继承，写 `generation_profiles`；镜头组的覆盖随集视图返回（每组的 `overrides`），用 `workbench.saveGroupProfile` 保存（可保存模型、画幅、分辨率、声音模式、声音内容、种子、生成时长；`durationSeconds` 只能按镜头组保存，作品、集范围的保存会被拒绝；单镜头的 `shots.duration_seconds` 仍在分镜脚本阶段编辑） |
 | F9 | `binding.add`、`binding.remove`、`binding.setPrimary`、`binding.autoMatch` | 写 `entity_bindings` |

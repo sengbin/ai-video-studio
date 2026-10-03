@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：binding-handlers.ts
-// 说明：实体绑定的请求处理：读取一集的绑定视图与绑定列表、绑定、解除、切换主资产、按名称自动匹配出建议、读取音色参考音频用于试听。
+// 说明：实体绑定的请求处理：读取一集的绑定视图与绑定列表、绑定、解除、切换主资产、按名称自动匹配出建议、读取音色参考音频用于试听、读取资产参考图原图用于查看。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
@@ -19,7 +19,8 @@ export const BINDING_REQUESTS = {
   unbind: 'bindings.unbind',
   setPrimary: 'bindings.setPrimary',
   suggest: 'bindings.suggest',
-  voiceAudio: 'bindings.voiceAudio'
+  voiceAudio: 'bindings.voiceAudio',
+  referenceImage: 'bindings.referenceImage'
 } as const;
 
 /**
@@ -47,4 +48,7 @@ export function registerBindingHandlers(router: MessageRouter, service: BindingS
 
   // 试听音色参考：点击“试听”时才读取音频内容。
   router.register(BINDING_REQUESTS.voiceAudio, (payload) => service.readVoiceAudio(readEntityId({ id: readRecord(payload).assetId }, '资产')));
-}
+
+    // 点击缩略图查看原图：取资产的第一张参考图，与缩略图显示的是同一张。
+    router.register(BINDING_REQUESTS.referenceImage, (payload) => service.readReferenceImage(readEntityId({ id: readRecord(payload).assetId }, '资产')));
+  }

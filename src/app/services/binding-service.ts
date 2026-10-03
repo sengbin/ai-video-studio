@@ -29,6 +29,8 @@ export const BINDING_NOTE_MAX_LENGTH = 200;
 const NOT_FOUND_MESSAGE = '集或实体不存在，或实体不属于这一集所在的作品。';
 const DUPLICATE_MESSAGE = '这个实体在本集已经绑定过该资产。';
 const NO_AUDIO_FILE_MESSAGE = '这个音频资产还没有音频文件，请先上传，或生成并采用。';
+const NO_IMAGE_FILE_MESSAGE = '这个资产还没有参考图。';
+const IMAGE_ONLY_MESSAGE = '音频资产没有图片可查看。';
 const VOICE_ONLY_MESSAGE = '只能试听“音色参考”类型的音频资产。';
 
 /** 绑定界面里的一个可选资产。 */
@@ -186,6 +188,27 @@ export class BindingService {
     const [file] = this.assets.listReferenceFiles(assetId);
     if (file === undefined) {
       throw new NotFoundError(NO_AUDIO_FILE_MESSAGE);
+    }
+    return { mime: file.mime, data: file.content.toString('base64') };
+  }
+
+  /**
+   * 读取图片资产第一张参考图的原图，用于实体绑定页点击缩略图查看。
+   * @returns 图片的 MIME 类型与 Base64 内容（不带前缀）。
+   * @throws NotFoundError 资产不存在，或还没有图片文件。
+   * @throws ValidationError 资产是音频，没有图片。
+   */
+  readReferenceImage(assetId: number): { readonly mime: string; readonly data: string } {
+    const asset = this.assets.findById(assetId);
+    if (asset === undefined) {
+      throw new NotFoundError(`资产 ${assetId} 不存在。`);
+    }
+    if (asset.kind === 'audio') {
+      throw new ValidationError({ assetId: IMAGE_ONLY_MESSAGE });
+    }
+    const [file] = this.assets.listReferenceFiles(assetId);
+    if (file === undefined) {
+      throw new NotFoundError(NO_IMAGE_FILE_MESSAGE);
     }
     return { mime: file.mime, data: file.content.toString('base64') };
   }

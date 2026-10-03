@@ -254,6 +254,31 @@ test('试听音色参考：读取第一个参考文件的内容；不是音色�
   }
 });
 
+test('查看原图：读取图片资产第一张参考图的内容；音频、没有图片、资产不存在时报错，请求按类型返回', async () => {
+  const { database, assets, service } = createFixture();
+  try {
+    const png = Buffer.from('89504e470d0a1a0a', 'hex');
+    const files = JSON.stringify([{ name: 'a.png', mimeType: 'image/png', size: png.length, data: png.toString('base64'), width: 1, height: 1 }]);
+    const scene = assets.createAsset('scene', { name: '旧公寓客厅', files }, { fileSource: 'upload' });
+    assert.deepEqual(service.readReferenceImage(scene.id), { mime: 'image/png', data: png.toString('base64') });
+
+    const voice = assets.createAsset('audio', { name: '低沉嗓音', audioKind: '音色参考', files: AUDIO_FILES }, { fileSource: 'upload' });
+    assert.throws(() => service.readReferenceImage(voice.id), ValidationError);
+    const empty = assets.createAsset('scene', { name: '空场景' });
+    assert.throws(() => service.readReferenceImage(empty.id), (error) => error instanceof NotFoundError && /还没有参考图/.test(error.message));
+    assert.throws(() => service.readReferenceImage(9999), NotFoundError);
+
+    const router = new MessageRouter();
+    registerBindingHandlers(router, service);
+    const send = (payload?: unknown) => router.handle({ type: 'request', requestId: 1, name: BINDING_REQUESTS.referenceImage, payload });
+    const ok = await send({ assetId: scene.id });
+    assert.deepEqual(ok?.ok && ok.data, { mime: 'image/png', data: png.toString('base64') });
+    const invalid = await send({});
+    assert.ok(invalid && !invalid.ok && invalid.error.kind === 'validation');
+  } finally {
+    database.close();
+  }
+});
 test('数据变化通知，以及删除资产、集时绑定随之清除', () => {
   const { database, assets, service, episode1, guard } = createFixture();
   try {
