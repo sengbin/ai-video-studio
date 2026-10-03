@@ -1,0 +1,1674 @@
+<!DOCTYPE html>
+<!--
+========================================================================
+名称：workbench-wireframe.html
+说明：生成工作台的独立线框原型，含内嵌样式与脚本，可点击预览镜头组、绑定、参数、提交和队列流程。
+作者：Lion
+邮箱：chengbin@3578.cn
+日期：2026-10-03
+备注：单文件原型，所有数据均为示例，不连接实际业务。
+========================================================================
+-->
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="AIGC 视频生成工作台布局线框原型">
+  <title>生成工作台 · 布局线框稿</title>
+  <style>
+    :root {
+      --vscode-sideBar-background: rgb(243, 243, 243);
+      --vscode-foreground: rgb(59, 59, 59);
+      --vscode-descriptionForeground: rgb(113, 113, 113);
+      --vscode-focusBorder: rgb(0, 120, 212);
+      --vscode-button-background: rgb(0, 120, 212);
+      --vscode-button-foreground: rgb(255, 255, 255);
+      --radius: 8px;
+      font-family: "Segoe UI", "Microsoft YaHei UI", sans-serif;
+      font-size: 13px;
+    }
+
+    /* 派生令牌放在 body 上，切换主题类时才会随宿主令牌重新计算；背景与表面全部为灰度 */
+    body {
+      color-scheme: light;
+      --bg: var(--vscode-sideBar-background);
+      --text: var(--vscode-foreground);
+      --muted: var(--vscode-descriptionForeground);
+      --line: color-mix(in srgb, rgb(0, 0, 0) 22%, rgb(255, 255, 255));
+      --divider: color-mix(in srgb, rgb(0, 0, 0) 8%, transparent);
+      --line-strong: color-mix(in srgb, var(--text) 28%, transparent);
+      --surface: color-mix(in srgb, var(--bg) 62%, rgb(226, 226, 226));
+      --surface-raised: color-mix(in srgb, var(--text) 5%, var(--surface));
+      --field-bg: color-mix(in srgb, var(--bg) 76%, rgb(216, 216, 216));
+      --select-bg: color-mix(in srgb, var(--text) 8%, transparent);
+      --accent: var(--vscode-button-background);
+      --success: rgb(31, 122, 63);
+      --warning: rgb(169, 106, 16);
+      --danger: rgb(180, 35, 24);
+      --shadow: 0 1px 2px rgba(0, 0, 0, 0.07);
+      --toast-bg: rgb(59, 59, 59);
+      --toast-text: rgb(255, 255, 255);
+    }
+
+    body.vscode-dark {
+      color-scheme: dark;
+      --vscode-sideBar-background: rgb(31, 31, 31);
+      --vscode-foreground: rgb(204, 204, 204);
+      --vscode-descriptionForeground: rgb(157, 157, 157);
+      --line: color-mix(in srgb, rgb(255, 255, 255) 7%, var(--bg));
+      --divider: color-mix(in srgb, rgb(255, 255, 255) 8%, transparent);
+      --surface: color-mix(in srgb, var(--bg) 97%, rgb(255, 255, 255));
+      --field-bg: color-mix(in srgb, var(--bg) 83%, rgb(0, 0, 0));
+      --success: rgb(79, 220, 138);
+      --warning: rgb(242, 177, 74);
+      --danger: rgb(255, 123, 114);
+      --shadow: none;
+      --toast-bg: rgb(204, 204, 204);
+      --toast-text: rgb(31, 31, 31);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      min-width: 320px;
+      height: 100vh;
+      margin: 0;
+      overflow: hidden;
+      color: var(--text);
+      background: var(--bg);
+    }
+
+    button,
+    select {
+      font: inherit;
+      color: inherit;
+    }
+
+    button {
+      min-height: 34px;
+      padding: 0 12px;
+      border: 1px solid var(--line-strong);
+      border-radius: 6px;
+      background: transparent;
+      cursor: pointer;
+    }
+
+    button:hover:not(:disabled) {
+      background: color-mix(in srgb, var(--text) 6%, transparent);
+    }
+
+    button:disabled {
+      cursor: not-allowed;
+      opacity: 0.5;
+    }
+
+    button:focus-visible,
+    select:focus-visible {
+      outline: 1px solid var(--vscode-focusBorder, rgb(0, 120, 212));
+      outline-offset: 2px;
+    }
+
+    .primary-button {
+      border-color: var(--accent);
+      color: var(--vscode-button-foreground);
+      background: var(--accent);
+      font-weight: 650;
+    }
+
+    .primary-button:hover:not(:disabled) {
+      background: color-mix(in srgb, var(--accent) 88%, rgb(0, 0, 0));
+    }
+
+    .quiet-button {
+      border-color: transparent;
+      color: var(--accent);
+      background: var(--select-bg);
+    }
+
+    .text-button {
+      min-height: 26px;
+      padding: 0 8px;
+      border-color: transparent;
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    /* 页面固定为一屏高度，不出现页面滚动条，各区域在内部滚动 */
+    .page-shell {
+      display: flex;
+      width: min(1560px, 100%);
+      height: 100vh;
+      flex-direction: column;
+      margin: 0 auto;
+      padding: 18px 28px 20px;
+    }
+
+    .page-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 24px;
+      flex: none;
+      margin-bottom: 14px;
+    }
+
+    .eyebrow {
+      margin: 0 0 5px;
+      color: var(--muted);
+      font-size: 11px;
+      letter-spacing: 0.08em;
+    }
+
+    h1,
+    h2,
+    h3,
+    p {
+      margin-top: 0;
+    }
+
+    h1 {
+      margin-bottom: 5px;
+      font-size: 22px;
+      line-height: 1.25;
+      letter-spacing: -0.02em;
+    }
+
+    .page-description {
+      max-width: 720px;
+      margin-bottom: 0;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+
+    .header-tools {
+      display: flex;
+      flex: 0 0 auto;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .tag {
+      padding: 6px 10px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      color: var(--muted);
+      background: var(--surface);
+      font-size: 11px;
+      white-space: nowrap;
+    }
+
+    .theme-button {
+      min-height: 28px;
+      padding: 0 10px;
+      border-radius: 999px;
+      font-size: 11px;
+    }
+
+    .context-bar {
+      display: grid;
+      grid-template-columns: minmax(150px, 1.1fr) minmax(150px, 1.1fr) minmax(110px, 0.7fr) minmax(180px, 1.3fr);
+      gap: 12px;
+      padding: 14px 16px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--surface);
+      box-shadow: var(--shadow);
+    }
+
+    .field-label {
+      display: block;
+      margin-bottom: 6px;
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .field-select {
+      width: 100%;
+      min-height: 36px;
+      padding: 0 8px;
+      border: 1px solid var(--line-strong);
+      border-radius: 5px;
+      background: var(--field-bg);
+      font-weight: 550;
+    }
+
+    .field-readonly {
+      display: flex;
+      min-height: 36px;
+      align-items: center;
+      padding: 0 10px;
+      overflow: hidden;
+      border: 1px dashed var(--line-strong);
+      border-radius: 5px;
+      color: var(--muted);
+      font-size: 12px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .workspace {
+      display: grid;
+      min-height: 0;
+      flex: 1;
+      margin-top: 12px;
+      grid-auto-rows: minmax(0, 1fr);
+      grid-template-columns: minmax(170px, 0.78fr) minmax(280px, 1.6fr) minmax(280px, 1fr);
+      gap: 14px;
+      align-items: stretch;
+    }
+
+    .panel {
+      display: flex;
+      min-width: 0;
+      min-height: 0;
+      flex-direction: column;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--surface);
+      box-shadow: var(--shadow);
+    }
+
+    .panel-header {
+      display: flex;
+      flex: none;
+      min-height: 57px;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      padding: 11px 14px;
+      border-bottom: 1px solid var(--divider);
+    }
+
+    .panel-heading {
+      margin: 0;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .panel-subtitle {
+      margin: 3px 0 0;
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .panel-content {
+      min-height: 0;
+      flex: 1;
+      padding: 12px;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      scrollbar-width: thin;
+    }
+
+    .group-list {
+      display: grid;
+      gap: 6px;
+    }
+
+    .group-item {
+      display: grid;
+      width: 100%;
+      min-height: 0;
+      grid-template-columns: 1fr auto;
+      gap: 3px 8px;
+      padding: 11px 10px;
+      border: 1px solid transparent;
+      text-align: left;
+    }
+
+    .group-item.is-selected {
+      border-color: var(--line-strong);
+      background: var(--select-bg);
+      box-shadow: inset 3px 0 0 var(--accent);
+    }
+
+    .group-name {
+      font-weight: 650;
+    }
+
+    .group-meta {
+      grid-column: 1;
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .status {
+      align-self: start;
+      color: var(--warning);
+      font-size: 11px;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
+    .status.success {
+      color: var(--success);
+    }
+
+    .status.neutral {
+      color: var(--muted);
+    }
+
+    .status.accent {
+      color: var(--accent);
+    }
+
+    .group-total {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 10px;
+      padding: 12px 4px 0;
+      border-top: 1px solid var(--divider);
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .detail-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+
+    .detail-title {
+      margin: 0 0 4px;
+      font-size: 16px;
+    }
+
+    .detail-summary {
+      margin: 0;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.5;
+    }
+
+    .shot-list {
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--field-bg);
+    }
+
+    .shot-row {
+      display: grid;
+      grid-template-columns: 48px minmax(0, 1fr) 74px;
+      gap: 10px;
+      align-items: start;
+      padding: 11px 10px;
+      border-bottom: 1px solid var(--divider);
+    }
+
+    .shot-row:last-of-type {
+      border-bottom: 0;
+    }
+
+    .shot-id {
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 650;
+    }
+
+    .shot-description {
+      margin: 0;
+      line-height: 1.5;
+    }
+
+    .shot-caption {
+      display: block;
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 10px;
+    }
+
+    .shot-duration {
+      color: var(--muted);
+      font-size: 11px;
+      text-align: right;
+      white-space: nowrap;
+    }
+
+    .show-more {
+      width: 100%;
+      min-height: 36px;
+      border: 0;
+      border-top: 1px dashed var(--line-strong);
+      border-radius: 0;
+      color: var(--accent);
+      font-size: 11px;
+    }
+
+    .entity-summary {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      margin-top: 14px;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--surface-raised);
+    }
+
+    .entity-summary strong {
+      display: block;
+      margin-bottom: 4px;
+      font-size: 11px;
+    }
+
+    .entity-summary p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.45;
+    }
+
+    .step-tabs {
+      display: grid;
+      min-height: 57px;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      border-bottom: 1px solid var(--divider);
+    }
+
+    .step-tab {
+      display: flex;
+      min-width: 0;
+      flex-direction: column;
+      justify-content: center;
+      gap: 3px;
+      padding: 8px 10px;
+      border: 0;
+      border-bottom: 2px solid transparent;
+      border-radius: 0;
+      text-align: left;
+    }
+
+    .step-tab.is-current {
+      border-bottom-color: var(--accent);
+      background: var(--select-bg);
+    }
+
+    .step-tab-title {
+      overflow: hidden;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 650;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .step-tab.is-current .step-tab-title {
+      color: var(--accent);
+    }
+
+    .step-tab.is-done .step-tab-title {
+      color: var(--success);
+    }
+
+    .step-tab-note {
+      overflow: hidden;
+      color: var(--muted);
+      font-size: 10px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .step-context {
+      margin: 0 0 12px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid var(--divider);
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .step-panel[hidden] {
+      display: none;
+    }
+
+    .binding-progress {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 8px;
+    }
+
+    .binding-progress strong {
+      font-size: 13px;
+    }
+
+    .progress-track {
+      height: 5px;
+      margin-bottom: 8px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: color-mix(in srgb, var(--text) 10%, transparent);
+    }
+
+    .progress-value {
+      width: 0;
+      height: 100%;
+      border-radius: inherit;
+      background: var(--accent);
+      transition: width 0.2s;
+    }
+
+    .helper-text {
+      margin: 0;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.5;
+    }
+
+    .panel-actions {
+      margin: 13px 0 4px;
+    }
+
+    .panel-actions button {
+      width: 100%;
+    }
+
+    .entity-list-heading {
+      margin: 15px 0 2px;
+      padding-bottom: 7px;
+      border-bottom: 1px solid var(--divider);
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .entity-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      min-height: 42px;
+      border-bottom: 1px solid var(--divider);
+      font-size: 12px;
+    }
+
+    .entity-row:last-child {
+      border-bottom: 0;
+    }
+
+    .entity-type {
+      margin-left: 5px;
+      color: var(--muted);
+      font-size: 10px;
+    }
+
+    .entity-state {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--warning);
+      font-size: 11px;
+      white-space: nowrap;
+    }
+
+    .entity-state.is-bound {
+      color: var(--success);
+    }
+
+    .entity-state button {
+      min-height: 26px;
+      padding: 0 9px;
+      font-size: 11px;
+    }
+
+    .form-grid {
+      display: grid;
+      gap: 12px;
+    }
+
+    .switch-list {
+      border: 1px solid var(--line-strong);
+      border-radius: 6px;
+      background: var(--field-bg);
+    }
+
+    .switch-row {
+      display: flex;
+      width: 100%;
+      min-height: 38px;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      padding: 0 12px;
+      border: 0;
+      border-bottom: 1px solid var(--divider);
+      border-radius: 0;
+      text-align: left;
+    }
+
+    .switch-row:last-child {
+      border-bottom: 0;
+    }
+
+    .switch-track {
+      position: relative;
+      width: 32px;
+      height: 18px;
+      flex: none;
+      border-radius: 999px;
+      background: color-mix(in srgb, var(--text) 24%, transparent);
+      transition: background 0.12s;
+    }
+
+    .switch-track::after {
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: var(--bg);
+      content: "";
+      transition: transform 0.12s;
+    }
+
+    .switch-row[aria-checked="true"] .switch-track {
+      background: var(--accent);
+    }
+
+    .switch-row[aria-checked="true"] .switch-track::after {
+      background: rgb(255, 255, 255);
+      transform: translateX(14px);
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .switch-track,
+      .switch-track::after {
+        transition: none;
+      }
+    }
+
+    .scope-switch {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      overflow: hidden;
+      border: 1px solid var(--line-strong);
+      border-radius: 6px;
+    }
+
+    .scope-switch button {
+      min-height: 32px;
+      border: 0;
+      border-radius: 0;
+      font-size: 12px;
+    }
+
+    .scope-switch button[aria-pressed="true"] {
+      color: var(--text);
+      background: var(--select-bg);
+      box-shadow: inset 0 -2px 0 var(--accent);
+      font-weight: 650;
+    }
+
+    .check-list {
+      margin: 0 0 12px;
+      padding: 0;
+      list-style: none;
+    }
+
+    .check-item {
+      display: flex;
+      gap: 9px;
+      padding: 9px 0;
+      border-bottom: 1px solid var(--divider);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .check-item:last-child {
+      border-bottom: 0;
+    }
+
+    .check-icon {
+      flex: 0 0 auto;
+      font-weight: 700;
+    }
+
+    .check-item.is-ok .check-icon {
+      color: var(--success);
+    }
+
+    .check-item.is-warning .check-icon {
+      color: var(--warning);
+    }
+
+    .check-item.is-blocked .check-icon {
+      color: var(--danger);
+    }
+
+    .check-note {
+      display: block;
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .summary-box {
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--field-bg);
+      font-size: 11px;
+      line-height: 1.7;
+    }
+
+    .summary-box dt {
+      float: left;
+      clear: left;
+      width: 4.5em;
+      color: var(--muted);
+    }
+
+    .summary-box dd {
+      margin: 0 0 0 4.5em;
+    }
+
+    /* 底部操作固定在滚动区底部，内容再长也能直接点到 */
+    .step-footer {
+      position: sticky;
+      bottom: -12px;
+      display: flex;
+      gap: 8px;
+      margin: 14px -12px -12px;
+      padding: 12px;
+      border-top: 1px solid var(--divider);
+      background: var(--surface);
+    }
+
+    .step-footer .primary-button {
+      flex: 1;
+    }
+
+    .queue {
+      flex: none;
+      margin-top: 12px;
+    }
+
+    .queue-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      padding: 12px 14px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--surface);
+    }
+
+    .queue.is-open .queue-header {
+      border-radius: var(--radius) var(--radius) 0 0;
+    }
+
+    .queue-title-wrap {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .queue-title {
+      margin: 0;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .queue-counts {
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .queue-table-wrap {
+      max-height: 150px;
+      overflow: auto;
+      scrollbar-width: thin;
+      border: 1px solid var(--line);
+      border-top: 0;
+      border-radius: 0 0 var(--radius) var(--radius);
+      background: var(--surface);
+    }
+
+    .queue-table-wrap[hidden] {
+      display: none;
+    }
+
+    .queue-table {
+      width: 100%;
+      min-width: 620px;
+      border-collapse: collapse;
+      text-align: left;
+    }
+
+    .queue-table th,
+    .queue-table td {
+      padding: 10px 13px;
+      border-bottom: 1px solid var(--divider);
+      font-size: 11px;
+    }
+
+    .queue-table th {
+      position: sticky;
+      top: 0;
+      color: var(--muted);
+      background: var(--surface);
+      font-weight: 600;
+    }
+
+    .queue-table tr:last-child td {
+      border-bottom: 0;
+    }
+
+    .queue-table td:last-child,
+    .queue-table th:last-child {
+      text-align: right;
+    }
+
+    .queue-table td:last-child button {
+      min-height: 27px;
+      padding: 0 9px;
+      font-size: 11px;
+    }
+
+    .queue-empty {
+      padding: 18px;
+      color: var(--muted);
+      font-size: 12px;
+      text-align: center;
+    }
+
+    .toast {
+      position: fixed;
+      right: 20px;
+      bottom: 20px;
+      z-index: 9999;
+      max-width: min(360px, calc(100vw - 40px));
+      padding: 10px 14px;
+      border-radius: 6px;
+      color: var(--toast-text);
+      background: var(--toast-bg);
+      font-size: 12px;
+      box-shadow: 0 4px 20px color-mix(in srgb, rgb(0, 0, 0) 30%, transparent);
+    }
+
+    .toast[hidden] {
+      display: none;
+    }
+
+    @media (max-width: 840px) {
+      .page-shell {
+        padding-right: 18px;
+        padding-left: 18px;
+      }
+
+      .context-bar {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .workspace {
+        grid-template-columns: minmax(170px, 0.72fr) minmax(0, 1.5fr);
+      }
+
+      .inspector-panel {
+        grid-column: 1 / -1;
+      }
+    }
+
+    @media (max-height: 760px) {
+      .page-description,
+      .eyebrow {
+        display: none;
+      }
+    }
+
+    @media (max-width: 560px) {
+      .page-shell {
+        padding: 17px 12px 20px;
+      }
+
+      .page-header {
+        flex-direction: column;
+        gap: 12px;
+      }
+
+      h1 {
+        font-size: 19px;
+      }
+
+      .context-bar {
+        gap: 8px;
+        padding: 10px 12px;
+      }
+
+      .workspace {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 10px;
+      }
+
+      .inspector-panel {
+        grid-column: auto;
+      }
+
+      .shot-row {
+        grid-template-columns: 40px minmax(0, 1fr) 55px;
+        gap: 7px;
+        padding: 10px 8px;
+      }
+
+      .entity-summary {
+        align-items: flex-start;
+      }
+
+      .queue-header {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 8px;
+      }
+
+      .toast {
+        right: 12px;
+        bottom: 12px;
+      }
+    }
+  </style>
+</head>
+<body class="vscode-light">
+  <main class="page-shell">
+    <header class="page-header">
+      <div>
+        <p class="eyebrow">AIGC VIDEO STUDIO / WORKSPACE</p>
+        <h1>生成工作台</h1>
+        <p class="page-description">按“绑定素材 → 配置参数 → 检查并提交”三步完成生成；左侧选镜头组，中间看内容，右侧处理当前步骤，底部看任务结果。</p>
+      </div>
+      <div class="header-tools">
+        <span class="tag">线框原型 · 示例数据</span>
+        <button class="theme-button" id="theme-toggle" type="button" aria-pressed="false">切换为暗色</button>
+      </div>
+    </header>
+
+    <section class="context-bar" aria-label="当前生成上下文">
+      <div>
+        <label class="field-label" for="project-select">项目</label>
+        <select class="field-select" id="project-select" data-prototype-hint="原型仅包含示例项目">
+          <option>两只小猫讲故事</option>
+          <option>城市夜行记</option>
+        </select>
+      </div>
+      <div>
+        <label class="field-label" for="work-select">作品</label>
+        <select class="field-select" id="work-select" data-prototype-hint="原型仅包含示例作品">
+          <option>两只小猫讲故事（已确认）</option>
+          <option>小猫日记（草稿）</option>
+        </select>
+      </div>
+      <div>
+        <label class="field-label" for="episode-select">分集</label>
+        <select class="field-select" id="episode-select" data-prototype-hint="原型仅提供第 1 集示例数据">
+          <option>第 1 集</option>
+          <option>第 2 集</option>
+          <option>第 3 集</option>
+        </select>
+      </div>
+      <div>
+        <span class="field-label">当前生成配置（在“配置参数”中修改）</span>
+        <div class="field-readonly" id="profile-summary"></div>
+      </div>
+    </section>
+
+    <section class="workspace" aria-label="镜头组与生成流程">
+      <aside class="panel group-panel" aria-labelledby="groups-title">
+        <div class="panel-header">
+          <div>
+            <h2 class="panel-heading" id="groups-title">镜头组</h2>
+            <p class="panel-subtitle">选择一组查看内容与进度</p>
+          </div>
+          <span class="tag" id="group-count"></span>
+        </div>
+        <div class="panel-content">
+          <div class="group-list" id="group-list"></div>
+          <div class="group-total">
+            <span id="shot-total"></span>
+            <span>生成上限 15 秒 / 组</span>
+          </div>
+        </div>
+      </aside>
+
+      <section class="panel detail-panel" aria-labelledby="detail-title">
+        <div class="panel-header">
+          <div>
+            <h2 class="panel-heading">镜头组详情</h2>
+            <p class="panel-subtitle">分镜内容与出场实体集中查看</p>
+          </div>
+          <button type="button" data-toast="原型：此处打开分镜编辑">编辑分镜</button>
+        </div>
+        <div class="panel-content">
+          <div class="detail-header">
+            <div>
+              <h3 class="detail-title" id="detail-title"></h3>
+              <p class="detail-summary" id="detail-summary"></p>
+            </div>
+            <span class="status" id="detail-status"></span>
+          </div>
+          <div class="shot-list" id="shot-list" aria-label="镜头内容预览"></div>
+          <div class="entity-summary">
+            <div>
+              <strong>本组出场实体</strong>
+              <p id="entity-summary-text"></p>
+            </div>
+            <button class="quiet-button" id="entity-go-bind" type="button">去绑定</button>
+          </div>
+        </div>
+      </section>
+
+      <aside class="panel inspector-panel" aria-label="生成流程">
+        <div class="step-tabs" id="step-tabs" role="tablist" aria-label="生成步骤"></div>
+        <div class="panel-content">
+          <p class="step-context" id="step-context"></p>
+          <div class="step-panel" id="panel-bind">
+            <div class="binding-progress">
+              <strong>素材绑定进度</strong>
+              <span class="status" id="bind-status"></span>
+            </div>
+            <div class="progress-track" role="img" id="bind-track" aria-label="素材绑定进度">
+              <div class="progress-value" id="bind-progress"></div>
+            </div>
+            <p class="helper-text">先按名称自动匹配已有资产，剩余项逐个选择。未绑定的实体仍可生成，但只能按文字描述。</p>
+            <div class="panel-actions">
+              <button class="quiet-button" id="auto-match" type="button">按名称自动匹配</button>
+            </div>
+            <h3 class="entity-list-heading" id="entity-heading"></h3>
+            <div id="entity-list"></div>
+            <div class="step-footer">
+              <button class="primary-button" type="button" data-go-step="params">下一步：配置参数 →</button>
+            </div>
+          </div>
+
+          <div class="step-panel" id="panel-params" hidden>
+            <div class="form-grid">
+              <div>
+                <span class="field-label">应用范围</span>
+                <div class="scope-switch" id="scope-switch">
+                  <button type="button" data-scope="episode" aria-pressed="true">本集默认</button>
+                  <button type="button" data-scope="group" aria-pressed="false">仅本组</button>
+                </div>
+              </div>
+              <div>
+                <label class="field-label" for="param-model">视频模型</label>
+                <select class="field-select" id="param-model" data-param="model">
+                  <option>万相 3.0 视频</option>
+                  <option>可灵 2.1 视频</option>
+                </select>
+              </div>
+              <div>
+                <label class="field-label" for="param-ratio">画幅</label>
+                <select class="field-select" id="param-ratio" data-param="ratio">
+                  <option>16:9</option>
+                  <option>9:16</option>
+                  <option>1:1</option>
+                </select>
+              </div>
+              <div>
+                <label class="field-label" for="param-resolution">分辨率</label>
+                <select class="field-select" id="param-resolution" data-param="resolution">
+                  <option>480P</option>
+                  <option>720P</option>
+                  <option>1080P</option>
+                </select>
+              </div>
+              <div>
+                <span class="field-label" id="sound-label">声音（分别开关）</span>
+                <div class="switch-list" id="sound-switches" role="group" aria-labelledby="sound-label"></div>
+              </div>
+            </div>
+            <p class="helper-text" id="scope-note" style="margin-top: 12px;"></p>
+            <div class="step-footer">
+              <button type="button" data-go-step="bind">← 上一步</button>
+              <button class="primary-button" type="button" data-go-step="submit">下一步：检查并提交 →</button>
+            </div>
+          </div>
+
+          <div class="step-panel" id="panel-submit" hidden>
+            <ul class="check-list" id="check-list"></ul>
+            <dl class="summary-box" id="submit-summary"></dl>
+            <div class="step-footer">
+              <button type="button" data-go-step="params">← 上一步</button>
+              <button class="primary-button" id="submit-button" type="button"></button>
+            </div>
+          </div>
+        </div>
+      </aside>
+    </section>
+
+    <section class="queue is-open" id="queue" aria-labelledby="queue-title">
+      <div class="queue-header">
+        <div class="queue-title-wrap">
+          <h2 class="queue-title" id="queue-title">队列与结果</h2>
+          <span class="queue-counts" id="queue-counts"></span>
+        </div>
+        <button id="queue-toggle" type="button" aria-expanded="true" aria-controls="queue-body">收起队列</button>
+      </div>
+      <div class="queue-table-wrap" id="queue-body">
+        <table class="queue-table">
+          <thead>
+            <tr>
+              <th scope="col">镜头组</th>
+              <th scope="col">模型</th>
+              <th scope="col">状态</th>
+              <th scope="col">耗时</th>
+              <th scope="col">尝试</th>
+              <th scope="col">操作</th>
+            </tr>
+          </thead>
+          <tbody id="queue-rows"></tbody>
+        </table>
+        <div class="queue-empty" id="queue-empty" hidden>还没有任务，完成上方三步后提交即可在这里看到进度。</div>
+      </div>
+    </section>
+  </main>
+
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+  <script>
+    (() => {
+      'use strict';
+
+      // ---------- 集中配置 ----------
+      const CONFIG = {
+        generateDelayMs: 2500,
+        toastDurationMs: 2400,
+        visibleShotCount: 3,
+        steps: [
+          { id: 'bind', title: '绑定素材' },
+          { id: 'params', title: '配置参数' },
+          { id: 'submit', title: '检查并提交' }
+        ],
+        soundOptions: [
+          { id: 'dialogue', label: '对白' },
+          { id: 'narration', label: '旁白' },
+          { id: 'effects', label: '音效' },
+          { id: 'music', label: '配乐' }
+        ],
+        scopeNotes: {
+          episode: '修改将应用于本集全部镜头组，未单独设置的组都会沿用。',
+          group: '修改只对当前镜头组生效，其他镜头组不受影响。'
+        }
+      };
+
+      // 示例实体：绑定状态按实体全局共享，在任一镜头组绑定后其他组同步生效
+      const ENTITIES = {
+        tuantuan: { name: '团团', type: '角色' },
+        momo: { name: '墨墨', type: '角色' },
+        apartment: { name: '旧公寓客厅', type: '场景' },
+        light: { name: '门缝昏黄光与人影', type: '特效' },
+        raincoat: { name: '红色雨衣', type: '道具' },
+        footprint: { name: '湿脚印入电梯', type: '特效' },
+        key: { name: '钥匙', type: '道具' }
+      };
+
+      const GROUPS = [
+        {
+          id: 1, title: '走廊灯熄灭', state: 'idle',
+          entities: ['tuantuan', 'momo', 'apartment', 'light', 'raincoat', 'footprint', 'key'],
+          shots: [
+            { type: '中景', scene: '第 1 场 旧公寓客厅', text: '走廊灯骤然熄灭，团团缩在沙发垫间只露出耳朵和发亮的眼睛，墨墨僵直地蹲在窗台上。', seconds: 2.5 },
+            { type: '特写', scene: '第 2 场 同一客厅', text: '紧闭的木门下透出稳定昏黄光线，光中贴地停着一道模糊人影轮廓。', seconds: 1.5 },
+            { type: '特写', scene: '第 2 场 同一客厅', text: '楼道挂钩上的红色雨衣落下一滴水珠，水珠溅在瓷砖上。', seconds: 1.8 },
+            { type: '中景', scene: '第 2 场 同一客厅', text: '电梯门打开，空轿厢地板映出一小滩水光，随后电梯门合上。', seconds: 1.5 },
+            { type: '中景', scene: '第 3 场 旧公寓客厅', text: '墨墨从窗台跃下，落地后一步步走近沙发，影子拉长覆盖团团。', seconds: 2.5 },
+            { type: '近景', scene: '第 3 场 旧公寓客厅', text: '团团和墨墨同时僵住，朝玄关方向凝望。', seconds: 1.8 },
+            { type: '特写', scene: '第 4 场 旧公寓门口', text: '门缝下的昏黄光线亮起；一把金属钥匙缓缓插入锁孔并转动。', seconds: 3.4 }
+          ]
+        },
+        {
+          id: 2, title: '门外的脚步', state: 'idle',
+          entities: ['tuantuan', 'momo', 'apartment'],
+          shots: [
+            { type: '近景', scene: '第 5 场 旧公寓客厅', text: '门外脚步声一步步逼近，团团竖起耳朵。', seconds: 4.0 },
+            { type: '中景', scene: '第 5 场 旧公寓客厅', text: '墨墨悄悄挪到团团身前，挡住门口方向。', seconds: 5.0 },
+            { type: '特写', scene: '第 5 场 旧公寓客厅', text: '门把手缓慢转动，停在半途。', seconds: 5.0 }
+          ]
+        },
+        {
+          id: 3, title: '雨夜归来', state: 'idle',
+          entities: ['apartment'],
+          shots: [
+            { type: '远景', scene: '第 6 场 旧公寓外', text: '雨夜的旧公寓楼亮着一扇窗。', seconds: 4.0 },
+            { type: '中景', scene: '第 6 场 旧公寓客厅', text: '窗外雨声渐弱，客厅恢复安静。', seconds: 4.5 },
+            { type: '近景', scene: '第 6 场 旧公寓客厅', text: '两只小猫挤在沙发上沉沉睡去。', seconds: 4.5 }
+          ]
+        },
+        {
+          id: 4, title: '清晨', state: 'done',
+          entities: ['apartment'],
+          shots: [
+            { type: '中景', scene: '第 7 场 旧公寓客厅', text: '清晨阳光洒进客厅，两只小猫伸着懒腰。', seconds: 6.0 },
+            { type: '近景', scene: '第 7 场 旧公寓客厅', text: '团团舔了舔墨墨的耳朵。', seconds: 6.0 }
+          ]
+        },
+        {
+          id: 5, title: '窗台观察', state: 'idle',
+          entities: ['tuantuan', 'momo', 'apartment'],
+          shots: [
+            { type: '中景', scene: '第 8 场 旧公寓客厅', text: '两只小猫并排蹲在窗台，看楼下的行人。', seconds: 7.0 },
+            { type: '特写', scene: '第 8 场 旧公寓客厅', text: '墨墨的尾巴轻轻摆动。', seconds: 7.0 }
+          ]
+        },
+        {
+          id: 6, title: '结尾', state: 'idle',
+          entities: ['tuantuan', 'momo'],
+          shots: [
+            { type: '远景', scene: '第 9 场 旧公寓外', text: '傍晚的旧公寓亮起灯光，镜头缓缓拉远。', seconds: 9.0 }
+          ]
+        }
+      ];
+
+      const STATE_LABELS = {
+        needBind: { icon: '⚠', text: '需绑定', tone: '' },
+        ready: { icon: '●', text: '可生成', tone: 'accent' },
+        running: { icon: '◐', text: '生成中', tone: 'accent' },
+        done: { icon: '✓', text: '已完成', tone: 'success' }
+      };
+
+      // ---------- 运行时状态 ----------
+      const state = {
+        groupId: 1,
+        step: 'bind',
+        shotsExpanded: false,
+        queueOpen: true,
+        paramsReviewed: false,
+        scope: 'episode',
+        params: { model: '万相 3.0 视频', ratio: '16:9', resolution: '480P' },
+        sounds: { dialogue: true, narration: true, effects: true, music: true },
+        bound: new Set(['apartment']),
+        queue: [{ groupId: 4, status: 'done', attempts: 1, duration: '2 分 17 秒', model: '万相 3.0 视频' }]
+      };
+      const timers = new Map();
+      let toastTimer = 0;
+
+      // ---------- 通用工具 ----------
+      const byId = (id) => document.getElementById(id);
+
+      function h(tag, props = {}, ...children) {
+        const node = document.createElement(tag);
+        Object.entries(props).forEach(([key, value]) => {
+          if (key === 'class') node.className = value;
+          else if (key === 'text') node.textContent = value;
+          else if (key === 'on') Object.entries(value).forEach(([name, handler]) => node.addEventListener(name, handler));
+          else node.setAttribute(key, value);
+        });
+        children.forEach((child) => node.append(child));
+        return node;
+      }
+
+      function showToast(message) {
+        const toast = byId('toast');
+        toast.textContent = message;
+        toast.hidden = false;
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(() => { toast.hidden = true; }, CONFIG.toastDurationMs);
+      }
+
+      const getGroup = (id = state.groupId) => GROUPS.find((group) => group.id === id);
+      const describeSound = () => {
+        const enabled = CONFIG.soundOptions.filter((option) => state.sounds[option.id]).map((option) => option.label);
+        return enabled.length > 0 ? enabled.join(' + ') : '静音';
+      };
+      const getUnbound = (group) => group.entities.filter((id) => !state.bound.has(id));
+      const sumSeconds = (group) => Number(group.shots.reduce((total, shot) => total + shot.seconds, 0).toFixed(1));
+
+      // 组状态：已提交的结果优先，其次看是否还有未绑定实体
+      function getGroupStatus(group) {
+        if (group.state === 'running') return STATE_LABELS.running;
+        if (group.state === 'done') return STATE_LABELS.done;
+        return getUnbound(group).length > 0 ? STATE_LABELS.needBind : STATE_LABELS.ready;
+      }
+
+      function statusNode(label, extraClass = '') {
+        const tone = label.tone ? ` ${label.tone}` : '';
+        return h('span', { class: `status${tone} ${extraClass}`.trim(), text: `${label.icon} ${label.text}` });
+      }
+
+      function setStep(stepId) {
+        state.step = stepId;
+        if (stepId === 'submit' || stepId === 'params') state.paramsReviewed = state.paramsReviewed || stepId === 'submit';
+        render();
+      }
+
+      // ---------- 渲染 ----------
+      function renderContext() {
+        const { model, ratio, resolution } = state.params;
+        byId('profile-summary').textContent = `${model} · ${ratio} · ${resolution} · ${describeSound()}`;
+      }
+
+      // 页签副文字要短，右侧面板较窄
+      function describeStepNote(stepId) {
+        const group = getGroup();
+        const unbound = getUnbound(group).length;
+        if (stepId === 'bind') {
+          return unbound === 0 ? '全部已绑定' : `${unbound} 项未绑定`;
+        }
+        if (stepId === 'params') return `${state.params.ratio} · ${state.params.resolution}`;
+        if (group.state === 'running') return '生成中';
+        if (group.state === 'done') return '已完成';
+        return `${group.shots.length} 个镜头`;
+      }
+
+      function isStepDone(stepId) {
+        const group = getGroup();
+        if (stepId === 'bind') return getUnbound(group).length === 0;
+        if (stepId === 'params') return state.paramsReviewed;
+        return group.state === 'done';
+      }
+
+      function renderStepTabs() {
+        const tabs = byId('step-tabs');
+        tabs.replaceChildren();
+        CONFIG.steps.forEach((step, index) => {
+          const isCurrent = step.id === state.step;
+          const done = isStepDone(step.id);
+          const classes = ['step-tab', isCurrent ? 'is-current' : '', done ? 'is-done' : ''].filter(Boolean).join(' ');
+          tabs.append(h('button', {
+            class: classes, type: 'button', role: 'tab', 'aria-selected': String(isCurrent),
+            on: { click: () => setStep(step.id) }
+          },
+            h('span', { class: 'step-tab-title', text: `${done ? '✓' : index + 1} ${step.title}` }),
+            h('span', { class: 'step-tab-note', text: describeStepNote(step.id) })));
+        });
+      }
+
+      function renderGroupList() {
+        const list = byId('group-list');
+        list.replaceChildren();
+        GROUPS.forEach((group) => {
+          const selected = group.id === state.groupId;
+          const button = h('button', {
+            class: `group-item${selected ? ' is-selected' : ''}`,
+            type: 'button',
+            on: { click: () => { state.groupId = group.id; state.shotsExpanded = false; render(); } }
+          },
+            h('span', { class: 'group-name', text: `第 ${group.id} 组` }),
+            statusNode(getGroupStatus(group)),
+            h('span', { class: 'group-meta', text: `${group.shots.length} 个镜头 · ${sumSeconds(group)} 秒` }));
+          if (selected) button.setAttribute('aria-current', 'true');
+          list.append(button);
+        });
+        byId('group-count').textContent = `${GROUPS.length} 组`;
+        const shotTotal = GROUPS.reduce((total, group) => total + group.shots.length, 0);
+        byId('shot-total').textContent = `共 ${shotTotal} 个镜头`;
+      }
+
+      function renderDetail() {
+        const group = getGroup();
+        const unbound = getUnbound(group);
+        byId('detail-title').textContent = `第 ${group.id} 组 · ${group.title}`;
+        byId('detail-summary').textContent = `${group.shots.length} 个镜头 · 总时长 ${sumSeconds(group)} 秒 · ${state.params.ratio}`;
+        byId('detail-status').replaceWith(Object.assign(statusNode(getGroupStatus(group)), { id: 'detail-status' }));
+
+        const list = byId('shot-list');
+        list.replaceChildren();
+        const visible = state.shotsExpanded ? group.shots : group.shots.slice(0, CONFIG.visibleShotCount);
+        visible.forEach((shot, index) => {
+          list.append(h('div', { class: 'shot-row' },
+            h('span', { class: 'shot-id', text: `镜头 ${index + 1}` }),
+            h('p', { class: 'shot-description' }, `${shot.type} · ${shot.text}`, h('span', { class: 'shot-caption', text: shot.scene })),
+            h('span', { class: 'shot-duration', text: `${shot.seconds} 秒` })));
+        });
+        const hiddenCount = group.shots.length - CONFIG.visibleShotCount;
+        if (hiddenCount > 0) {
+          list.append(h('button', {
+            class: 'show-more', type: 'button', 'aria-expanded': String(state.shotsExpanded),
+            text: state.shotsExpanded ? '收起镜头' : `其余 ${hiddenCount} 个镜头 · 展开查看`,
+            on: { click: () => { state.shotsExpanded = !state.shotsExpanded; renderDetail(); } }
+          }));
+        }
+
+        const typeCounts = {};
+        group.entities.forEach((id) => { typeCounts[ENTITIES[id].type] = (typeCounts[ENTITIES[id].type] || 0) + 1; });
+        const typeText = Object.entries(typeCounts).map(([type, count]) => `${type} ${count}`).join(' · ');
+        byId('entity-summary-text').textContent = unbound.length > 0
+          ? `${typeText}，其中 ${unbound.length} 项未绑定`
+          : `${typeText}，已全部绑定`;
+        const goBind = byId('entity-go-bind');
+        goBind.hidden = unbound.length === 0;
+        goBind.onclick = () => setStep('bind');
+      }
+
+      function renderBindPanel() {
+        const group = getGroup();
+        const total = group.entities.length;
+        const unbound = getUnbound(group);
+        const boundCount = total - unbound.length;
+        const status = byId('bind-status');
+        status.textContent = unbound.length === 0 ? '✓ 已全部绑定' : `${boundCount} / ${total} 已绑定`;
+        status.className = `status${unbound.length === 0 ? ' success' : ''}`;
+        const percent = Math.round((boundCount / total) * 100);
+        byId('bind-progress').style.width = `${percent}%`;
+        byId('bind-track').setAttribute('aria-label', `素材绑定进度 ${percent}%`);
+        byId('auto-match').disabled = unbound.length === 0;
+        byId('entity-heading').textContent = `本组实体（${total}）`;
+
+        const list = byId('entity-list');
+        list.replaceChildren();
+        // 未绑定项排在前面，便于优先处理
+        [...group.entities].sort((a, b) => Number(state.bound.has(a)) - Number(state.bound.has(b))).forEach((id) => {
+          const entity = ENTITIES[id];
+          const isBound = state.bound.has(id);
+          const action = isBound
+            ? h('button', { class: 'text-button', type: 'button', text: '解除', on: { click: () => { state.bound.delete(id); render(); } } })
+            : h('button', { class: 'quiet-button', type: 'button', text: '选择资产', on: { click: () => { state.bound.add(id); showToast(`原型：已为“${entity.name}”绑定示例资产`); render(); } } });
+          list.append(h('div', { class: 'entity-row' },
+            h('span', {}, entity.name, h('span', { class: 'entity-type', text: entity.type })),
+            h('span', { class: `entity-state${isBound ? ' is-bound' : ''}` }, h('span', { text: isBound ? '✓ 已绑定' : '⚠ 未绑定' }), action)));
+        });
+      }
+
+      function renderParamsPanel() {
+        Object.entries(state.params).forEach(([key, value]) => {
+          byId(`param-${key}`).value = value;
+        });
+        // 开关只更新状态属性，不重建节点，避免点击后焦点丢失
+        document.querySelectorAll('#sound-switches .switch-row').forEach((row) => {
+          row.setAttribute('aria-checked', String(state.sounds[row.dataset.sound]));
+        });
+        document.querySelectorAll('#scope-switch button').forEach((button) => {
+          button.setAttribute('aria-pressed', String(button.dataset.scope === state.scope));
+        });
+        byId('scope-note').textContent = CONFIG.scopeNotes[state.scope];
+      }
+
+      function buildCheckItem(level, title, note) {
+        const icons = { ok: '✓', warning: '⚠', blocked: '✕' };
+        return h('li', { class: `check-item is-${level}` },
+          h('span', { class: 'check-icon', text: icons[level] }),
+          h('span', {}, title, h('span', { class: 'check-note', text: note })));
+      }
+
+      function renderSubmitPanel() {
+        const group = getGroup();
+        const unbound = getUnbound(group);
+        const checks = byId('check-list');
+        checks.replaceChildren();
+
+        if (group.state === 'running') {
+          checks.append(buildCheckItem('blocked', '本组正在生成', '请等待完成，或在队列中取消后再提交。'));
+        } else {
+          checks.append(buildCheckItem('ok', '镜头内容已确认', `${group.shots.length} 个镜头，总时长 ${sumSeconds(group)} 秒，未超过单组上限。`));
+        }
+        checks.append(unbound.length === 0
+          ? buildCheckItem('ok', '素材已全部绑定', '生成时会使用已绑定的参考图。')
+          : buildCheckItem('warning', `${unbound.length} 项实体未绑定`, '仍可提交，未绑定的实体只能按文字描述生成。'));
+        checks.append(buildCheckItem('ok', '生成参数已就绪', `${state.params.model} · ${state.params.ratio} · ${state.params.resolution}`));
+
+        const summary = byId('submit-summary');
+        summary.replaceChildren(
+          h('dt', { text: '镜头组' }), h('dd', { text: `第 ${group.id} 组 · ${group.title}` }),
+          h('dt', { text: '模型' }), h('dd', { text: state.params.model }),
+          h('dt', { text: '规格' }), h('dd', { text: `${state.params.ratio} · ${state.params.resolution}` }),
+          h('dt', { text: '声音' }), h('dd', { text: describeSound() }));
+
+        const button = byId('submit-button');
+        button.disabled = group.state === 'running';
+        button.textContent = group.state === 'running' ? '生成中…' : group.state === 'done' ? '重新生成本组' : '提交生成本组';
+      }
+
+      function renderInspector() {
+        const group = getGroup();
+        const index = CONFIG.steps.findIndex((step) => step.id === state.step);
+        byId('step-context').textContent = `第 ${group.id} 组 · ${group.title}　｜　第 ${index + 1} 步 / ${CONFIG.steps.length}：${CONFIG.steps[index].title}`;
+        CONFIG.steps.forEach((step) => { byId(`panel-${step.id}`).hidden = step.id !== state.step; });
+        renderBindPanel();
+        renderParamsPanel();
+        renderSubmitPanel();
+      }
+
+      function renderQueue() {
+        const rows = byId('queue-rows');
+        rows.replaceChildren();
+        const statusMap = {
+          running: { icon: '◐', text: '生成中', tone: 'accent' },
+          done: { icon: '✓', text: '已完成', tone: 'success' },
+          canceled: { icon: '○', text: '已取消', tone: 'neutral' }
+        };
+        // 最新提交的任务排在最前
+        [...state.queue].reverse().forEach((job) => {
+          const action = job.status === 'running'
+            ? h('button', { type: 'button', text: '取消', on: { click: () => cancelJob(job.groupId) } })
+            : job.status === 'done'
+              ? h('button', { class: 'quiet-button', type: 'button', text: '查看结果', on: { click: () => showToast(`原型：播放第 ${job.groupId} 组结果`) } })
+              : h('button', { class: 'quiet-button', type: 'button', text: '重新提交', on: { click: () => { state.groupId = job.groupId; setStep('submit'); } } });
+          rows.append(h('tr', {},
+            h('td', { text: `第 ${job.groupId} 组 · ${getGroup(job.groupId).shots.length} 个镜头` }),
+            h('td', { text: job.model }),
+            h('td', {}, statusNode(statusMap[job.status])),
+            h('td', { text: job.duration }),
+            h('td', { text: String(job.attempts) }),
+            h('td', {}, action)));
+        });
+        byId('queue-empty').hidden = state.queue.length > 0;
+        const count = (status) => state.queue.filter((job) => job.status === status).length;
+        byId('queue-counts').textContent = `生成中 ${count('running')} · 已取消 ${count('canceled')} · 已完成 ${count('done')}`;
+
+        byId('queue').classList.toggle('is-open', state.queueOpen);
+        byId('queue-body').hidden = !state.queueOpen;
+        const toggle = byId('queue-toggle');
+        toggle.textContent = state.queueOpen ? '收起队列' : '展开队列';
+        toggle.setAttribute('aria-expanded', String(state.queueOpen));
+      }
+
+      function render() {
+        renderContext();
+        renderStepTabs();
+        renderGroupList();
+        renderDetail();
+        renderInspector();
+        renderQueue();
+      }
+
+      // ---------- 业务操作（仅模拟） ----------
+      function submitGroup() {
+        const group = getGroup();
+        if (group.state === 'running') return;
+        const previous = state.queue.find((job) => job.groupId === group.id);
+        state.queue = state.queue.filter((job) => job.groupId !== group.id);
+        state.queue.push({ groupId: group.id, status: 'running', attempts: (previous ? previous.attempts : 0) + 1, duration: '生成中…', model: state.params.model });
+        group.state = 'running';
+        state.queueOpen = true;
+        showToast(`已提交第 ${group.id} 组，示例生成约 ${CONFIG.generateDelayMs / 1000} 秒`);
+        timers.set(group.id, setTimeout(() => finishJob(group.id), CONFIG.generateDelayMs));
+        render();
+      }
+
+      function finishJob(groupId) {
+        timers.delete(groupId);
+        const job = state.queue.find((item) => item.groupId === groupId);
+        if (!job) return;
+        job.status = 'done';
+        job.duration = '2 分 05 秒';
+        getGroup(groupId).state = 'done';
+        showToast(`第 ${groupId} 组生成完成`);
+        render();
+      }
+
+      function cancelJob(groupId) {
+        clearTimeout(timers.get(groupId));
+        timers.delete(groupId);
+        const job = state.queue.find((item) => item.groupId === groupId);
+        if (job) {
+          job.status = 'canceled';
+          job.duration = '—';
+        }
+        getGroup(groupId).state = 'idle';
+        showToast(`已取消第 ${groupId} 组`);
+        render();
+      }
+
+      // ---------- 事件绑定 ----------
+      byId('auto-match').addEventListener('click', () => {
+        const unbound = getUnbound(getGroup());
+        unbound.forEach((id) => state.bound.add(id));
+        showToast(`原型：已按名称自动匹配 ${unbound.length} 项`);
+        render();
+      });
+
+      document.querySelectorAll('[data-go-step]').forEach((button) => {
+        button.addEventListener('click', () => setStep(button.dataset.goStep));
+      });
+
+      CONFIG.soundOptions.forEach((option) => {
+        byId('sound-switches').append(h('button', {
+          class: 'switch-row', type: 'button', role: 'switch', 'data-sound': option.id, 'aria-checked': 'true',
+          on: {
+            click: () => {
+              state.sounds[option.id] = !state.sounds[option.id];
+              state.paramsReviewed = true;
+              render();
+            }
+          }
+        }, h('span', { text: option.label }), h('span', { class: 'switch-track' })));
+      });
+
+      document.querySelectorAll('[data-param]').forEach((select) => {
+        select.addEventListener('change', () => {
+          state.params[select.dataset.param] = select.value;
+          state.paramsReviewed = true;
+          render();
+        });
+      });
+
+      document.querySelectorAll('#scope-switch button').forEach((button) => {
+        button.addEventListener('click', () => { state.scope = button.dataset.scope; renderParamsPanel(); });
+      });
+
+      document.querySelectorAll('[data-prototype-hint]').forEach((select) => {
+        select.addEventListener('change', () => {
+          showToast(select.dataset.prototypeHint);
+          select.selectedIndex = 0;
+        });
+      });
+
+      document.querySelectorAll('[data-toast]').forEach((button) => {
+        button.addEventListener('click', () => showToast(button.dataset.toast));
+      });
+
+      byId('submit-button').addEventListener('click', submitGroup);
+
+      byId('queue-toggle').addEventListener('click', () => {
+        state.queueOpen = !state.queueOpen;
+        renderQueue();
+      });
+
+      byId('theme-toggle').addEventListener('click', (event) => {
+        const isDark = document.body.classList.toggle('vscode-dark');
+        document.body.classList.toggle('vscode-light', !isDark);
+        event.currentTarget.textContent = isDark ? '切换为亮色' : '切换为暗色';
+        event.currentTarget.setAttribute('aria-pressed', String(isDark));
+      });
+
+      render();
+    })();
+  </script>
+</body>
+</html>
