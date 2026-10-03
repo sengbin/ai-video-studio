@@ -14,6 +14,7 @@ import { test } from 'node:test';
 import { DatabaseSync } from 'node:sqlite';
 import { BACKUP_REQUIRED_TABLES, INTEGRITY_OK } from '../../domain/rules/backup-rules';
 import { openDatabase } from './database-connection';
+import { Migration } from './migration';
 import { applyPendingRestore } from './database-restore';
 import { readSchemaVersion } from './migration-runner';
 import { MIGRATIONS } from './migrations';
@@ -21,6 +22,8 @@ import { LocalAssetFileStore } from '../storage/local-asset-file-store';
 import { SqliteBackupStorage } from './sqlite-backup-storage';
 import { createBackupFixture, insertProject, listProjectNames, seedAssetFile } from './testing/backup-fixture';
 
+/** 比当前程序多一个版本的迁移，用来模拟备份来自旧版本、恢复后需要升级。 */
+const NEWER_MIGRATION: Migration = { version: MIGRATIONS.length + 1, name: 'newer', sql: 'CREATE TABLE newer_marker (id INTEGER PRIMARY KEY);' };
 const RESTORE_TIME = new Date(2026, 9, 3, 6, 5, 2);
 const AUTO_BACKUP_FILE_NAME = 'before-restore-20261003-060502.sqlite';
 
@@ -165,18 +168,18 @@ test('应用恢复：低版本备份在重新打开数据库时由迁移执行�
   const fixture = createBackupFixture();
   try {
     const oldBackup = join(fixture.directory, 'old.sqlite');
-    const old = openDatabase(oldBackup, MIGRATIONS.slice(0, 3));
+    const old = openDatabase(oldBackup);
     insertProject(old, '旧版本项目');
     old.close();
-    assert.equal(fixture.storage.inspectFile(oldBackup).schemaVersion, 3);
+    assert.equal(fixture.storage.inspectFile(oldBackup).schemaVersion, MIGRATIONS.length);
 
     fixture.storage.stageRestore(oldBackup);
     fixture.database.close();
     applyPendingRestore(fixture.paths, RESTORE_TIME);
 
-    const reopened = openDatabase(fixture.paths.databasePath);
+    const reopened = openDatabase(fixture.paths.databasePath, [...MIGRATIONS, NEWER_MIGRATION]);
     try {
-      assert.equal(readSchemaVersion(reopened), MIGRATIONS.length);
+      assert.equal(readSchemaVersion(reopened), NEWER_MIGRATION.version);
       assert.deepEqual(listProjectNames(reopened), ['旧版本项目']);
     } finally {
       reopened.close();
@@ -291,7 +294,7 @@ test('备份资产文件：备份位置在资产文件目录之内时拒绝，�
   }
 });
 
-test('检查备份的资产文件：备份文件夹或当前资产目录里能找到就算可用，旧结构的备份没有资产文件', () => {
+test('检查备份的资产文件：备份文件夹或当前资产目录里能找到就算可用，资产文件表没有路径列的备份视为没有资产文件', () => {
   const fixture = createBackupFixture();
   try {
     const first = seedAssetFile(fixture, '灯塔', Buffer.from('lighthouse'));
@@ -307,7 +310,8 @@ test('检查备份的资产文件：备份文件夹或当前资产目录里能�
     rmSync(join(fixture.assetDirectory, ...first.split('/')));
     assert.equal(fixture.storage.inspectAssetFiles(target)?.availableCount, 1);
 
-    const legacy = openDatabase(join(fixture.directory, 'legacy.sqlite'), MIGRATIONS.slice(0, 19));
+    const legacy = new DatabaseSync(join(fixture.directory, 'legacy.sqlite'));
+    legacy.exec('CREATE TABLE asset_files (id INTEGER PRIMARY KEY, asset_id INTEGER NOT NULL)');
     legacy.close();
     assert.equal(fixture.storage.inspectAssetFiles(join(fixture.directory, 'legacy.sqlite')), undefined);
   } finally {

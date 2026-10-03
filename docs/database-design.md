@@ -15,7 +15,7 @@
 | 布尔 | 整数 0 或 1，字段名用 `is_` 开头 |
 | 枚举 | 文本，用 CHECK 约束限定取值 |
 | JSON | 文本，用 `json_valid()` 校验；只存无需查询和关联的内容 |
-| 二进制 | 只存作品的灵感图片与文本素材（`work_sources`）和视频结果的尾帧（`result_frames`）；资产的图片、音频（上传文件、生成版本的结果文件）和视频结果存磁盘文件，库中只存相对路径（迁移 020） |
+| 二进制 | 只存作品的灵感图片与文本素材（`work_sources`）和视频结果的尾帧（`result_frames`）；资产的图片、音频（上传文件、生成版本的结果文件）和视频结果存磁盘文件，库中只存相对路径 |
 | 密钥 | 不入库，存 VS Code `SecretStorage` |
 | 空值 | 参数类字段为空表示“沿用上一级”，不表示 0 或空串；可选的外键为空（`NULL`）表示“没有关联”（如资产不分类、镜头未分组），不用 0 表示“无”，0 违反外键约束 |
 
@@ -37,21 +37,21 @@
 | | `shot_entities` | 镜头与出场实体的关系 |
 | | `shot_sounds` | 镜头的声音条目：对白、旁白、音效、配乐 |
 | 资产 | `assets` | 全局资产，不属于项目，所有项目共用 |
-| | `asset_categories` | 资产分类：属于某个资产类型，同类型内名称唯一（迁移 013） |
+| | `asset_categories` | 资产分类：属于某个资产类型，同类型内名称唯一 |
 | | `asset_files` | 资产使用的图片、音频文件记录（上传与生成两种来源，内容在磁盘文件里） |
-| | `asset_versions` | 资产的生成版本：每次提交给图像、音频模型产生一个，同时记录任务状态（迁移 009） |
-| | `asset_version_files` | 版本的生成结果文件记录：图片或音频，内容在磁盘文件里（迁移 009） |
+| | `asset_versions` | 资产的生成版本：每次提交给图像、音频模型产生一个，同时记录任务状态 |
+| | `asset_version_files` | 版本的生成结果文件记录：图片或音频，内容在磁盘文件里 |
 | | `entity_bindings` | 集内“脚本实体与资产”的绑定 |
 | 模型与参数 | `providers` | 模型服务商 |
 | | `models` | 模型 |
 | | `model_capabilities` | 模型能力描述 |
 | | `generation_profiles` | 三级生成参数（作品、集、镜头组） |
-| | `work_text_models` | 作品单独选择的文本模型键（迁移 018）；没有记录表示沿用全局默认，随作品删除而清除 |
+| | `work_text_models` | 作品单独选择的文本模型键；没有记录表示沿用全局默认，随作品删除而清除 |
 | 生成 | `video_jobs` | 镜头组生成任务 |
 | | `video_results` | 生成结果视频 |
 | | `result_frames` | 结果视频的尾帧图片 |
 
-共 27 张表（迁移 009 已创建 `asset_versions`、`asset_version_files`，迁移 013 创建 `asset_categories`，迁移 018 创建 `work_text_models`）。
+共 27 张表。
 
 ## 3. 关系图
 
@@ -271,8 +271,7 @@ erDiagram
 | `transition` | 文本 | 是 | 空串 | 转场 |
 | `continuity_note` | 文本 | 是 | 空串 | 连续性要求 |
 | `first_frame_mode` | 文本 | 是 | `none` | `none`、`prev_tail`、`asset` |
-| `first_frame_asset_file_id` | 整数 | 否 | | 已弃用，从未写入，改用下面的 `first_frame_asset_id`（资产文件在资产编辑、采用生成版本时会整体删除重写，文件标识不稳定；SQLite 不能删除带外键的列，所以保留不用） |
-| `first_frame_asset_id` | 整数 | 否 | | `asset` 模式下指定的资产，外键 `assets.id`，删除资产时置空（迁移 015 新增）；提交时取该资产的第一张参考图作首帧 |
+| `first_frame_asset_id` | 整数 | 否 | | `asset` 模式下指定的资产，外键 `assets.id`，删除资产时置空；提交时取该资产的第一张参考图作首帧（资产文件在资产编辑、采用生成版本时会整体删除重写，文件标识不稳定，所以按资产标识引用） |
 | `group_id` | 整数 | 否 | | 所属镜头组，外键 `shot_groups.id`，组被删除时置空；空表示尚未分组（旧数据），工作台读取这一集时自动补全 |
 | `prompt_zh` | 文本 | 是 | 空串 | 中文视频提示词 |
 | `prompt_en` | 文本 | 是 | 空串 | 英文视频提示词 |
@@ -342,7 +341,7 @@ erDiagram
 
 #### `assets` 资产
 
-资产不属于项目（迁移 010 去掉了 `project_id`），所有项目共用，可在多个作品、多集中复用，相同的角色、场景不必在每个项目里重复创建和生成。
+资产不属于项目，所有项目共用，可在多个作品、多集中复用，相同的角色、场景不必在每个项目里重复创建和生成。
 
 | 字段 | 类型 | 必填 | 默认 | 说明 |
 |---|---|---|---|---|
@@ -350,7 +349,7 @@ erDiagram
 | `kind` | 文本 | 是 | | `character`、`scene`、`prop`、`effect`、`audio` |
 | `name` | 文本 | 是 | | 资产名称 |
 | `source_entity_id` | 整数 | 否 | | 由哪个脚本实体创建，外键 `script_entities.id`，删除时置空 |
-| `category_id` | 整数 | 否 | | 所属分类，外键 `asset_categories.id`，分类被删除时置空；空表示不分类（迁移 013 新增，已有资产全部不分类） |
+| `category_id` | 整数 | 否 | | 所属分类，外键 `asset_categories.id`，分类被删除时置空；空表示不分类 |
 | `attributes_json` | 文本（JSON） | 是 | `{}` | 按类型区分的描述字段，见 4.5 |
 | `composition` | 文本 | 是 | 空串 | 视角与构图 |
 | `style` | 文本 | 否 | | 画面风格；为空表示不指定风格 |
@@ -359,13 +358,13 @@ erDiagram
 | `extra_requirements` | 文本 | 是 | 空串 | 补充要求 |
 | `prompt_zh` | 文本 | 是 | 空串 | 中文图像生成提示词 |
 | `prompt_en` | 文本 | 是 | 空串 | 英文图像生成提示词 |
-| `content_revision` | 整数 | 是 | 1 | 表单内容修订号，见 4.8（迁移 009 新增） |
-| `prompt_revision` | 整数 | 是 | 0 | 提示词修订号，0 表示还没有提示词（迁移 009 新增） |
-| `prompt_content_revision` | 整数 | 是 | 0 | 当前提示词依据的 `content_revision`（迁移 009 新增） |
-| `prompt_status` | 文本 | 是 | `none` | 提示词后台生成的状态：`none`、`running`、`succeeded`、`failed`、`canceled`（迁移 009 新增） |
-| `prompt_error` | 文本 | 否 | | 提示词生成失败或被中断的原因（迁移 009 新增） |
-| `adopted_version_id` | 整数 | 否 | | 当前采用的生成版本，外键 `asset_versions.id`，删除时置空；与当前使用的文件来源无关，改用上传不会清除（迁移 009 新增） |
-| `file_source` | 文本 | 是 | `generated` | 当前使用的文件来源：`upload` 上传、`generated` 生成（采用的版本）；绑定与视频生成读取的是这一来源的文件；使用上传时没有提示词与生成入口（迁移 020 新增，已有资产默认 `generated`） |
+| `content_revision` | 整数 | 是 | 1 | 表单内容修订号，见 4.8 |
+| `prompt_revision` | 整数 | 是 | 0 | 提示词修订号，0 表示还没有提示词 |
+| `prompt_content_revision` | 整数 | 是 | 0 | 当前提示词依据的 `content_revision` |
+| `prompt_status` | 文本 | 是 | `none` | 提示词后台生成的状态：`none`、`running`、`succeeded`、`failed`、`canceled` |
+| `prompt_error` | 文本 | 否 | | 提示词生成失败或被中断的原因 |
+| `adopted_version_id` | 整数 | 否 | | 当前采用的生成版本，外键 `asset_versions.id`，删除时置空；与当前使用的文件来源无关，改用上传不会清除 |
+| `file_source` | 文本 | 是 | `generated` | 当前使用的文件来源：`upload` 上传、`generated` 生成（采用的版本）；绑定与视频生成读取的是这一来源的文件；使用上传时没有提示词与生成入口 |
 | `created_at` | 文本 | 是 | | |
 | `updated_at` | 文本 | 是 | | |
 
@@ -394,14 +393,14 @@ erDiagram
 | `id` | 整数 | 是 | 自增 | |
 | `asset_id` | 整数 | 是 | | 外键 `assets.id`，级联删除 |
 | `role` | 文本 | 是 | `reference` | `reference` 图片或音频文件、`thumbnail` 缩略图；音频资产只用 `reference` |
-| `source` | 文本 | 是 | `upload` | 文件来源：`upload` 用户上传、`generated` 采用的生成版本；资产读取的是与 `assets.file_source` 一致的那一组（迁移 020 新增） |
+| `source` | 文本 | 是 | `upload` | 文件来源：`upload` 用户上传、`generated` 采用的生成版本；资产读取的是与 `assets.file_source` 一致的那一组 |
 | `file_name` | 文本 | 是 | | |
 | `mime` | 文本 | 是 | | 图片仅允许 `image/png`、`image/jpeg`、`image/webp`；音频仅允许 `audio/mpeg`、`audio/wav`、`audio/mp4` |
 | `width` | 整数 | 否 | | 图片像素宽，音频为空 |
 | `height` | 整数 | 否 | | 图片像素高，音频为空 |
 | `duration_seconds` | 实数 | 否 | | 音频时长，图片为空 |
 | `size_bytes` | 整数 | 是 | | |
-| `file_path` | 文本 | 是 | | 内容所在磁盘文件的相对路径（相对扩展全局存储目录下的 `asset-files`），如 `ab/ab12….png`；由内容的 SHA-256 决定，相同内容只存一份，采用版本时记录与版本文件共用同一个磁盘文件（迁移 020 替换原 `content` 二进制列） |
+| `file_path` | 文本 | 是 | | 内容所在磁盘文件的相对路径（相对扩展全局存储目录下的 `asset-files`），如 `ab/ab12….png`；由内容的 SHA-256 决定，相同内容只存一份，采用版本时记录与版本文件共用同一个磁盘文件 |
 | `sort_order` | 整数 | 是 | 0 | 同一资产内的顺序 |
 | `created_at` | 文本 | 是 | | |
 
@@ -474,7 +473,7 @@ erDiagram
 | `code` | 文本 | 是 | | 服务商侧的模型标识 |
 | `display_name` | 文本 | 是 | | |
 | `is_enabled` | 整数 | 是 | 1 | 是否可选 |
-| `kind` | 文本 | 是 | `video` | 模型类型：`text` 文本、`image` 图像、`audio` 音频、`video` 视频；文本模型默认不启用（迁移 017 增加 `text` 取值）；同一服务商可以有多种类型的模型 |
+| `kind` | 文本 | 是 | `video` | 模型类型：`text` 文本、`image` 图像、`audio` 音频、`video` 视频；文本模型默认不启用；同一服务商可以有多种类型的模型 |
 | `created_at` | 文本 | 是 | | |
 
 约束：`(provider_id, code)` 唯一（同一服务商内模型代码不重复，不区分类型）。被生成任务或参数引用的模型只能停用，不能删除（外键限制删除）。
@@ -540,7 +539,7 @@ erDiagram
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `id` | 整数 | 是 | |
-| `scope` | 文本 | 是 | `work`、`episode`、`group`（迁移 011 起；视频按镜头组生成，原来的镜头级 `shot` 从未写入，已去掉） |
+| `scope` | 文本 | 是 | `work`、`episode`、`group`（视频按镜头组生成，所以没有镜头级） |
 | `work_id` | 整数 | 否 | `scope = work` 时必填，外键 `works.id`，级联删除 |
 | `episode_id` | 整数 | 否 | `scope = episode` 时必填，外键 `episodes.id`，级联删除 |
 | `group_id` | 整数 | 否 | `scope = group` 时必填，外键 `shot_groups.id`，级联删除（重新分组丢弃镜头组时，它的覆盖随之清除） |
@@ -549,12 +548,12 @@ erDiagram
 | `resolution` | 文本 | 否 | 分辨率 |
 | `min_shot_seconds` | 实数 | 否 | 单镜头最短时长，仅作品级使用 |
 | `max_shot_seconds` | 实数 | 否 | 单镜头最长时长，仅作品级使用 |
-| `audio_mode` | 文本 | 否 | `none` 无声、`native` 模型原生生成（CHECK，迁移 014 收窄为这两个值） |
+| `audio_mode` | 文本 | 否 | `none` 无声、`native` 模型原生生成（CHECK） |
 | `audio_elements_json` | 文本（JSON） | 否 | 启用的声音内容，数组，元素为 `dialogue`、`narration`、`sfx`、`music`，按这个顺序去重保存、至少一项；仅 `audio_mode` 为 `native` 时有意义；为空表示模型支持的全部（已实现，工作台参数页签读写） |
 | `seed` | 整数 | 否 | 随机种子，0 至 2147483647；为空表示随机，不传给模型；仅模型能力声明支持种子时可用（已实现，工作台参数页签读写） |
-| `duration_seconds` | 实数 | 否 | 本组生成时长（秒），迁移 012 新增，大于 0，**仅 `scope = group` 使用**（作品、集不保存）：整组视频的时长；为空表示按组内镜头总时长向上对齐到模型支持的取值 |
-| `negative_list` | 文本 | 否 | 负向清单（迁移 016 新增）：不希望出现的内容，如“不要字幕，不要水印”，编译时写在提示词末尾，不超过 300 字；为空表示沿用上一级，**空串表示明确不要负向清单**；合并后仍为空时用默认清单“不要字幕，不要水印” |
-| `prompt_extend` | 整数 | 否 | 是否让平台改写提示词（迁移 016 新增）：0 关闭、1 开启（CHECK）；为空表示沿用上一级，最终仍为空时不传，由平台用默认值（开启）；仅模型能力声明支持时可用 |
+| `duration_seconds` | 实数 | 否 | 本组生成时长（秒），大于 0，**仅 `scope = group` 使用**（作品、集不保存）：整组视频的时长；为空表示按组内镜头总时长向上对齐到模型支持的取值 |
+| `negative_list` | 文本 | 否 | 负向清单：不希望出现的内容，如“不要字幕，不要水印”，编译时写在提示词末尾，不超过 300 字；为空表示沿用上一级，**空串表示明确不要负向清单**；合并后仍为空时用默认清单“不要字幕，不要水印” |
+| `prompt_extend` | 整数 | 否 | 是否让平台改写提示词：0 关闭、1 开启（CHECK）；为空表示沿用上一级，最终仍为空时不传，由平台用默认值（开启）；仅模型能力声明支持时可用 |
 | `extra_params_json` | 文本（JSON） | 是 | 模型专有参数，默认 `{}`（目前未写入；提示词改写用上面的专用列） |
 | `updated_at` | 文本 | 是 | |
 
@@ -568,7 +567,7 @@ erDiagram
 
 #### `work_text_models` 作品文本模型
 
-保存作品单独选择的文本模型，迁移 018 新增。没有记录表示沿用全局默认文本模型（`aigcVideoStudio.text.defaultModel`），选择规则见 [ARCHITECTURE.md](ARCHITECTURE.md) 6.5。
+保存作品单独选择的文本模型。没有记录表示沿用全局默认文本模型（`aigcVideoStudio.text.defaultModel`），选择规则见 [ARCHITECTURE.md](ARCHITECTURE.md) 6.5。
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
@@ -600,7 +599,7 @@ erDiagram
 | `submitted_at` | 文本 | 否 | | 实际提交给模型的时间 |
 | `finished_at` | 文本 | 否 | | |
 
-约束：同一 `group_id` 下最多一条进行中（`status` 为 `waiting`、`queued`、`running`）的任务，由部分唯一索引 `video_jobs_active_group_unique_idx` 保证（迁移 019）；提交时的检查与插入即使并发也不会产生第二个。升级时若同一镜头组已有多个进行中的任务，只保留 `id` 最大（最新）的一个，其余记为 `failed`（`error_category = invalid_request`，`error_code = DuplicateActiveJob`）。
+约束：同一 `group_id` 下最多一条进行中（`status` 为 `waiting`、`queued`、`running`）的任务，由部分唯一索引 `video_jobs_active_group_unique_idx` 保证；提交时的检查与插入即使并发也不会产生第二个。
 
 `request_snapshot_json` 的键（JSON 内使用 camelCase；当前实现，上一组尾帧作首帧不进快照而是记录在任务的 `prev_job_id`、`first_frame_id`）：
 
@@ -661,7 +660,7 @@ erDiagram
 - **提示词**由文本模型（Copilot 或千问文本模型）在后台生成，状态与结果保存在 `assets` 上（`prompt_status`、`prompt_zh`、`prompt_en`），不做版本管理，用户可随时手动修改。
 - **图片或音频**由图像、音频模型生成，**每次提交产生一个版本**（`asset_versions`），所有历史版本都保存，用户从中采用最终版本；采用的版本才写入 `asset_files`，被绑定和视频生成使用。
 
-迁移 `009-asset-generation`（步骤 11）创建下面两张表，并给 `assets` 增加 4.4 中标注“迁移 009 新增”的字段。
+下面两张表保存资产的生成版本，`assets` 上的修订号、提示词状态、采用版本字段见 4.4。
 
 #### `asset_versions` 资产生成版本
 
@@ -707,7 +706,7 @@ erDiagram
 | `width`、`height` | 整数 | 否 | | 图片像素，音频为空 |
 | `duration_seconds` | 实数 | 否 | | 音频时长 |
 | `size_bytes` | 整数 | 是 | | |
-| `file_path` | 文本 | 是 | | 内容所在磁盘文件的相对路径，规则同 `asset_files.file_path`（迁移 020 替换原 `content` 二进制列） |
+| `file_path` | 文本 | 是 | | 内容所在磁盘文件的相对路径，规则同 `asset_files.file_path` |
 | `sort_order` | 整数 | 是 | 0 | 同一版本内的顺序；缩略图与对应结果的 `sort_order` 一致 |
 | `is_adopted` | 整数 | 是 | 0 | 该结果文件是否已被采用为资产的生成来源文件；界面上是否“已采用”以 `assets.adopted_version_id` 为准（只有被采用的版本里标记过的文件才算已采用） |
 | `created_at` | 文本 | 是 | | |
@@ -755,7 +754,7 @@ erDiagram
 | `video_jobs` | `(group_id, created_at DESC)` | 镜头组的提交历史 |
 | `video_jobs` | `(status)` | 队列扫描、启动恢复 |
 | `video_jobs` | `(prev_job_id)` | 释放后续镜头 |
-| `video_jobs` | 部分唯一 `video_jobs_active_group_unique_idx`：`(group_id) WHERE status IN ('waiting', 'queued', 'running')` | 同一镜头组同时只能有一个进行中的任务（迁移 019） |
+| `video_jobs` | 部分唯一 `video_jobs_active_group_unique_idx`：`(group_id) WHERE status IN ('waiting', 'queued', 'running')` | 同一镜头组同时只能有一个进行中的任务 |
 | `video_results` | 部分唯一 `(group_id) WHERE is_selected = 1` | 每个镜头组一个采用版本 |
 | `shot_groups` | `(storyboard_script_id, seq)` 唯一 | 组顺序 |
 | `shots` | `(group_id)` | 按组查询镜头 |
@@ -812,32 +811,11 @@ erDiagram
 
 每个迁移脚本只负责从版本 N 到 N+1，在事务中执行，失败则回滚。
 
-| 版本 | 脚本 | 内容 | 对应实施步骤 |
-|---|---|---|---|
-| 1 | `001-core` | `projects`、`works`、`work_sources`、`episodes`、`stage_runs`、`chapters`、`screenplays`、`script_entities` | 已实现 |
-| 2 | `002-assets` | `assets`（含音频类型）、`asset_files`、`entity_bindings` | 已实现 |
-| 3 | `003-storyboard` | `storyboard_scripts`、`shots`、`shot_entities`、`shot_sounds` | 已实现 |
-| 4 | `004-models` | `providers`、`models`、`model_capabilities`、`generation_profiles` | 已实现 |
-| 5 | `005-generation` | `video_jobs`、`video_results`、`result_frames` | 已实现 |
-| 6 | `006-text-generation` | `stage_runs` 增加“已取消”状态、确认状态、修订号、上游记录、模型、进度、原始输出（重建该表，允许丢弃现有数据）；`screenplays` 增加 `structure_json`；`models` 增加 `kind` | 已实现 |
-| 7 | `007-job-failures` | 重建 `video_jobs`、`video_results`、`result_frames`：失败分类与服务商分类一致并增加 `error_code`，结果视频的时长、宽高允许为空（测试阶段丢弃旧数据） | 已实现（步骤 8） |
-| 8 | `008-shot-groups` | 新增 `shot_groups`，`shots` 增加 `group_id`；重建 `video_jobs`、`video_results`、`result_frames`，任务与结果改为挂在镜头组上（测试阶段丢弃旧数据） | 已实现（步骤 8） |
-| 9 | `009-asset-generation` | `assets` 增加修订号、提示词状态、采用版本字段；新增 `asset_versions`、`asset_version_files` | 已实现（步骤 11） |
-| 10 | `010-global-assets` | 重建 `assets`：去掉 `project_id`，唯一约束改为 `(kind, name)`；重名资产保留最早的一个，其余在名称后加（项目名）；原来沿用项目风格的图像资产把项目风格写入 `style`；资产文件、绑定、生成版本全部保留（迁移执行器支持 `rebuildsReferencedTables`：执行期间关闭外键，结束后检查完整性） | 已实现 |
-| 11 | `011-group-profiles` | 重建 `generation_profiles`：范围改为作品、集、镜头组，新增 `group_id` | 已实现 |
-| 12 | `012-profile-duration` | `generation_profiles` 新增 `duration_seconds`（本组生成时长）；种子、声音内容列早已预留，无需改表 | 已实现 |
-| 13 | `013-asset-categories` | 新增 `asset_categories`；`assets` 增加可空的 `category_id`（外键，删除分类时置空），已有资产全部不分类 | 已实现 |
-| 14 | `014-audio-mode-cleanup` | 重建 `generation_profiles`，`audio_mode` 的 CHECK 收窄为 `none`、`native`，数据原样保留 | 已实现 |
-| 15 | `015-shot-first-frame-asset` | `shots` 增加可空的 `first_frame_asset_id`（外键 `assets.id`，删除资产时置空），用于“指定图片作首帧” | 已实现 |
-| 16 | `016-prompt-params` | `generation_profiles` 增加 `negative_list`（负向清单）与 `prompt_extend`（提示词改写，0 或 1）；只加列，已有记录不变 | 已实现 |
-| 17 | `017-text-models` | 重建 `models`，`kind` 的 CHECK 增加 `text`（文本模型，用于千问AI平台的文本生成模型）；全部行原样搬迁，标识不变（使用 `rebuildsReferencedTables`，结束后检查外键完整性并确认外键已重新开启） | 已实现 |
-| 18 | `018-work-text-models` | 新增 `work_text_models`（作品单独选择的文本模型键，随作品级联删除）；只加表，已有数据不变 | 已实现 |
-| 19 | `019-active-job-unique` | 给 `video_jobs` 新增部分唯一索引 `video_jobs_active_group_unique_idx`（`(group_id) WHERE status IN ('waiting', 'queued', 'running')`），表结构不变；升级时同一镜头组有多个进行中的任务，只保留 `id` 最大的一个，其余记为 `failed`（`error_category = invalid_request`，`error_code = DuplicateActiveJob`） | 已实现 |
-| 20 | `020-asset-files-on-disk` | 资产的图片、音频内容改存磁盘文件：`asset_files`、`asset_version_files` 删除 `content` 列、新增 `file_path`；`asset_files` 新增 `source`（`upload`、`generated`）；`assets` 新增 `file_source`（默认 `generated`）。产品尚未正式发布，旧的图片、音频内容按要求直接丢弃：升级时清空 `asset_files` 与全部 `asset_versions`（版本文件级联删除），资产的文字内容、分类和绑定保留 | 已实现 |
+| 版本 | 脚本 | 内容 |
+|---|---|---|
+| 1 | `001-initial` | 首次发布（0.1.0）的初始结构：第 3 节列出的全部 27 张表及其约束、索引，新库一次建出 |
 
-拆分说明：镜头引用资产文件，因此资产在分镜之前建立；前五个迁移创建了 22 张表，迁移 8 再增加镜头组表，各功能的仓库随功能实现逐步补全。
-
-已发布的脚本不再修改；结构变更一律新增下一个编号的脚本。测试阶段不考虑已有数据，需要重建表（例如修改 CHECK 约束）时，新增的迁移可以直接丢弃该表及其下游表的数据，不做数据搬迁；首次发布版本（0.1.0）之后不再允许，迁移 001 至 020 随首次发布（迁移 020 是首次发布前最后一个丢弃旧数据的迁移，之后的迁移必须保留数据）。升级前若库里已有数据，先用 `VACUUM INTO` 备份为 `<数据库文件>.backup-v<版本>`；重建被其他表引用的表时，迁移执行器在事务外关闭外键、执行后检查 `PRAGMA foreign_key_check`，并在结束后读取 `PRAGMA foreign_keys` 确认外键已重新开启，未开启则拒绝继续使用该连接。
+已发布的脚本不再修改；结构变更一律新增下一个编号的脚本，并保留用户已有数据，需要重建表（例如修改 CHECK 约束）时全部记录原样搬迁。升级前若库里已有数据，先用 `VACUUM INTO` 备份为 `<数据库文件>.backup-v<版本>`；重建被其他表引用的表时，迁移声明 `rebuildsReferencedTables`，迁移执行器在事务外关闭外键、执行后检查 `PRAGMA foreign_key_check`，并在结束后读取 `PRAGMA foreign_keys` 确认外键已重新开启，未开启则拒绝继续使用该连接。
 
 ## 9. 与架构文档的差异说明
 

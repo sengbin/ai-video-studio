@@ -4,7 +4,7 @@
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-03
-// 备注：备份文件夹名为“备份文件名 + .files”；只复制数据库引用的文件，恢复只补充缺少的文件、不删除任何现有文件（文件名由内容哈希决定，同名即同内容）；备份库里的路径不可信，逐个经 resolveInsideRoot 校验，不合法的按缺失处理；旧结构（迁移 020 之前）的备份没有文件路径，视为没有资产文件。
+// 备注：备份文件夹名为“备份文件名 + .files”；只复制数据库引用的文件，恢复只补充缺少的文件、不删除任何现有文件（文件名由内容哈希决定，同名即同内容）；备份库里的路径不可信，逐个经 resolveInsideRoot 校验，不合法的按缺失处理；资产文件表没有文件路径列的备份无法读出文件清单，视为没有资产文件。
 // ------------------------------------------------------------------------
 
 import { copyFileSync, existsSync, mkdirSync, rmSync, statSync } from 'node:fs';
@@ -24,13 +24,13 @@ export function assetFilesDirectoryOf(backupPath: string): string {
   return `${backupPath}${BACKUP_FILES_SUFFIX}`;
 }
 
-/** 数据库里是否有资产文件路径列（迁移 020 之后的结构）。 */
+/** 数据库里是否有资产文件路径列。 */
 function hasFilePathColumn(database: DatabaseSync): boolean {
   const columns = database.prepare('PRAGMA table_info(asset_files)').all() as Array<{ name: string }>;
   return columns.some((column) => column.name === 'file_path');
 }
 
-/** 读取数据库引用的全部资产文件路径（去重）；没有路径列的旧结构返回 undefined。 */
+/** 读取数据库引用的全部资产文件路径（去重）；没有路径列时返回 undefined。 */
 function listReferencedPaths(database: DatabaseSync): string[] | undefined {
   if (!hasFilePathColumn(database)) {
     return undefined;
@@ -98,7 +98,7 @@ export function copyAssetFilesToBackup(database: DatabaseSync, assetDirectory: s
  * @param backupDatabase 以只读方式打开的备份数据库。
  * @param backupPath 备份文件的绝对路径。
  * @param assetDirectory 当前资产文件根目录。
- * @returns 检查结果；备份是旧结构、没有资产文件路径时返回 undefined。
+ * @returns 检查结果；备份里没有资产文件路径列时返回 undefined。
  */
 export function inspectBackupAssetFiles(
   backupDatabase: DatabaseSync,

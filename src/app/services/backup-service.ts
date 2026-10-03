@@ -80,7 +80,7 @@ export interface RestoreCandidate {
   readonly schemaVersion: number;
   /** 当前扩展支持的最高结构版本；备份版本低于它时，恢复后会自动升级。 */
   readonly latestSchemaVersion: number;
-  /** 备份引用的资产文件是否齐全；备份是旧结构、没有资产文件路径时为 null。 */
+  /** 备份引用的资产文件是否齐全；备份里没有资产文件路径列时为 null。 */
   readonly assetFiles: BackupAssetFileInspection | null;
 }
 

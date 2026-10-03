@@ -16,7 +16,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { EMPTY_PROFILE } from '../../domain/models/generation-profile';
 import { IN_MEMORY_DATABASE_PATH, openDatabase } from './database-connection';
 import { Migration, MigrationError } from './migration';
-import { readSchemaVersion, runMigrations } from './migration-runner';
+import { readSchemaVersion } from './migration-runner';
 import { MIGRATIONS } from './migrations';
 import { SqliteGenerationProfileRepository } from './sqlite-generation-profile-repository';
 import { runInTransaction } from './transaction';
@@ -415,7 +415,7 @@ test('阶段记录：进度必须是合法 JSON，上游记录被删除时置空
   }
 });
 
-test('剧本包结构快照默认为空对象且必须是合法 JSON；模型类型默认视频且只允许三种', () => {
+test('剧本包结构快照默认为空对象且必须是合法 JSON；模型类型默认视频且只允许文本、图像、音频、视频四种', () => {
   const database = openDatabase(IN_MEMORY_DATABASE_PATH);
   try {
     seedWorkWithEpisode(database);
@@ -456,166 +456,6 @@ test('剧本包结构快照默认为空对象且必须是合法 JSON；模型类
   }
 });
 
-test('从版本 5 升级到 6：保留项目、作品和集，丢弃阶段记录及其下游数据', () => {
-  const directory = mkdtempSync(join(tmpdir(), 'aigc-video-studio-test-'));
-  const filePath = join(directory, 'upgrade-v5.sqlite');
-  try {
-    const legacy = openDatabase(filePath, MIGRATIONS.slice(0, 5));
-    seedWorkWithEpisode(legacy);
-    legacy
-      .prepare("INSERT INTO stage_runs (work_id, stage, version, input_json, created_at) VALUES (1, 'creative', 1, '{}', ?)")
-      .run(NOW);
-    legacy
-      .prepare("INSERT INTO stage_runs (work_id, episode_id, stage, version, input_json, created_at) VALUES (1, 1, 'storyboard_script', 1, '{}', ?)")
-      .run(NOW);
-    legacy.prepare("INSERT INTO chapters (run_id, seq, title, content, created_at) VALUES (1, 1, '章', '正文', ?)").run(NOW);
-    legacy.prepare('INSERT INTO storyboard_scripts (episode_id, run_id, created_at) VALUES (1, 2, ?)').run(NOW);
-    legacy
-      .prepare("INSERT INTO shots (storyboard_script_id, seq, action, duration_seconds, created_at, updated_at) VALUES (1, 1, '远景', 5, ?, ?)")
-      .run(NOW, NOW);
-    legacy.close();
-
-    const database = openDatabase(filePath);
-    try {
-      assert.equal(readSchemaVersion(database), MIGRATIONS.length);
-      assert.equal(countRows(database, 'projects'), 1);
-      assert.equal(countRows(database, 'works'), 1);
-      assert.equal(countRows(database, 'episodes'), 1);
-      for (const table of ['stage_runs', 'chapters', 'storyboard_scripts', 'shots']) {
-        assert.equal(countRows(database, table), 0, `${table} 应被清空`);
-      }
-      assert.deepEqual(database.prepare('PRAGMA foreign_key_check').all(), []);
-      database
-        .prepare("INSERT INTO stage_runs (work_id, stage, version, input_json, created_at) VALUES (1, 'creative', 1, '{}', ?)")
-        .run(NOW);
-      database.prepare("INSERT INTO chapters (run_id, seq, title, content, created_at) VALUES (1, 1, '章', '正文', ?)").run(NOW);
-      database.prepare('DELETE FROM stage_runs WHERE id = 1').run();
-      assert.equal(countRows(database, 'chapters'), 0, '重建后章节仍随阶段记录级联删除');
-    } finally {
-      database.close();
-    }
-  } finally {
-    rmSync(directory, { recursive: true, force: true });
-  }
-});
-
-test('从版本 8 升级到 9：已有资产保留，已有提示词视为基于当前内容，新增版本表', () => {
-  const directory = mkdtempSync(join(tmpdir(), 'aigc-video-studio-test-'));
-  const filePath = join(directory, 'upgrade-v8.sqlite');
-  try {
-    const legacy = openDatabase(filePath, MIGRATIONS.slice(0, 8));
-    seedWorkWithEpisode(legacy);
-    const insert = legacy.prepare(
-      "INSERT INTO assets (project_id, kind, name, prompt_zh, created_at, updated_at) VALUES (1, 'prop', ?, ?, ?, ?)"
-    );
-    insert.run('有提示词', '一把钥匙', NOW, NOW);
-    insert.run('没有提示词', '', NOW, NOW);
-    legacy.close();
-
-    const database = openDatabase(filePath);
-    try {
-      assert.equal(readSchemaVersion(database), MIGRATIONS.length);
-      const rows = database
-        .prepare('SELECT name, content_revision, prompt_revision, prompt_content_revision, prompt_status, adopted_version_id FROM assets ORDER BY id')
-        .all() as Array<Record<string, unknown>>;
-      assert.deepEqual(rows.map((row) => Object.values(row)), [
-        ['有提示词', 1, 1, 1, 'none', null],
-        ['没有提示词', 1, 0, 0, 'none', null]
-      ]);
-      assert.deepEqual(listTableNames(database).filter((name) => name.startsWith('asset_')), ['asset_categories', 'asset_files', 'asset_version_files', 'asset_versions']);
-      assert.deepEqual(database.prepare('PRAGMA foreign_key_check').all(), []);
-    } finally {
-      database.close();
-    }
-  } finally {
-    rmSync(directory, { recursive: true, force: true });
-  }
-});
-
-test('从版本 9 升级到 10：资产脱离项目，重名资产加项目名区分，沿用项目风格的资产写入风格，文件与绑定保留', () => {
-  const directory = mkdtempSync(join(tmpdir(), 'aigc-video-studio-test-'));
-  const filePath = join(directory, 'upgrade-v9.sqlite');
-  try {
-    const legacy = openDatabase(filePath, MIGRATIONS.slice(0, 9));
-    seedWorkWithEpisode(legacy);
-    legacy.prepare("UPDATE projects SET visual_style = '写实摄影' WHERE id = 1").run();
-    legacy.prepare('INSERT INTO projects (name, created_at, updated_at) VALUES (?, ?, ?)').run('项目乙', NOW, NOW);
-    legacy
-      .prepare("INSERT INTO script_entities (work_id, kind, name, created_at, updated_at) VALUES (1, 'character', '林夏', ?, ?)")
-      .run(NOW, NOW);
-    const insert = legacy.prepare('INSERT INTO assets (project_id, kind, name, style, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)');
-    insert.run(1, 'character', '林夏', null, NOW, NOW);
-    insert.run(2, 'character', '林夏', null, NOW, NOW);
-    insert.run(1, 'audio', '配乐', null, NOW, NOW);
-    insert.run(1, 'scene', '灯塔', '水彩', NOW, NOW);
-    legacy
-      .prepare("INSERT INTO asset_files (asset_id, mime, file_name, size_bytes, content, created_at) VALUES (2, 'image/png', 'a.png', 1, x'00', ?)")
-      .run(NOW);
-    legacy.prepare('INSERT INTO entity_bindings (episode_id, entity_id, asset_id, created_at) VALUES (1, 1, 2, ?)').run(NOW);
-    legacy.close();
-
-    const database = openDatabase(filePath, MIGRATIONS.slice(0, 10));
-    try {
-      assert.equal(readSchemaVersion(database), 10);
-      const rows = database.prepare('SELECT id, kind, name, style FROM assets ORDER BY id').all() as Array<Record<string, unknown>>;
-      assert.deepEqual(rows.map((row) => Object.values(row)), [
-        [1, 'character', '林夏', '写实摄影'],
-        [2, 'character', '林夏（项目乙）', null],
-        [3, 'audio', '配乐', null],
-        [4, 'scene', '灯塔', '水彩']
-      ]);
-      const columns = (database.prepare('PRAGMA table_info(assets)').all() as Array<{ name: string }>).map((column) => column.name);
-      assert.ok(!columns.includes('project_id'));
-      assert.equal(countRows(database, 'asset_files'), 1, '重建资产表不能级联删除文件');
-      assert.equal(countRows(database, 'entity_bindings'), 1, '重建资产表不能级联删除绑定');
-      assert.deepEqual(database.prepare('PRAGMA foreign_key_check').all(), []);
-      assert.equal((database.prepare('PRAGMA foreign_keys').get() as { foreign_keys: number }).foreign_keys, 1);
-      assert.throws(() => database.prepare("INSERT INTO assets (kind, name, created_at, updated_at) VALUES ('scene', '灯塔', ?, ?)").run(NOW, NOW));
-      database.prepare('DELETE FROM assets WHERE id = 2').run();
-      assert.equal(countRows(database, 'asset_files'), 0, '外键关系重建后仍然有效');
-      assert.equal(countRows(database, 'entity_bindings'), 0);
-    } finally {
-      database.close();
-    }
-  } finally {
-    rmSync(directory, { recursive: true, force: true });
-  }
-});
-test('从版本 19 升级到 20：旧的图片、音频内容与生成版本被丢弃，资产的文字内容和绑定保留，新增来源与路径字段', () => {
-  const directory = mkdtempSync(join(tmpdir(), 'aigc-video-studio-test-'));
-  const filePath = join(directory, 'upgrade-v19.sqlite');
-  try {
-    const legacy = openDatabase(filePath, MIGRATIONS.slice(0, 19));
-    seedWorkWithEpisode(legacy);
-    legacy.prepare("INSERT INTO script_entities (work_id, kind, name, created_at, updated_at) VALUES (1, 'character', '林夏', ?, ?)").run(NOW, NOW);
-    legacy.prepare("INSERT INTO assets (kind, name, prompt_zh, created_at, updated_at) VALUES ('character', '林夏', '提示词', ?, ?)").run(NOW, NOW);
-    legacy
-      .prepare("INSERT INTO asset_files (asset_id, mime, file_name, size_bytes, content, created_at) VALUES (1, 'image/png', 'a.png', 1, x'00', ?)")
-      .run(NOW);
-    legacy.prepare('INSERT INTO entity_bindings (episode_id, entity_id, asset_id, created_at) VALUES (1, 1, 1, ?)').run(NOW);
-    legacy.close();
-
-    const database = openDatabase(filePath);
-    try {
-      assert.equal(readSchemaVersion(database), MIGRATIONS.length);
-      assert.equal(countRows(database, 'asset_files'), 0, '旧文件内容直接丢弃');
-      assert.equal(countRows(database, 'asset_versions'), 0);
-      assert.equal(countRows(database, 'asset_version_files'), 0);
-      assert.deepEqual(database.prepare('SELECT name, prompt_zh, file_source FROM assets').all().map((row) => Object.values(row)), [['林夏', '提示词', 'generated']]);
-      assert.equal(countRows(database, 'entity_bindings'), 1, '绑定保留');
-      const columnsOf = (table: string) => (database.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((column) => column.name);
-      assert.ok(!columnsOf('asset_files').includes('content') && columnsOf('asset_files').includes('file_path') && columnsOf('asset_files').includes('source'));
-      assert.ok(!columnsOf('asset_version_files').includes('content') && columnsOf('asset_version_files').includes('file_path'));
-      assert.throws(() => database.prepare("INSERT INTO asset_files (asset_id, source, file_name, mime, size_bytes, file_path, created_at) VALUES (1, 'bogus', 'a.png', 'image/png', 1, 'x', ?)").run(NOW));
-      assert.deepEqual(database.prepare('PRAGMA foreign_key_check').all(), []);
-    } finally {
-      database.close();
-    }
-  } finally {
-    rmSync(directory, { recursive: true, force: true });
-  }
-});
-
 test('事务：成功提交，异常回滚', () => {
   const database = openDatabase(IN_MEMORY_DATABASE_PATH);
   try {
@@ -634,29 +474,22 @@ test('事务：成功提交，异常回滚', () => {
   }
 });
 
-test('迁移 011：生成参数重建后保留作品级与集级记录，新增镜头组级并随镜头组一起删除', () => {
-  const database = new DatabaseSync(IN_MEMORY_DATABASE_PATH);
+test('生成参数：镜头组级每组一条并随镜头组删除，声音模式只允许无声和模型原生，时长必须大于 0', () => {
+  const database = openDatabase(IN_MEMORY_DATABASE_PATH);
   try {
-    database.exec('PRAGMA foreign_keys = ON');
-    runMigrations(database, MIGRATIONS.slice(0, 10));
     const { workId, episodeId } = seedWorkWithEpisode(database);
     database.prepare("INSERT INTO generation_profiles (scope, work_id, aspect_ratio, resolution, updated_at) VALUES ('work', ?, '16:9', '720P', ?)").run(workId, NOW);
     database.prepare("INSERT INTO generation_profiles (scope, episode_id, aspect_ratio, updated_at) VALUES ('episode', ?, '9:16', ?)").run(episodeId, NOW);
-
-    runMigrations(database, MIGRATIONS);
-    assert.equal(readSchemaVersion(database), MIGRATIONS.length);
-    const rows = database.prepare('SELECT scope, aspect_ratio, resolution FROM generation_profiles ORDER BY scope').all();
-    assert.deepEqual(rows.map((row) => ({ ...row })), [
-      { scope: 'episode', aspect_ratio: '9:16', resolution: null },
-      { scope: 'work', aspect_ratio: '16:9', resolution: '720P' }
-    ]);
-
     database.prepare("INSERT INTO stage_runs (work_id, episode_id, stage, version, input_json, created_at) VALUES (?, ?, 'storyboard_script', 1, '{}', ?)").run(workId, episodeId, NOW);
     database.prepare('INSERT INTO storyboard_scripts (run_id, episode_id, created_at) VALUES (1, ?, ?)').run(episodeId, NOW);
     database.prepare('INSERT INTO shot_groups (storyboard_script_id, seq, created_at) VALUES (1, 1, ?)').run(NOW);
-    database.prepare("INSERT INTO generation_profiles (scope, group_id, resolution, updated_at) VALUES ('group', 1, '1080P', ?)").run(NOW);
-    assert.throws(() => database.prepare("INSERT INTO generation_profiles (scope, group_id, work_id, updated_at) VALUES ('group', 1, ?, ?)").run(workId, NOW));
+    database.prepare("INSERT INTO generation_profiles (scope, group_id, audio_mode, duration_seconds, updated_at) VALUES ('group', 1, 'none', 7.5, ?)").run(NOW);
+
+    assert.throws(() => database.prepare("INSERT INTO generation_profiles (scope, group_id, work_id, updated_at) VALUES ('group', 1, ?, ?)").run(workId, NOW), '范围为镜头组时不能同时指定作品');
     assert.throws(() => database.prepare("INSERT INTO generation_profiles (scope, group_id, resolution, updated_at) VALUES ('group', 1, '720P', ?)").run(NOW), '同一个镜头组只有一条覆盖');
+    assert.throws(() => database.prepare("UPDATE generation_profiles SET audio_mode = 'external' WHERE scope = 'work'").run(), '不再允许 external');
+    assert.throws(() => database.prepare("UPDATE generation_profiles SET duration_seconds = 0 WHERE scope = 'group'").run(), '时长必须大于 0');
+
     database.prepare('DELETE FROM shot_groups WHERE id = 1').run();
     assert.equal(countRows(database, 'generation_profiles'), 2, '镜头组删除后它的覆盖随之清除');
   } finally {
@@ -664,40 +497,37 @@ test('迁移 011：生成参数重建后保留作品级与集级记录，新增�
   }
 });
 
-test('迁移 012：生成参数新增生成时长列，已有记录的时长为空，种子与声音内容列可往返保存，时长必须大于 0', () => {
-  const database = new DatabaseSync(IN_MEMORY_DATABASE_PATH);
+test('生成参数：种子、声音内容、时长、负向清单与提示词改写可往返保存，改写开关只允许 0 或 1', () => {
+  const database = openDatabase(IN_MEMORY_DATABASE_PATH);
   try {
-    database.exec('PRAGMA foreign_keys = ON');
-    runMigrations(database, MIGRATIONS.slice(0, 11));
-    const { workId } = seedWorkWithEpisode(database);
-    database.prepare("INSERT INTO generation_profiles (scope, work_id, resolution, seed, updated_at) VALUES ('work', ?, '720P', 5, ?)").run(workId, NOW);
-
-    runMigrations(database, MIGRATIONS);
-    assert.equal(readSchemaVersion(database), MIGRATIONS.length);
-    const row = database.prepare('SELECT resolution, seed, duration_seconds FROM generation_profiles').get();
-    assert.deepEqual({ ...row }, { resolution: '720P', seed: 5, duration_seconds: null });
-
+    const { workId, episodeId } = seedWorkWithEpisode(database);
     const profiles = new SqliteGenerationProfileRepository(database);
-    const values = { ...EMPTY_PROFILE, audioMode: 'native' as const, audioElements: ['dialogue' as const, 'music' as const], seed: 0, durationSeconds: 7.5 };
-    profiles.save({ scope: 'work', workId }, values, NOW);
-    assert.deepEqual(profiles.find({ scope: 'work', workId }), values);
-    assert.throws(() => database.prepare("UPDATE generation_profiles SET duration_seconds = 0 WHERE scope = 'work'").run());
+    const work = {
+      ...EMPTY_PROFILE,
+      audioMode: 'native' as const,
+      audioElements: ['dialogue' as const, 'music' as const],
+      seed: 0,
+      durationSeconds: 7.5,
+      negativeList: '不要字幕，不要水印',
+      promptExtend: false
+    };
+    profiles.save({ scope: 'work', workId }, work, NOW);
+    assert.deepEqual(profiles.find({ scope: 'work', workId }), work, '关闭（0）与 null 不混淆');
+    const episode = { ...EMPTY_PROFILE, negativeList: '', promptExtend: true };
+    profiles.save({ scope: 'episode', episodeId }, episode, NOW);
+    assert.deepEqual(profiles.find({ scope: 'episode', episodeId }), episode, '空串与 null 不混淆');
+    assert.throws(() => database.prepare("UPDATE generation_profiles SET prompt_extend = 2 WHERE scope = 'work'").run());
   } finally {
     database.close();
   }
 });
 
-test('迁移 013：已有资产的分类为空（不分类），分类在同类型内名称唯一，删除分类后资产保留并置空分类', () => {
-  const database = new DatabaseSync(IN_MEMORY_DATABASE_PATH);
+test('资产分类：新资产不分类，分类在同类型内名称唯一，删除分类后资产保留并置空分类', () => {
+  const database = openDatabase(IN_MEMORY_DATABASE_PATH);
   try {
-    database.exec('PRAGMA foreign_keys = ON');
-    runMigrations(database, MIGRATIONS.slice(0, 12));
     database
       .prepare("INSERT INTO assets (kind, name, attributes_json, created_at, updated_at) VALUES ('character', '林夏', '{}', ?, ?)")
       .run(NOW, NOW);
-
-    runMigrations(database, MIGRATIONS);
-    assert.equal(readSchemaVersion(database), MIGRATIONS.length);
     assert.deepEqual({ ...database.prepare('SELECT category_id FROM assets').get() }, { category_id: null });
 
     database.prepare("INSERT INTO asset_categories (kind, name, created_at, updated_at) VALUES ('character', '主角', ?, ?)").run(NOW, NOW);
@@ -721,125 +551,32 @@ test('迁移 013：已有资产的分类为空（不分类），分类在同类�
   }
 });
 
-test('迁移 014：生成参数重建后全部记录原样保留，声音模式只允许无声和模型原生生成，旧的 external 取值转为空', () => {
-  const database = new DatabaseSync(IN_MEMORY_DATABASE_PATH);
+test('资产文件：内容存磁盘只记路径，来源只允许上传或生成，资产默认使用生成来源', () => {
+  const database = openDatabase(IN_MEMORY_DATABASE_PATH);
   try {
-    database.exec('PRAGMA foreign_keys = ON');
-    runMigrations(database, MIGRATIONS.slice(0, 13));
-    const { workId, episodeId } = seedWorkWithEpisode(database);
-    database
-      .prepare("INSERT INTO generation_profiles (scope, work_id, resolution, audio_mode, audio_elements_json, seed, duration_seconds, updated_at) VALUES ('work', ?, '720P', 'native', '[\"dialogue\"]', 5, NULL, ?)")
-      .run(workId, NOW);
-    database.prepare("INSERT INTO generation_profiles (scope, episode_id, audio_mode, updated_at) VALUES ('episode', ?, 'external', ?)").run(episodeId, NOW);
-    database.prepare("INSERT INTO stage_runs (work_id, episode_id, stage, version, input_json, created_at) VALUES (?, ?, 'storyboard_script', 1, '{}', ?)").run(workId, episodeId, NOW);
-    database.prepare('INSERT INTO storyboard_scripts (run_id, episode_id, created_at) VALUES (1, ?, ?)').run(episodeId, NOW);
-    database.prepare('INSERT INTO shot_groups (storyboard_script_id, seq, created_at) VALUES (1, 1, ?)').run(NOW);
-    database.prepare("INSERT INTO generation_profiles (scope, group_id, audio_mode, duration_seconds, updated_at) VALUES ('group', 1, 'none', 7.5, ?)").run(NOW);
+    database.prepare("INSERT INTO assets (kind, name, created_at, updated_at) VALUES ('character', '林夏', ?, ?)").run(NOW, NOW);
+    assert.deepEqual({ ...database.prepare('SELECT file_source FROM assets').get() }, { file_source: 'generated' });
 
-    runMigrations(database, MIGRATIONS);
-    assert.equal(readSchemaVersion(database), MIGRATIONS.length);
-    const rows = database.prepare('SELECT scope, resolution, audio_mode, audio_elements_json, seed, duration_seconds FROM generation_profiles ORDER BY id').all();
-    assert.deepEqual(rows.map((row) => ({ ...row })), [
-      { scope: 'work', resolution: '720P', audio_mode: 'native', audio_elements_json: '["dialogue"]', seed: 5, duration_seconds: null },
-      { scope: 'episode', resolution: null, audio_mode: null, audio_elements_json: null, seed: null, duration_seconds: null },
-      { scope: 'group', resolution: null, audio_mode: 'none', audio_elements_json: null, seed: null, duration_seconds: 7.5 }
-    ]);
+    const insertFile = (source: string) =>
+      database
+        .prepare("INSERT INTO asset_files (asset_id, source, file_name, mime, size_bytes, file_path, created_at) VALUES (1, ?, 'a.png', 'image/png', 1, 'assets/a.png', ?)")
+        .run(source, NOW);
+    insertFile('upload');
+    insertFile('generated');
+    assert.throws(() => insertFile('bogus'));
+    assert.throws(() => database.prepare("UPDATE assets SET file_source = 'bogus'").run());
 
-    assert.throws(() => database.prepare("UPDATE generation_profiles SET audio_mode = 'external' WHERE scope = 'work'").run(), '不再允许 external');
-    assert.throws(() => database.prepare("INSERT INTO generation_profiles (scope, group_id, updated_at) VALUES ('group', 1, ?)").run(NOW), '镜头组覆盖仍然每组一条');
-    assert.throws(() => database.prepare('UPDATE generation_profiles SET duration_seconds = 0 WHERE scope = \'group\'').run(), '时长必须大于 0');
-    database.prepare('DELETE FROM shot_groups WHERE id = 1').run();
-    assert.equal(countRows(database, 'generation_profiles'), 2, '镜头组删除后它的覆盖随之清除');
+    const columns = (database.prepare('PRAGMA table_info(asset_files)').all() as Array<{ name: string }>).map((column) => column.name);
+    assert.ok(columns.includes('file_path') && !columns.includes('content'));
   } finally {
     database.close();
   }
 });
 
-test('迁移 015：镜头新增指定首帧的资产列，已有镜头为空，资产被删除后置空', () => {
-  const database = new DatabaseSync(IN_MEMORY_DATABASE_PATH);
+test('作品文本模型：每个作品最多一行，作品必须存在，模型键不能为空，作品删除时级联清除', () => {
+  const database = openDatabase(IN_MEMORY_DATABASE_PATH);
   try {
-    database.exec('PRAGMA foreign_keys = ON');
-    runMigrations(database, MIGRATIONS.slice(0, 14));
-    const { workId, episodeId } = seedWorkWithEpisode(database);
-    database.prepare("INSERT INTO stage_runs (work_id, episode_id, stage, version, input_json, created_at) VALUES (?, ?, 'storyboard_script', 1, '{}', ?)").run(workId, episodeId, NOW);
-    database.prepare('INSERT INTO storyboard_scripts (run_id, episode_id, created_at) VALUES (1, ?, ?)').run(episodeId, NOW);
-    database
-      .prepare("INSERT INTO shots (storyboard_script_id, seq, action, duration_seconds, created_at, updated_at) VALUES (1, 1, '远景', 5, ?, ?)")
-      .run(NOW, NOW);
-
-    runMigrations(database, MIGRATIONS);
-    assert.equal(readSchemaVersion(database), MIGRATIONS.length);
-    assert.deepEqual({ ...database.prepare('SELECT first_frame_mode, first_frame_asset_id FROM shots').get() }, { first_frame_mode: 'none', first_frame_asset_id: null });
-
-    database.prepare("INSERT INTO assets (kind, name, created_at, updated_at) VALUES ('scene', '灯塔', ?, ?)").run(NOW, NOW);
-    database.prepare("UPDATE shots SET first_frame_mode = 'asset', first_frame_asset_id = 1").run();
-    database.prepare('DELETE FROM assets WHERE id = 1').run();
-    assert.deepEqual({ ...database.prepare('SELECT first_frame_mode, first_frame_asset_id FROM shots').get() }, { first_frame_mode: 'asset', first_frame_asset_id: null });
-  } finally {
-    database.close();
-  }
-});
-
-test('迁移 016：生成参数新增负向清单与提示词改写列，已有记录为空，空串、开关的开与关都能往返保存，改写开关只允许 0 或 1', () => {
-  const database = new DatabaseSync(IN_MEMORY_DATABASE_PATH);
-  try {
-    database.exec('PRAGMA foreign_keys = ON');
-    runMigrations(database, MIGRATIONS.slice(0, 15));
-    const { workId, episodeId } = seedWorkWithEpisode(database);
-    database.prepare("INSERT INTO generation_profiles (scope, work_id, resolution, seed, updated_at) VALUES ('work', ?, '720P', 5, ?)").run(workId, NOW);
-
-    runMigrations(database, MIGRATIONS);
-    assert.equal(readSchemaVersion(database), MIGRATIONS.length);
-    assert.deepEqual({ ...database.prepare('SELECT resolution, seed, negative_list, prompt_extend FROM generation_profiles').get() }, { resolution: '720P', seed: 5, negative_list: null, prompt_extend: null });
-
-    const profiles = new SqliteGenerationProfileRepository(database);
-    const work = { ...EMPTY_PROFILE, negativeList: '不要字幕，不要水印', promptExtend: false };
-    profiles.save({ scope: 'work', workId }, work, NOW);
-    assert.deepEqual(profiles.find({ scope: 'work', workId }), work, '关闭（0）与 null 不混淆');
-    const episode = { ...EMPTY_PROFILE, negativeList: '', promptExtend: true };
-    profiles.save({ scope: 'episode', episodeId }, episode, NOW);
-    assert.deepEqual(profiles.find({ scope: 'episode', episodeId }), episode, '空串与 null 不混淆');
-    assert.throws(() => database.prepare("UPDATE generation_profiles SET prompt_extend = 2 WHERE scope = 'work'").run());
-  } finally {
-    database.close();
-  }
-});
-test('迁移 017：模型类型新增文本，已有模型与引用它的生成参数原样保留，外键约束仍然有效', () => {
-  const database = new DatabaseSync(IN_MEMORY_DATABASE_PATH);
-  try {
-    database.exec('PRAGMA foreign_keys = ON');
-    runMigrations(database, MIGRATIONS.slice(0, 16));
     const { workId } = seedWorkWithEpisode(database);
-    database.prepare("INSERT INTO providers (code, display_name, created_at, updated_at) VALUES ('demo', '示例', ?, ?)").run(NOW, NOW);
-    database.prepare("INSERT INTO models (provider_id, code, display_name, kind, is_enabled, created_at) VALUES (1, 'v1', '视频', 'video', 0, ?)").run(NOW);
-    database.prepare("INSERT INTO model_capabilities (model_id, capability_json, updated_at) VALUES (1, '{}', ?)").run(NOW);
-    database.prepare("INSERT INTO generation_profiles (scope, work_id, model_id, updated_at) VALUES ('work', ?, 1, ?)").run(workId, NOW);
-
-    runMigrations(database, MIGRATIONS);
-    assert.equal(readSchemaVersion(database), MIGRATIONS.length);
-    assert.deepEqual({ ...database.prepare('SELECT id, code, kind, is_enabled FROM models').get() }, { id: 1, code: 'v1', kind: 'video', is_enabled: 0 });
-    assert.equal(countRows(database, 'model_capabilities'), 1);
-    assert.deepEqual({ ...database.prepare('SELECT model_id FROM generation_profiles').get() }, { model_id: 1 });
-    assert.throws(() => database.prepare('DELETE FROM models WHERE id = 1').run(), '被生成参数引用的模型仍然不能删除');
-
-    database.prepare("INSERT INTO models (provider_id, code, display_name, kind, created_at) VALUES (1, 't1', '文本', 'text', ?)").run(NOW);
-    assert.deepEqual({ ...database.prepare("SELECT id, kind FROM models WHERE code = 't1'").get() }, { id: 2, kind: 'text' });
-    assert.throws(() => database.prepare("INSERT INTO models (provider_id, code, display_name, kind, created_at) VALUES (1, 'x1', '未知', 'unknown', ?)").run(NOW));
-    assert.throws(() => database.prepare("INSERT INTO models (provider_id, code, display_name, kind, created_at) VALUES (1, 'v1', '重复', 'video', ?)").run(NOW), '同一服务商的模型代码仍然唯一');
-  } finally {
-    database.close();
-  }
-});
-test('迁移 018：新增作品文本模型表，已有数据不变，每个作品最多一行，作品删除时级联清除', () => {
-  const database = new DatabaseSync(IN_MEMORY_DATABASE_PATH);
-  try {
-    database.exec('PRAGMA foreign_keys = ON');
-    runMigrations(database, MIGRATIONS.slice(0, 17));
-    const { workId } = seedWorkWithEpisode(database);
-
-    runMigrations(database, MIGRATIONS);
-    assert.equal(readSchemaVersion(database), MIGRATIONS.length);
-    assert.equal(countRows(database, 'works'), 1);
     assert.equal(countRows(database, 'work_text_models'), 0);
 
     database.prepare("INSERT INTO work_text_models (work_id, model_key, updated_at) VALUES (?, 'copilot:', ?)").run(workId, NOW);

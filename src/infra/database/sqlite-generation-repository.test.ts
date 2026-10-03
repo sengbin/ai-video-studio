@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：sqlite-generation-repository.test.ts
-// 说明：生成任务仓库的自动化测试：新增与尝试次数、状态变更只作用于进行中的任务、成功写结果并自动采用、采用其他结果、失败原因往返、素材读取、镜头组删除的连带清除、迁移 8、19 的升级（同一镜头组只能有一个进行中的任务）。
+// 说明：生成任务仓库的自动化测试：新增与尝试次数、状态变更只作用于进行中的任务、成功写结果并自动采用、采用其他结果、失败原因往返、素材读取、镜头组删除的连带清除、同一镜头组只能有一个进行中的任务。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
@@ -12,8 +12,6 @@ import { test } from 'node:test';
 import { ConflictError } from '../../domain/errors';
 import { JobSnapshot } from '../../domain/models/generation';
 import { IN_MEMORY_DATABASE_PATH, openDatabase } from './database-connection';
-import { readSchemaVersion, runMigrations } from './migration-runner';
-import { MIGRATIONS } from './migrations';
 import { SqliteGenerationRepository } from './sqlite-generation-repository';
 import { seedGeneration } from './testing/seed-generation';
 import { MemoryAssetFileStore } from '../../domain/ports/testing/memory-asset-file-store';
@@ -255,16 +253,9 @@ test('等待前序：写入时带前序和首帧；释放时记下首帧并转�
   }
 });
 
-test('从版本 7 升级到 8：任务表改为挂在镜头组上，错误分类与服务商一致', () => {
-  const legacy = openDatabase(IN_MEMORY_DATABASE_PATH, MIGRATIONS.slice(0, 7));
-  try {
-    assert.equal(readSchemaVersion(legacy), 7);
-  } finally {
-    legacy.close();
-  }
+test('任务表挂在镜头组上，错误分类与服务商一致', () => {
   const database = openDatabase(IN_MEMORY_DATABASE_PATH);
   try {
-    assert.equal(readSchemaVersion(database), MIGRATIONS.length);
     const seed = seedGeneration(database, 1);
     const insertFailed = (category: string) =>
       database
@@ -316,80 +307,6 @@ test('同一镜头组的唯一索引兜底：绕过检查直接写入第二个�
       /UNIQUE constraint failed/
     );
     assert.equal(repository.listJobsByGroups([seed.groupIds[0]]).length, 1);
-  } finally {
-    database.close();
-  }
-});
-
-test('从版本 18 升级到 19：同一镜头组已有多个进行中的任务时保留最新的一个，其余记为失败并写明原因，数据不丢失', () => {
-  const database = openDatabase(IN_MEMORY_DATABASE_PATH, MIGRATIONS.slice(0, 18));
-  try {
-    assert.equal(readSchemaVersion(database), 18);
-    const seed = seedGeneration(database, 3);
-    const [groupA, groupB, groupC] = seed.groupIds;
-    const insertJob = (groupId: number, status: string, remoteJobId: string | null = null) =>
-      Number(
-        database
-          .prepare("INSERT INTO video_jobs (group_id, model_id, status, request_snapshot_json, remote_job_id, created_at) VALUES (?, ?, ?, '{}', ?, 't')")
-          .run(groupId, seed.modelId, status, remoteJobId).lastInsertRowid
-      );
-    const succeeded = insertJob(groupA, 'succeeded');
-    database
-      .prepare("INSERT INTO video_results (job_id, group_id, file_path, size_bytes, is_selected, created_at) VALUES (?, ?, 'videos/a.mp4', 10, 1, 't')")
-      .run(succeeded, groupA);
-    const oldRunning = insertJob(groupA, 'running', 'remote-old');
-    const oldQueued = insertJob(groupA, 'queued');
-    const newest = insertJob(groupA, 'waiting');
-    const single = insertJob(groupB, 'queued');
-    const earlierFailed = insertJob(groupC, 'canceled');
-    const jobCount = (database.prepare('SELECT COUNT(*) AS total FROM video_jobs').get() as unknown as { total: number }).total;
-
-    runMigrations(database, MIGRATIONS);
-    assert.equal(readSchemaVersion(database), MIGRATIONS.length);
-
-    const rows = new Map(
-      (database.prepare('SELECT id, status, error_category, error_code, error_message, finished_at FROM video_jobs').all() as unknown as Array<{
-        id: number;
-        status: string;
-        error_category: string | null;
-        error_code: string | null;
-        error_message: string | null;
-        finished_at: string | null;
-      }>).map((row) => [row.id, row])
-    );
-    assert.equal(rows.size, jobCount, '没有任务被删除');
-    assert.equal(rows.get(newest)?.status, 'waiting', '保留 id 最大（最新）的进行中任务');
-    for (const id of [oldRunning, oldQueued]) {
-      const row = rows.get(id);
-      assert.deepEqual([row?.status, row?.error_category, row?.error_code], ['failed', 'invalid_request', 'DuplicateActiveJob']);
-      assert.match(row?.error_message ?? '', /多个进行中的任务.*保留最新的一个/);
-      assert.ok(row?.finished_at !== null && row?.finished_at !== undefined && !Number.isNaN(Date.parse(row.finished_at)), '写入结束时间');
-    }
-    assert.deepEqual([rows.get(succeeded)?.status, rows.get(single)?.status, rows.get(earlierFailed)?.status], ['succeeded', 'queued', 'canceled'], '其他任务不变');
-    assert.equal((database.prepare('SELECT COUNT(*) AS total FROM video_results').get() as unknown as { total: number }).total, 1, '结果保留');
-
-    const repository = new SqliteGenerationRepository(database, new MemoryAssetFileStore());
-    assert.equal(repository.hasActiveJob(groupA), true);
-    assert.throws(() => repository.insertJob({ groupId: groupA, modelId: seed.modelId, status: 'queued', snapshot: SNAPSHOT, prevJobId: null, firstFrameId: null }, T1), ConflictError);
-    repository.markFailed(newest, { category: 'server', code: null, message: 'x' }, T2);
-    assert.equal(repository.insertJob({ groupId: groupA, modelId: seed.modelId, status: 'queued', snapshot: SNAPSHOT, prevJobId: null, firstFrameId: null }, T1).attempt, 2, '原有任务的尝试次数都是 1');
-  } finally {
-    database.close();
-  }
-});
-
-test('从版本 18 升级到 19：没有重复的进行中任务时数据不变，索引已建立', () => {
-  const database = openDatabase(IN_MEMORY_DATABASE_PATH, MIGRATIONS.slice(0, 18));
-  try {
-    const seed = seedGeneration(database, 2);
-    database
-      .prepare("INSERT INTO video_jobs (group_id, model_id, status, request_snapshot_json, created_at) VALUES (?, ?, 'queued', '{}', 't')")
-      .run(seed.groupIds[0], seed.modelId);
-    runMigrations(database, MIGRATIONS);
-    const rows = database.prepare('SELECT status, error_category, finished_at FROM video_jobs').all() as unknown as Array<{ status: string; error_category: string | null; finished_at: string | null }>;
-    assert.deepEqual(rows.map((row) => [row.status, row.error_category, row.finished_at]), [['queued', null, null]]);
-    const index = database.prepare("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'video_jobs_active_group_unique_idx'").get() as unknown as { sql: string } | undefined;
-    assert.match(index?.sql ?? '', /UNIQUE INDEX .*\(group_id\) WHERE status IN \('waiting', 'queued', 'running'\)/);
   } finally {
     database.close();
   }

@@ -9,7 +9,7 @@
 
 import { BackupFileInspection } from '../models/backup';
 
-/** 本扩展数据库一定包含的核心表：迁移 001 创建且之后始终存在，用来识别备份文件是否本扩展的数据库。 */
+/** 本扩展数据库一定包含的核心表：初始迁移创建且之后始终存在，用来识别备份文件是否本扩展的数据库。 */
 export const BACKUP_REQUIRED_TABLES: readonly string[] = ['projects', 'works', 'episodes', 'stage_runs'];
 
 /** 完整性检查通过时 PRAGMA quick_check 返回的结果。 */

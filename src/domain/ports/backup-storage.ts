@@ -41,7 +41,7 @@ export interface BackupStorage {
   /**
    * 以只读方式检查备份文件引用的资产文件是否齐全。
    * @param filePath 备份文件的绝对路径。
-   * @returns 检查结果；备份是迁移 020 之前的旧结构、没有资产文件路径时返回 undefined。
+   * @returns 检查结果；备份里没有资产文件路径列时返回 undefined。
    */
   inspectAssetFiles(filePath: string): BackupAssetFileInspection | undefined;
 
