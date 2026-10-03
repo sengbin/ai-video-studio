@@ -22,7 +22,7 @@ import { SqliteGenerationProfileRepository } from './sqlite-generation-profile-r
 import { runInTransaction } from './transaction';
 
 const NOW = '2026-01-01T00:00:00.000Z';
-const EXPECTED_TABLE_COUNT = 25;
+const EXPECTED_TABLE_COUNT = 26;
 
 /** 查询库中所有业务表的名称。 */
 function listTableNames(database: DatabaseSync): string[] {
@@ -520,7 +520,7 @@ test('从版本 8 升级到 9：已有资产保留，已有提示词视为基于
         ['有提示词', 1, 1, 1, 'none', null],
         ['没有提示词', 1, 0, 0, 'none', null]
       ]);
-      assert.deepEqual(listTableNames(database).filter((name) => name.startsWith('asset_')), ['asset_files', 'asset_version_files', 'asset_versions']);
+      assert.deepEqual(listTableNames(database).filter((name) => name.startsWith('asset_')), ['asset_categories', 'asset_files', 'asset_version_files', 'asset_versions']);
       assert.deepEqual(database.prepare('PRAGMA foreign_key_check').all(), []);
     } finally {
       database.close();
@@ -646,6 +646,40 @@ test('迁移 012：生成参数新增生成时长列，已有记录的时长为�
     profiles.save({ scope: 'work', workId }, values, NOW);
     assert.deepEqual(profiles.find({ scope: 'work', workId }), values);
     assert.throws(() => database.prepare("UPDATE generation_profiles SET duration_seconds = 0 WHERE scope = 'work'").run());
+  } finally {
+    database.close();
+  }
+});
+
+test('迁移 013：已有资产的分类为空（不分类），分类在同类型内名称唯一，删除分类后资产保留并置空分类', () => {
+  const database = new DatabaseSync(IN_MEMORY_DATABASE_PATH);
+  try {
+    database.exec('PRAGMA foreign_keys = ON');
+    runMigrations(database, MIGRATIONS.slice(0, 12));
+    database
+      .prepare("INSERT INTO assets (kind, name, attributes_json, created_at, updated_at) VALUES ('character', '林夏', '{}', ?, ?)")
+      .run(NOW, NOW);
+
+    runMigrations(database, MIGRATIONS);
+    assert.equal(readSchemaVersion(database), MIGRATIONS.length);
+    assert.deepEqual({ ...database.prepare('SELECT category_id FROM assets').get() }, { category_id: null });
+
+    database.prepare("INSERT INTO asset_categories (kind, name, created_at, updated_at) VALUES ('character', '主角', ?, ?)").run(NOW, NOW);
+    database.prepare("INSERT INTO asset_categories (kind, name, created_at, updated_at) VALUES ('scene', '主角', ?, ?)").run(NOW, NOW);
+    assert.throws(
+      () => database.prepare("INSERT INTO asset_categories (kind, name, created_at, updated_at) VALUES ('character', '主角', ?, ?)").run(NOW, NOW),
+      '同一类型内分类名称唯一'
+    );
+    assert.throws(
+      () => database.prepare("INSERT INTO asset_categories (kind, name, created_at, updated_at) VALUES ('bogus', '甲', ?, ?)").run(NOW, NOW),
+      '类型必须是五种之一'
+    );
+    assert.throws(() => database.prepare('UPDATE assets SET category_id = 0').run(), '不存在的分类（包括 0）违反外键');
+
+    database.prepare('UPDATE assets SET category_id = 1').run();
+    database.prepare('DELETE FROM asset_categories WHERE id = 1').run();
+    assert.equal(countRows(database, 'assets'), 1);
+    assert.deepEqual({ ...database.prepare('SELECT category_id FROM assets').get() }, { category_id: null });
   } finally {
     database.close();
   }

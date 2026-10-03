@@ -1,22 +1,26 @@
 // ------------------------------------------------------------------------
 // 名称：asset-list-pages.ts
-// 说明：资产列表页的入口：每种资产类型一个面板，列出该类型的全部资产（资产不属于项目）；新建、编辑表单都在页内弹出。
+// 说明：资产列表页的入口：每种资产类型一个面板，列出该类型的全部资产（资产不属于项目）；新建、编辑资产与创建、编辑分类的表单都在页内弹出。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
-// 备注：请求处理在 asset-list-handlers.ts 与 form-handlers.ts；把资产的变化推送给页面。
+// 备注：请求处理在 asset-list-handlers.ts、asset-category-handlers.ts 与 form-handlers.ts；把资产与分类的变化推送给页面。
 // ------------------------------------------------------------------------
 
 import { ASSET_KIND_LABELS, AssetKind } from '../../domain/models/asset';
+import { createAssetCategoryFormCatalog } from '../forms/asset-category-form';
 import { createAssetFormCatalog } from '../forms/asset-form';
+import { FormCatalog } from '../forms/form-definition';
 import { registerFormHandlers } from '../forms/form-handlers';
 import { MessageRouter } from '../messaging/message-router';
 import { ASSET_LIST_PAGE_RESOURCES } from '../panels/page-resources';
 import { OpenedPanel, PanelManager } from '../panels/panel-manager';
+import { AssetCategoryService } from '../services/asset-category-service';
 import { AssetGenerationService } from '../services/asset-generation-service';
 import { AssetPromptService } from '../services/asset-prompt-service';
 import { AssetService } from '../services/asset-service';
 import { ProjectService } from '../services/project-service';
+import { registerAssetCategoryHandlers } from './asset-category-handlers';
 import { ASSET_LIST_EVENTS, AssetListRequest, registerAssetListHandlers } from './asset-list-handlers';
 
 const ASSET_LIST_VIEW_TYPE = 'aigcVideoStudio.assetList';
@@ -43,13 +47,14 @@ export class AssetListPages {
   private readonly opened = new Map<AssetKind, OpenedAssetList>();
 
   /**
-   * @param services 项目（从实体新建资产时读取视觉风格）、资产与提示词生成服务。
+   * @param services 项目（从实体新建资产时读取视觉风格）、资产、资产分类与提示词生成服务。
    * @param panels 面板管理器。
    */
   constructor(
     private readonly services: {
       readonly projects: ProjectService;
       readonly assets: AssetService;
+      readonly categories: AssetCategoryService;
       readonly prompts: AssetPromptService;
       readonly generation: AssetGenerationService;
     },
@@ -71,7 +76,7 @@ export class AssetListPages {
       return;
     }
 
-    const { projects, assets, prompts } = this.services;
+    const { projects, assets, categories, prompts } = this.services;
     const entry: OpenedAssetList = { panel: undefined, pending: request };
     const router = new MessageRouter();
     registerAssetListHandlers(router, kind, this.services, {
@@ -81,7 +86,13 @@ export class AssetListPages {
         return taken;
       }
     });
-    registerFormHandlers(router, createAssetFormCatalog({ projects, assets, prompts }));
+    registerAssetCategoryHandlers(router, categories);
+    // 路由器只能注册一次表单请求，因此合并资产表单与分类表单两个目录。
+    const catalog: FormCatalog = new Map([
+      ...createAssetFormCatalog({ projects, assets, categories, prompts }),
+      ...createAssetCategoryFormCatalog(categories)
+    ]);
+    registerFormHandlers(router, catalog);
 
     const panel = this.panels.open({
       key,
@@ -96,7 +107,7 @@ export class AssetListPages {
     this.opened.set(kind, entry);
 
     const notifyChanged = () => panel.postEvent(ASSET_LIST_EVENTS.changed);
-    const unsubscribes = [assets.onDidChangeAssets(notifyChanged)];
+    const unsubscribes = [assets.onDidChangeAssets(notifyChanged), categories.onDidChangeCategories(notifyChanged)];
     panel.onDidClose(() => {
       unsubscribes.forEach((unsubscribe) => unsubscribe());
       this.opened.delete(kind);

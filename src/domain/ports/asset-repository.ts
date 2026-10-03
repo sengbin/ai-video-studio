@@ -44,8 +44,15 @@ export interface AssetRepository {
   countReferenceFiles(assetId: number): number;
   /** 新增资产及其文件，返回资产标识；已有提示词时视为基于当前内容。 */
   insert(input: AssetInput, files: readonly NewAssetFile[], timestamp: string): number;
-  /** 修改资产内容，用 files 整体替换原有文件，并写入修订信息；资产不存在时返回 false。 */
-  update(id: number, content: AssetContent, files: readonly NewAssetFile[], timestamp: string, revision: AssetRevisionUpdate): boolean;
+  /** 修改资产内容与所属分类（null 为不分类），用 files 整体替换原有文件，并写入修订信息；资产不存在时返回 false。 */
+  update(
+    id: number,
+    content: AssetContent,
+    categoryId: number | null,
+    files: readonly NewAssetFile[],
+    timestamp: string,
+    revision: AssetRevisionUpdate
+  ): boolean;
   /** 手动保存提示词并写入修订信息；资产不存在或提示词正在生成时返回 false。 */
   updatePrompts(id: number, prompts: GeneratedPrompts, revision: PromptRevisionUpdate, timestamp: string): boolean;
   /** 删除资产（连同文件和绑定）；资产不存在时返回 false。 */

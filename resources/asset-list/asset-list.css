@@ -1,7 +1,7 @@
 /*
  * ------------------------------------------------------------------------
  * 名称：asset-list.css
- * 说明：资产列表页样式：顶部搜索框、操作结果提示、空状态，预览列的缩略图与音频信息，状态列，以及生成图片（音频）对话框和版本层；资产表格使用界面组件库的 aiUi.table。
+ * 说明：资产列表页样式：顶部搜索框与分类筛选、操作结果提示、空状态，预览列的缩略图与音频信息，状态列，以及分类管理页、生成图片（音频）对话框和版本层；资产表格使用界面组件库的 aiUi.table。
  * 作者：Lion
  * 邮箱：chengbin@3578.cn
  * 日期：2026-10-02
@@ -12,6 +12,12 @@
 .assets-search {
   flex: 0 0 auto;
   width: 240px;
+}
+
+/* 工具栏里的分类筛选下拉 */
+.assets-filter {
+  flex: 0 0 auto;
+  width: 170px;
 }
 
 .assets-message {
@@ -82,6 +88,24 @@
   flex-direction: column;
   align-items: flex-start;
   gap: 2px;
+}
+
+/* 分类管理弹出页：顶部操作条、操作结果提示和分类表格 */
+.asset-cat {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.asset-cat__bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.asset-cat__message {
+  margin: 0;
 }
 
 /* 生成图片/音频的弹出页 */

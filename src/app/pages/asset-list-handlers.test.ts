@@ -10,9 +10,11 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { IN_MEMORY_DATABASE_PATH, openDatabase } from '../../infra/database/database-connection';
+import { SqliteAssetCategoryRepository } from '../../infra/database/sqlite-asset-category-repository';
 import { SqliteAssetRepository } from '../../infra/database/sqlite-asset-repository';
 import { SqliteAssetVersionRepository } from '../../infra/database/sqlite-asset-version-repository';
 import { MessageRouter } from '../messaging/message-router';
+import { AssetCategoryService } from '../services/asset-category-service';
 import { AssetGenerationService } from '../services/asset-generation-service';
 import { AssetPromptService } from '../services/asset-prompt-service';
 import { AssetService } from '../services/asset-service';
@@ -23,6 +25,7 @@ function createFixture() {
   const database = openDatabase(IN_MEMORY_DATABASE_PATH);
   const assetRepository = new SqliteAssetRepository(database);
   const assets = new AssetService(assetRepository);
+  const categories = new AssetCategoryService(new SqliteAssetCategoryRepository(database));
   const text = new ScriptedText(() => ({ promptZh: '中文', promptEn: 'english' }));
   const prompts = new AssetPromptService({ text, prompts: FILE_PROMPTS, assets: assetRepository, notify: () => undefined });
   const generation = new AssetGenerationService({
@@ -34,7 +37,7 @@ function createFixture() {
   });
   const state: { pending: AssetListRequest | undefined } = { pending: undefined };
   const router = new MessageRouter();
-  registerAssetListHandlers(router, 'scene', { assets, prompts, generation }, {
+  registerAssetListHandlers(router, 'scene', { assets, categories, prompts, generation }, {
     takePending: () => {
       const taken = state.pending;
       state.pending = undefined;
@@ -42,19 +45,24 @@ function createFixture() {
     }
   });
   const send = (name: string, payload?: unknown) => router.handle({ type: 'request', requestId: 1, name, payload });
-  return { database, assets, prompts, state, send };
+  return { database, assets, categories, prompts, state, send };
 }
 
-test('读取列表只返回页面绑定类型的资产', async () => {
-  const { database, assets, send } = createFixture();
+test('读取列表只返回页面绑定类型的资产与分类，分类带资产数量', async () => {
+  const { database, assets, categories, send } = createFixture();
   try {
-    assets.createAsset('scene', { name: '灯塔' });
+    const lighthouse = categories.createCategory('scene', { name: '海边' });
+    categories.createCategory('scene', { name: '室内' });
+    categories.createCategory('prop', { name: '随身物品' });
+    assets.createAsset('scene', { name: '灯塔' }, { categoryId: lighthouse.id });
+    assets.createAsset('scene', { name: '客厅' });
     assets.createAsset('prop', { name: '钥匙' });
     const response = await send(ASSET_LIST_REQUESTS.load);
     assert.ok(response?.ok);
-    const data = response.data as { kind: string; assets: AssetListRow[] };
+    const data = response.data as { kind: string; assets: AssetListRow[]; categories: Array<{ name: string; assetCount: number }> };
     assert.equal(data.kind, 'scene');
-    assert.deepEqual(data.assets.map((asset) => asset.name), ['灯塔']);
+    assert.deepEqual(data.assets.map((asset) => [asset.name, asset.categoryId]), [['客厅', null], ['灯塔', lighthouse.id]]);
+    assert.deepEqual(data.categories.map((category) => [category.name, category.assetCount]), [['海边', 1], ['室内', 0]]);
   } finally {
     database.close();
   }

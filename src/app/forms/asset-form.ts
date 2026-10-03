@@ -4,13 +4,12 @@
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
-// 备注：类型由入口决定、创建后不能修改，资产不属于项目；字段约束取自领域规则常量，保证界面与宿主校验一致；表单引擎不支持字段联动和折叠，风格留空表示不指定风格，语言仅对音色参考有效；提交按钮区分“仅保存”与“保存并生成提示词”，后者在保存后启动后台提示词生成；从实体新建（参数带 episodeId、entityId）时按实体设定预填，画面风格预填为作品所在项目的视觉风格，保存后自动绑定为形象。
+// 备注：类型由入口决定、创建后不能修改，资产不属于项目；字段约束取自领域规则常量，保证界面与宿主校验一致；表单引擎不支持字段联动和折叠，风格留空表示不指定风格，语言仅对音色参考有效；“所属分类”是下拉，选项为该类型已有的分类名称，不选（空串）表示不分类，提交时由分类服务解析为分类标识（null 为不分类）；提交按钮区分“仅保存”与“保存并生成提示词”，后者在保存后启动后台提示词生成；从实体新建（参数带 episodeId、entityId）时按实体设定预填，画面风格预填为作品所在项目的视觉风格，保存后自动绑定为形象。
 // ------------------------------------------------------------------------
 
 import { FORM_LEVEL_ERROR_KEY, ValidationError } from '../../domain/errors';
 import {
   ASSET_ATTRIBUTE_FIELDS,
-  ASSET_KINDS,
   ASSET_KIND_LABELS,
   AUDIO_KIND_LABELS,
   AssetFileRecord,
@@ -32,12 +31,14 @@ import {
   ASSET_IMAGE_MAX_BYTES,
   ASSET_IMAGE_MAX_FILES,
   ASSET_NAME_MAX_LENGTH,
-  ASSET_STYLE_MAX_LENGTH
+  ASSET_STYLE_MAX_LENGTH,
+  readAssetKind
 } from '../../domain/rules/asset-rules';
 import { buildAssetPrefill } from '../../domain/rules/entity-asset-prefill';
 import { hasPrompt } from '../../domain/rules/asset-generation-rules';
 import { readEntityId, readRecord } from '../../domain/rules/field-readers';
 import { AssetService, DUPLICATE_ASSET_NAME_MESSAGE } from '../services/asset-service';
+import { ASSET_CATEGORY_FIELD_KEY, AssetCategoryService } from '../services/asset-category-service';
 import { AssetPromptService } from '../services/asset-prompt-service';
 import { ProjectService } from '../services/project-service';
 import { SyncFormCatalog, FormDefinition, FormFactory, FormValues } from './form-definition';
@@ -64,6 +65,9 @@ const MEGABYTE = 1024 * 1024;
 /** 参考图以外的长文本描述最多长到的行数。 */
 const ATTRIBUTE_MAX_ROWS = 4;
 
+/** 所属分类下拉里表示“不分类”的文字：选项为空值时显示，提交的值为空串。 */
+const NO_CATEGORY_LABEL = '不分类';
+
 /** 新建表单的提交按钮：仅创建，或创建后在后台生成提示词（主按钮）。 */
 const CREATE_SUBMIT_ACTIONS: readonly FormSubmitActionSchema[] = [
   { key: ASSET_SUBMIT_KEYS.create, label: '仅创建' },
@@ -85,12 +89,17 @@ function createEditSubmitActions(hasExistingPrompt: boolean): FormSubmitActionSc
   ];
 }
 
-/** 入口传来的资产类型，必须是五种之一。 */
-function readKind(value: unknown): AssetKind {
-  if (typeof value !== 'string' || !ASSET_KINDS.includes(value as AssetKind)) {
-    throw new ValidationError({ [FORM_LEVEL_ERROR_KEY]: '资产类型无效。' });
-  }
-  return value as AssetKind;
+/** 所属分类字段：选项为该类型已有的分类名称，不选即不分类。 */
+function createCategoryField(kind: AssetKind, categoryNames: readonly string[]): FormFieldSchema {
+  return {
+    key: ASSET_CATEGORY_FIELD_KEY,
+    label: '所属分类',
+    description: `默认不分类；${ASSET_KIND_LABELS[kind]}分类可在列表页的“分类管理”中创建`,
+    control: 'select',
+    required: false,
+    options: categoryNames,
+    placeholder: NO_CATEGORY_LABEL
+  };
 }
 
 /** 资产名称字段。 */
@@ -245,9 +254,14 @@ function createAudioFields(): FormFieldSchema[] {
   ];
 }
 
-/** 按类型组装表单字段。 */
-function createFields(kind: AssetKind): FormFieldSchema[] {
-  return [createNameField(kind), ...(kind === 'audio' ? createAudioFields() : createImageFields(kind))];
+/** 按类型组装表单字段：名称之后是所属分类，选项取自该类型当前的分类。 */
+function createFields(kind: AssetKind, categories: AssetCategoryService): FormFieldSchema[] {
+  const categoryNames = categories.listCategories(kind).map((category) => category.name);
+  return [
+    createNameField(kind),
+    createCategoryField(kind, categoryNames),
+    ...(kind === 'audio' ? createAudioFields() : createImageFields(kind))
+  ];
 }
 
 /** 已保存的参考文件转文件字段的初始值（与界面提交的格式一致：JSON 文本，Base64 内容）。 */
@@ -297,6 +311,8 @@ export interface AssetFormDependencies {
   readonly projects: ProjectService;
   readonly assets: AssetService;
   readonly prompts: AssetPromptService;
+  /** 读取所属分类的选项，并把表单选择的分类名称解析为分类标识。 */
+  readonly categories: AssetCategoryService;
   /** 从实体新建资产时读取实体设定并绑定；不支持从实体新建的页面可以不传。 */
   readonly entities?: AssetEntitySource;
 }
@@ -316,24 +332,25 @@ function createNewAssetForm(dependencies: AssetFormDependencies, params: unknown
   if (source.entityId !== undefined) {
     return createEntityAssetForm(dependencies, source);
   }
-  const { assets, prompts } = dependencies;
-  const kind = readKind(source.kind);
+  const { assets, prompts, categories } = dependencies;
+  const kind = readAssetKind(source.kind);
   return {
     schema: {
       title: `新建${ASSET_KIND_LABELS[kind]}`,
       submitLabel: CREATE_SUBMIT_ACTIONS[1].label,
-      fields: createFields(kind),
+      fields: createFields(kind, categories),
       submitActions: CREATE_SUBMIT_ACTIONS
     },
     initialValues: kind === 'audio' ? { audioKind: AUDIO_KIND_LABELS.voice } : {},
     checkField: (key, value) => (key === 'name' && !assets.isNameAvailable(kind, value) ? DUPLICATE_ASSET_NAME_MESSAGE : undefined),
     submit: (values, submitKey) => {
-      // 先检查信息是否足够生成提示词，避免保存了资产却无法生成。
+      // 先解析所属分类、检查信息是否足够生成提示词，避免保存了资产却无法生成。
+      const categoryId = categories.resolveCategoryId(kind, values[ASSET_CATEGORY_FIELD_KEY] ?? '');
       const generate = submitKey === ASSET_SUBMIT_KEYS.createAndPrompt;
       if (generate) {
         prompts.assertCanGenerate(kind, values, hasFiles(values));
       }
-      const asset = assets.createAsset(kind, values);
+      const asset = assets.createAsset(kind, values, { categoryId });
       if (generate) {
         prompts.start(asset.id);
       }
@@ -346,7 +363,7 @@ function createNewAssetForm(dependencies: AssetFormDependencies, params: unknown
  * @param source `{ episodeId, entityId }`。
  */
 function createEntityAssetForm(dependencies: AssetFormDependencies, source: Record<string, unknown>): FormDefinition {
-  const { projects, assets, entities } = dependencies;
+  const { projects, assets, categories, entities } = dependencies;
   if (entities === undefined) {
     throw new ValidationError({ [FORM_LEVEL_ERROR_KEY]: '当前页面不支持从实体新建资产。' });
   }
@@ -359,17 +376,18 @@ function createEntityAssetForm(dependencies: AssetFormDependencies, source: Reco
     schema: {
       title: `新建${ASSET_KIND_LABELS[kind]}`,
       submitLabel: CREATE_SUBMIT_ACTIONS[1].label,
-      fields: createFields(kind),
+      fields: createFields(kind, categories),
       submitActions: CREATE_SUBMIT_ACTIONS
     },
     initialValues: { ...(projectStyle === null ? {} : { style: projectStyle }), ...buildAssetPrefill(entity) },
     checkField: (key, value) => (key === 'name' && !assets.isNameAvailable(kind, value) ? DUPLICATE_ASSET_NAME_MESSAGE : undefined),
     submit: (values, submitKey) => {
+      const categoryId = categories.resolveCategoryId(kind, values[ASSET_CATEGORY_FIELD_KEY] ?? '');
       const generate = submitKey === ASSET_SUBMIT_KEYS.createAndPrompt;
       if (generate) {
         dependencies.prompts.assertCanGenerate(kind, values, hasFiles(values));
       }
-      const asset = assets.createAsset(kind, values, { sourceEntityId: entityId });
+      const asset = assets.createAsset(kind, values, { sourceEntityId: entityId, categoryId });
       try {
         entities.bind({ episodeId, entityId, assetId: asset.id, purpose: 'visual' });
       } catch (error) {
@@ -384,21 +402,28 @@ function createEntityAssetForm(dependencies: AssetFormDependencies, source: Reco
   };
 }
 
-/** 创建“编辑资产”表单的定义；类型不能修改。 */
-function createEditAssetForm(assets: AssetService, prompts: AssetPromptService, assetId: number): FormDefinition {
+/** 创建“编辑资产”表单的定义；类型不能修改，所属分类已被删除时显示为不分类。 */
+function createEditAssetForm(
+  assets: AssetService,
+  prompts: AssetPromptService,
+  categories: AssetCategoryService,
+  assetId: number
+): FormDefinition {
   const asset = assets.getAsset(assetId);
   const editActions = createEditSubmitActions(hasPrompt(asset));
+  const categoryName = asset.categoryId === null ? '' : categories.getCategory(asset.categoryId).name;
   return {
     schema: {
       title: `编辑${ASSET_KIND_LABELS[asset.kind]}`,
       submitLabel: editActions[1].label,
-      fields: createFields(asset.kind),
+      fields: createFields(asset.kind, categories),
       submitActions: editActions
     },
-    initialValues: toFormValues(asset, assets.getReferenceFiles(assetId)),
+    initialValues: { ...toFormValues(asset, assets.getReferenceFiles(assetId)), [ASSET_CATEGORY_FIELD_KEY]: categoryName },
     checkField: (key, value) =>
       key === 'name' && !assets.isNameAvailable(asset.kind, value, asset.id) ? DUPLICATE_ASSET_NAME_MESSAGE : undefined,
     submit: (values, submitKey) => {
+      const categoryId = categories.resolveCategoryId(asset.kind, values[ASSET_CATEGORY_FIELD_KEY] ?? '');
       const regenerate = submitKey === ASSET_SUBMIT_KEYS.saveAndPrompt;
       if (regenerate) {
         if (assets.getAsset(asset.id).promptStatus === 'running') {
@@ -406,7 +431,7 @@ function createEditAssetForm(assets: AssetService, prompts: AssetPromptService, 
         }
         prompts.assertCanGenerate(asset.kind, values, hasFiles(values));
       }
-      assets.updateAsset(asset.id, values);
+      assets.updateAsset(asset.id, values, { categoryId });
       if (regenerate) {
         prompts.start(asset.id);
       }
@@ -416,7 +441,7 @@ function createEditAssetForm(assets: AssetService, prompts: AssetPromptService, 
 
 /**
  * 创建资产表单目录：新建的参数为 `{ kind }` 或 `{ episodeId, entityId }`（从实体新建），编辑的参数为 `{ assetId }`。
- * @param dependencies 项目、资产与提示词生成服务，以及可选的实体来源。
+ * @param dependencies 项目、资产、分类与提示词生成服务，以及可选的实体来源。
  */
 export function createAssetFormCatalog(dependencies: AssetFormDependencies): SyncFormCatalog {
   return new Map<string, FormFactory>([
@@ -427,6 +452,7 @@ export function createAssetFormCatalog(dependencies: AssetFormDependencies): Syn
         createEditAssetForm(
           dependencies.assets,
           dependencies.prompts,
+          dependencies.categories,
           readEntityId({ id: readRecord(params ?? {}).assetId }, '资产')
         )
     ],

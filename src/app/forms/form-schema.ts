@@ -25,7 +25,7 @@ export interface FormFieldSchema {
   readonly options?: readonly string[];
   /** 下拉框是否提供“其他（手动输入）”；仅 select 使用。 */
   readonly allowCustom?: boolean;
-  /** 输入框的占位示例文字。 */
+  /** 输入框的占位示例文字；下拉框用它作为“未选择”项（值为空串）的显示文字，不填为“请选择”。 */
   readonly placeholder?: string;
   /** 多行文本按内容增高的最大行数，超过后出现滚动条；不填用表单引擎的默认值；仅 textarea 使用。 */
   readonly maxRows?: number;

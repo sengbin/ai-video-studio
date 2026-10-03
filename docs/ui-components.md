@@ -544,7 +544,7 @@ const page = aiUi.openPage({
 | `maxLength` | 最大长度，界面即时校验，宿主再次校验 |
 | `options` | 选项，`select`、`radio`、`checkboxes` 使用 |
 | `allowCustom` | 下拉是否提供“其他（手动输入）” |
-| `placeholder` | 输入框占位示例 |
+| `placeholder` | 输入框占位示例；`select` 用它作为“未选择”项（值为空串）的显示文字，不填为“请选择” |
 | `maxRows` | 多行文本按内容增高的最大行数，不填默认 4；仅 `textarea` 使用 |
 | `checkUnique` | 失去焦点时向宿主检查唯一性 |
 | `accept`、`multiple`、`maxFiles`、`maxFileBytes` | `file` 使用，含义见 5.12；必填时至少需要选择一个文件 |

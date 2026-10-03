@@ -26,6 +26,7 @@ import { AssetGenerationQueue } from './app/queue/asset-generation-queue';
 import { AssetGenerationService } from './app/services/asset-generation-service';
 import { AssetPromptService } from './app/services/asset-prompt-service';
 import { AssetService } from './app/services/asset-service';
+import { AssetCategoryService } from './app/services/asset-category-service';
 import { BackupHost, BackupService } from './app/services/backup-service';
 import { BindingService } from './app/services/binding-service';
 import { ChangeNotifier } from './app/services/change-notifier';
@@ -51,6 +52,7 @@ import { openDatabase } from './infra/database/database-connection';
 import { DatabaseFilePaths, applyPendingRestore, resolveDatabaseFilePaths } from './infra/database/database-restore';
 import { MIGRATIONS } from './infra/database/migrations';
 import { SqliteAssetRepository } from './infra/database/sqlite-asset-repository';
+import { SqliteAssetCategoryRepository } from './infra/database/sqlite-asset-category-repository';
 import { SqliteAssetVersionRepository } from './infra/database/sqlite-asset-version-repository';
 import { SqliteBackupStorage } from './infra/database/sqlite-backup-storage';
 import { SqliteBindingRepository } from './infra/database/sqlite-binding-repository';
@@ -145,6 +147,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const textSettingsService = new TextSettingsService(settingsStore, new CopilotModelCatalog());
   const assetRepository = new SqliteAssetRepository(database);
   const assetService = new AssetService(assetRepository);
+  const assetCategoryService = new AssetCategoryService(new SqliteAssetCategoryRepository(database));
   const bindingService = new BindingService(new SqliteBindingRepository(database), assetRepository);
   const providerRepository = new SqliteProviderRepository(database);
   const providerService = new ProviderService({
@@ -235,7 +238,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const projectPages = new ProjectPages(projectService, panels);
   const workListPages = new WorkListPages({ ...services, profiles: profileService, providers: providerService }, panels);
   const assetListPages = new AssetListPages(
-    { projects: projectService, assets: assetService, prompts: assetPromptService, generation: assetGenerationService },
+    { projects: projectService, assets: assetService, categories: assetCategoryService, prompts: assetPromptService, generation: assetGenerationService },
     panels
   );
   const settingsPages = new SettingsPages({ text: textSettingsService, providers: providerService }, panels);
@@ -247,7 +250,7 @@ export function activate(context: vscode.ExtensionContext): void {
   });
   const backupPages = new BackupPages(backupService, panels);
   const workbenchPages = new WorkbenchPages(
-    { generation: generationService, profiles: profileService, bindings: bindingService, assets: assetService, prompts: assetPromptService, providers: providerService, ...services },
+    { generation: generationService, profiles: profileService, bindings: bindingService, assets: assetService, categories: assetCategoryService, prompts: assetPromptService, providers: providerService, ...services },
     // 结果视频用系统默认的视频播放器打开，也可导出到用户选择的位置或在文件夹中显示。
     createWorkbenchHost(),
     panels

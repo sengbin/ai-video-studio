@@ -86,6 +86,8 @@ export interface AssetInput extends AssetContent {
   readonly kind: AssetKind;
   /** 由哪个脚本实体创建；手动创建为 null。 */
   readonly sourceEntityId: number | null;
+  /** 所属分类（asset_categories.id）；null 表示不分类。分类不属于可编辑内容，改分类不影响提示词与生成状态。 */
+  readonly categoryId: number | null;
 }
 
 /** 已保存的资产。 */

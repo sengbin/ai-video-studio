@@ -23,7 +23,7 @@ import {
 
 function asset(overrides: Partial<AssetRecord> = {}): AssetRecord {
   return {
-    id: 1, kind: 'character', name: '林夏', sourceEntityId: null, attributes: { appearance: '短发' }, composition: '半身像', style: null,
+    id: 1, kind: 'character', name: '林夏', sourceEntityId: null, categoryId: null, attributes: { appearance: '短发' }, composition: '半身像', style: null,
     background: '', referenceAspectRatio: '1:1', extraRequirements: '', promptZh: '提示', promptEn: 'prompt', contentRevision: 2, promptRevision: 3,
     promptContentRevision: 2, promptStatus: 'succeeded', promptError: null, adoptedVersionId: null, createdAt: 't', updatedAt: 't', ...overrides
   };

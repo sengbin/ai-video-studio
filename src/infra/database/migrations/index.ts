@@ -20,6 +20,7 @@ import { assetGenerationMigration } from './009-asset-generation';
 import { globalAssetsMigration } from './010-global-assets';
 import { groupProfilesMigration } from './011-group-profiles';
 import { profileDurationMigration } from './012-profile-duration';
+import { assetCategoriesMigration } from './013-asset-categories';
 
 /** 全部数据库迁移，版本号从 1 开始连续递增。 */
 export const MIGRATIONS: readonly Migration[] = [
@@ -34,5 +35,6 @@ export const MIGRATIONS: readonly Migration[] = [
   assetGenerationMigration,
   globalAssetsMigration,
   groupProfilesMigration,
-  profileDurationMigration
+  profileDurationMigration,
+  assetCategoriesMigration
 ];

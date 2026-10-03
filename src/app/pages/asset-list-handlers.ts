@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：asset-list-handlers.ts
-// 说明：资产列表页的请求处理：读取某类型的全部资产（带提示词与图片的状态）、取走待执行动作、删除（先取使用情况，再删除）、提示词后台生成的启动与取消、图片（音频）生成的提交与版本管理。
+// 说明：资产列表页的请求处理：读取某类型的全部资产（带提示词与图片的状态）和该类型的分类、取走待执行动作、删除（先取使用情况，再删除）、提示词后台生成的启动与取消、图片（音频）生成的提交与版本管理。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
@@ -15,6 +15,7 @@ import { MessageRouter } from '../messaging/message-router';
 import { AssetGenerationService } from '../services/asset-generation-service';
 import { AssetPromptService } from '../services/asset-prompt-service';
 import { AssetService } from '../services/asset-service';
+import { AssetCategoryService } from '../services/asset-category-service';
 
 /** 资产列表页使用的请求名称，需与 resources/asset-list/ 下的脚本一致。 */
 export const ASSET_LIST_REQUESTS = {
@@ -71,7 +72,7 @@ export interface AssetListActions {
  * 在路由器上注册资产列表页的请求处理函数。
  * @param router 面板的请求路由器。
  * @param kind 页面绑定的资产类型。
- * @param services 资产、提示词生成和资产生成服务。
+ * @param services 资产、分类、提示词生成和资产生成服务。
  * @param actions 外部提供的能力。
  */
 export function registerAssetListHandlers(
@@ -79,12 +80,13 @@ export function registerAssetListHandlers(
   kind: AssetKind,
   services: {
     readonly assets: AssetService;
+    readonly categories: AssetCategoryService;
     readonly prompts: AssetPromptService;
     readonly generation: AssetGenerationService;
   },
   actions: AssetListActions
 ): void {
-  const { assets, prompts, generation } = services;
+  const { assets, categories, prompts, generation } = services;
 
   router.register(ASSET_LIST_REQUESTS.load, async () => {
     const hasUsableModel = await generation.hasUsableModel(kind);
@@ -94,7 +96,7 @@ export function registerAssetListHandlers(
       hasUngeneratedChanges: hasUngeneratedChanges(asset, asset.generation),
       availability: checkGenerationAvailability(asset, asset.generation, hasUsableModel)
     }));
-    return { kind, assets: rows };
+    return { kind, assets: rows, categories: categories.listCategories(kind) };
   });
 
   router.register(ASSET_LIST_REQUESTS.takePending, () => ({ request: actions.takePending() }));

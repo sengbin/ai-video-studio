@@ -21,9 +21,15 @@ export const DUPLICATE_ASSET_NAME_MESSAGE = '已有同名资产，请换一个�
 const AUDIO_KIND_LOCKED_MESSAGE = '该音频已被绑定或引用，不能修改音频类型。';
 const PROMPT_RUNNING_MESSAGE = '提示词生成中，完成后再修改提示词。';
 
-/** 创建资产时的可选来源：由哪个脚本实体创建。 */
+/** 创建资产时的可选项：由哪个脚本实体创建、所属分类（缺省为不分类）。 */
 export interface CreateAssetOptions {
   readonly sourceEntityId?: number;
+  readonly categoryId?: number | null;
+}
+
+/** 修改资产时的可选项：所属分类，null 为不分类，不传表示保持不变。 */
+export interface UpdateAssetOptions {
+  readonly categoryId?: number | null;
 }
 
 /** 删除资产前需要告知用户的信息。 */
@@ -101,7 +107,7 @@ export class AssetService {
     }
     this.assertNameAvailable(kind, normalized.content.name);
     const id = this.repository.insert(
-      { ...normalized.content, kind, sourceEntityId: options.sourceEntityId ?? null },
+      { ...normalized.content, kind, sourceEntityId: options.sourceEntityId ?? null, categoryId: options.categoryId ?? null },
       normalized.files,
       this.timestamp()
     );
@@ -110,12 +116,13 @@ export class AssetService {
   }
 
   /**
-   * 修改资产的内容并整体替换参考文件；类型不能修改。
+   * 修改资产的内容并整体替换参考文件；类型不能修改。改分类不影响提示词与生成状态的修订号。
+   * @param options 所属分类；不传 categoryId 时保持原分类。
    * @throws ValidationError 内容不合法，或已被使用的音频修改了音频类型。
    * @throws ConflictError 名称与同类型的其他资产重复。
    * @throws NotFoundError 资产不存在。
    */
-  updateAsset(id: number, rawInput: unknown): AssetRecord {
+  updateAsset(id: number, rawInput: unknown, options: UpdateAssetOptions = {}): AssetRecord {
     const asset = this.getAsset(id);
     const errors: FieldErrors = {};
     const normalized = this.tryNormalize(rawInput, asset.kind, errors);
@@ -130,7 +137,8 @@ export class AssetService {
     const content = { ...normalized.content, promptZh: asset.promptZh, promptEn: asset.promptEn };
     const filesChanged = !sameReferenceFiles(this.repository.listReferenceFiles(id), normalized.files);
     const revision = computeRevisionUpdate(asset, content, filesChanged);
-    if (!this.repository.update(id, content, normalized.files, this.timestamp(), revision)) {
+    const categoryId = options.categoryId === undefined ? asset.categoryId : options.categoryId;
+    if (!this.repository.update(id, content, categoryId, normalized.files, this.timestamp(), revision)) {
       throw new NotFoundError(`资产 ${id} 不存在。`);
     }
     this.changeNotifier.notify();

@@ -81,10 +81,17 @@ export const WORK_LIST_PAGE_RESOURCES: PageResources = createEditorPageResources
   ]
 );
 
-/** 资产列表页：新建与编辑表单在页内弹出，因此一并加载表单引擎；生成图片（音频）与版本层在列表脚本之前加载。 */
+/** 资产列表页：新建与编辑表单在页内弹出，因此一并加载表单引擎；生成图片（音频）、版本层与分类管理页在列表脚本之前加载。 */
 export const ASSET_LIST_PAGE_RESOURCES: PageResources = createEditorPageResources(
   ['form/form.css', 'asset-list/asset-list.css'],
-  ['form/form-runtime.js', 'shared/page-format.js', 'asset-list/asset-generate.js', 'asset-list/asset-versions.js', 'asset-list/asset-list.js']
+  [
+    'form/form-runtime.js',
+    'shared/page-format.js',
+    'asset-list/asset-generate.js',
+    'asset-list/asset-versions.js',
+    'asset-list/asset-categories.js',
+    'asset-list/asset-list.js'
+  ]
 );
 
 /** 生成工作台页：镜头的编辑与分镜脚本确认复用阶段产出层，因此一并加载表单引擎与分镜脚本产出层；右栏检查器的页签容器由 inspector.js 提供，其中的实体绑定面板由 bindings.js 提供、生成参数面板由 profile.js 提供、提交面板由 submit-panel.js 提供，结果视频的内置播放器由 player.js 提供，结果版本页由 versions.js 提供，尾帧截取由 tail-frames.js 提供。 */

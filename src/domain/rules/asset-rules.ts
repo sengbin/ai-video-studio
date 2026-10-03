@@ -7,8 +7,10 @@
 // 备注：界面提交的内容不可信，这里按内容再次校验：图片与音频按文件头判断真实格式；图片的缩略图、宽高和音频时长由页面读取后随文件提交，宿主只检查取值范围与缩略图格式；描述字段在库里以 snake_case 键保存。
 // ------------------------------------------------------------------------
 
+import { FORM_LEVEL_ERROR_KEY, ValidationError } from '../errors';
 import {
   ASSET_ATTRIBUTE_FIELDS,
+  ASSET_KINDS,
   AUDIO_KIND_LABELS,
   AssetContent,
   AssetKind,
@@ -46,6 +48,18 @@ const IMAGE_SIDE_MAX = 20000;
 export interface NormalizedAsset {
   readonly content: AssetContent;
   readonly files: readonly NewAssetFile[];
+}
+
+/**
+ * 读取入口传来的资产类型，必须是五种之一。
+ * @param value 页面或表单参数中的类型。
+ * @throws ValidationError 类型无效。
+ */
+export function readAssetKind(value: unknown): AssetKind {
+  if (typeof value !== 'string' || !ASSET_KINDS.includes(value as AssetKind)) {
+    throw new ValidationError({ [FORM_LEVEL_ERROR_KEY]: '资产类型无效。' });
+  }
+  return value as AssetKind;
 }
 
 /**

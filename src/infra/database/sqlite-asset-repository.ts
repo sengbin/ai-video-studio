@@ -32,6 +32,7 @@ interface AssetRow {
   readonly kind: AssetKind;
   readonly name: string;
   readonly source_entity_id: number | null;
+  readonly category_id: number | null;
   readonly attributes_json: string;
   readonly composition: string;
   readonly style: string | null;
@@ -83,6 +84,7 @@ function toRecord(row: AssetRow): AssetRecord {
     kind: row.kind,
     name: row.name,
     sourceEntityId: row.source_entity_id,
+    categoryId: row.category_id,
     attributes: JSON.parse(row.attributes_json) as Record<string, string>,
     composition: row.composition,
     style: row.style,
@@ -209,15 +211,16 @@ export class SqliteAssetRepository implements AssetRepository {
     return runInTransaction(this.database, () => {
       const result = this.database
         .prepare(
-          `INSERT INTO assets (kind, name, source_entity_id, attributes_json, composition, style, background,
+          `INSERT INTO assets (kind, name, source_entity_id, category_id, attributes_json, composition, style, background,
              reference_aspect_ratio, extra_requirements, prompt_zh, prompt_en, prompt_revision, prompt_content_revision,
              created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
         .run(
           input.kind,
           input.name,
           input.sourceEntityId,
+          input.categoryId,
           JSON.stringify(input.attributes),
           input.composition,
           input.style,
@@ -237,11 +240,18 @@ export class SqliteAssetRepository implements AssetRepository {
     });
   }
 
-  update(id: number, content: AssetContent, files: readonly NewAssetFile[], timestamp: string, revision: AssetRevisionUpdate): boolean {
+  update(
+    id: number,
+    content: AssetContent,
+    categoryId: number | null,
+    files: readonly NewAssetFile[],
+    timestamp: string,
+    revision: AssetRevisionUpdate
+  ): boolean {
     return runInTransaction(this.database, () => {
       const result = this.database
         .prepare(
-          `UPDATE assets SET name = ?, attributes_json = ?, composition = ?, style = ?, background = ?,
+          `UPDATE assets SET name = ?, category_id = ?, attributes_json = ?, composition = ?, style = ?, background = ?,
              reference_aspect_ratio = ?, extra_requirements = ?, prompt_zh = ?, prompt_en = ?,
              content_revision = ?, prompt_revision = ?, prompt_content_revision = ?,
              adopted_version_id = CASE WHEN ? = 1 THEN NULL ELSE adopted_version_id END, updated_at = ?
@@ -249,6 +259,7 @@ export class SqliteAssetRepository implements AssetRepository {
         )
         .run(
           content.name,
+          categoryId,
           JSON.stringify(content.attributes),
           content.composition,
           content.style,

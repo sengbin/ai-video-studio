@@ -137,6 +137,7 @@
             options,
             value: initialText,
             allowEmpty: !fieldSchema.required,
+            placeholder: fieldSchema.placeholder,
             allowCustom: Boolean(fieldSchema.allowCustom)
           })
         };

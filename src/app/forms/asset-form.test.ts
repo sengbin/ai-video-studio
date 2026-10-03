@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------
 // 名称：asset-form.test.ts
-// 说明：资产表单的自动化测试：字段随类型变化、提交创建与修改、编辑时带出已有文件与重名检查、从实体新建。
+// 说明：资产表单的自动化测试：字段随类型变化、所属分类、提交创建与修改、编辑时带出已有文件与重名检查、从实体新建。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
@@ -11,9 +11,11 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { ConflictError, NotFoundError, ValidationError } from '../../domain/errors';
 import { IN_MEMORY_DATABASE_PATH, openDatabase } from '../../infra/database/database-connection';
+import { SqliteAssetCategoryRepository } from '../../infra/database/sqlite-asset-category-repository';
 import { SqliteAssetRepository } from '../../infra/database/sqlite-asset-repository';
 import { SqliteBindingRepository } from '../../infra/database/sqlite-binding-repository';
 import { SqliteProjectRepository } from '../../infra/database/sqlite-project-repository';
+import { AssetCategoryService } from '../services/asset-category-service';
 import { AssetPromptService } from '../services/asset-prompt-service';
 import { AssetService, DUPLICATE_ASSET_NAME_MESSAGE } from '../services/asset-service';
 import { BindingService } from '../services/binding-service';
@@ -30,6 +32,7 @@ function createFixture(projectNames: readonly string[] = ['项目甲', '项目�
   const projects = new ProjectService(new SqliteProjectRepository(database));
   const assetRepository = new SqliteAssetRepository(database);
   const assets = new AssetService(assetRepository);
+  const categories = new AssetCategoryService(new SqliteAssetCategoryRepository(database));
   const created = projectNames.map((name) => projects.createProject({ name }));
   const text = new ScriptedText(responder ?? (() => ({ promptZh: '中文提示词', promptEn: 'english prompt' })));
   const notifications: number[] = [];
@@ -40,13 +43,13 @@ function createFixture(projectNames: readonly string[] = ['项目甲', '项目�
     notify: () => notifications.push(1)
   });
   const bindings = new BindingService(new SqliteBindingRepository(database), assetRepository);
-  const catalog = createAssetFormCatalog({ projects, assets, prompts, entities: bindings });
+  const catalog = createAssetFormCatalog({ projects, assets, categories, prompts, entities: bindings });
   const open = (name: string, params: unknown): FormDefinition => {
     const factory = catalog.get(name);
     assert.ok(factory);
     return factory(params);
   };
-  return { database, projects, assets, prompts, bindings, text, notifications, created, open };
+  return { database, projects, assets, categories, prompts, bindings, text, notifications, created, open };
 }
 
 /** 提交并等待完成，供 assert.rejects 使用。 */
@@ -70,13 +73,13 @@ test('新建表单：字段随类型变化，文件字段按类型限制，音�
   try {
     const keysOf = (kind: string) => open(ASSET_FORM_NAMES.create, { kind }).schema.fields.map((field) => field.key);
     assert.deepEqual(keysOf('character'), [
-      'name', 'composition', 'style', 'background', 'referenceAspectRatio',
+      'name', 'category', 'composition', 'style', 'background', 'referenceAspectRatio',
       'characterType', 'appearance', 'clothing', 'expressionPose', 'voiceDescription', 'extra', 'files'
     ]);
     assert.deepEqual(keysOf('prop'), [
-      'name', 'composition', 'style', 'background', 'referenceAspectRatio', 'appearance', 'state', 'extra', 'files'
+      'name', 'category', 'composition', 'style', 'background', 'referenceAspectRatio', 'appearance', 'state', 'extra', 'files'
     ]);
-    assert.deepEqual(keysOf('audio'), ['name', 'audioKind', 'description', 'language', 'extra', 'files']);
+    assert.deepEqual(keysOf('audio'), ['name', 'category', 'audioKind', 'description', 'language', 'extra', 'files']);
 
     const image = open(ASSET_FORM_NAMES.create, { kind: 'scene' });
     assert.equal(image.schema.title, '新建场景');
@@ -156,6 +159,74 @@ test('编辑表单：带出已有内容与文件，重名检查排除自身，�
     assert.equal(assets.getReferenceFiles(asset.id).length, 0);
     assert.throws(() => open(ASSET_FORM_NAMES.edit, { assetId: 9999 }), NotFoundError);
     assert.throws(() => open(ASSET_FORM_NAMES.edit, {}), ValidationError);
+  } finally {
+    database.close();
+  }
+});
+
+test('所属分类字段：选项为该类型的分类名称，默认不分类；新建时可选分类，也可不选', async () => {
+  const { database, assets, categories, open } = createFixture();
+  try {
+    categories.createCategory('character', { name: '主角' });
+    categories.createCategory('character', { name: '配角' });
+    categories.createCategory('scene', { name: '室内' });
+
+    const form = open(ASSET_FORM_NAMES.create, { kind: 'character' });
+    const field = form.schema.fields.find((item) => item.key === 'category');
+    assert.deepEqual([field?.control, field?.required, field?.options, field?.placeholder], ['select', false, ['主角', '配角'], '不分类']);
+    assert.equal(form.initialValues.category, undefined);
+    assert.deepEqual(open(ASSET_FORM_NAMES.create, { kind: 'scene' }).schema.fields.find((item) => item.key === 'category')?.options, ['室内']);
+    assert.deepEqual(open(ASSET_FORM_NAMES.create, { kind: 'prop' }).schema.fields.find((item) => item.key === 'category')?.options, []);
+
+    await submit(form, { name: '林夏', category: '主角' });
+    await submit(form, { name: '周远', category: '' });
+    await submit(form, { name: '路人' });
+    const byName = new Map(assets.listAssets('character').map((asset) => [asset.name, asset.categoryId]));
+    assert.equal(byName.get('林夏'), categories.resolveCategoryId('character', '主角'));
+    assert.equal(byName.get('周远'), null);
+    assert.equal(byName.get('路人'), null);
+
+    await assert.rejects(submit(form, { name: '甲', category: '不存在' }), ValidationError);
+    await assert.rejects(submit(form, { name: '乙', category: '室内' }), ValidationError);
+    assert.equal(assets.listAssets('character').length, 3);
+  } finally {
+    database.close();
+  }
+});
+
+test('编辑时带出所属分类；可改成其他分类或改为不分类；分类被删除后显示为不分类', async () => {
+  const { database, assets, categories, open } = createFixture();
+  try {
+    const hero = categories.createCategory('character', { name: '主角' });
+    categories.createCategory('character', { name: '配角' });
+    const asset = assets.createAsset('character', { name: '林夏' }, { categoryId: hero.id });
+    const plain = assets.createAsset('character', { name: '路人' });
+
+    const form = open(ASSET_FORM_NAMES.edit, { assetId: asset.id });
+    assert.equal(form.initialValues.category, '主角');
+    assert.equal(open(ASSET_FORM_NAMES.edit, { assetId: plain.id }).initialValues.category, '');
+
+    await submit(form, { ...form.initialValues, category: '配角' });
+    assert.equal(assets.getAsset(asset.id).categoryId, categories.resolveCategoryId('character', '配角'));
+    await submit(form, { ...form.initialValues, category: '' });
+    assert.equal(assets.getAsset(asset.id).categoryId, null);
+
+    await submit(form, { ...form.initialValues, category: '主角' });
+    categories.deleteCategory(hero.id);
+    assert.equal(open(ASSET_FORM_NAMES.edit, { assetId: asset.id }).initialValues.category, '');
+    await assert.rejects(submit(form, { ...form.initialValues, category: '主角' }), ValidationError);
+  } finally {
+    database.close();
+  }
+});
+
+test('编辑音频的表单带所属分类字段，选项取自音频分类', () => {
+  const { database, assets, categories, open } = createFixture();
+  try {
+    categories.createCategory('audio', { name: '配乐' });
+    const audio = assets.createAsset('audio', { name: '配乐一', audioKind: '背景音乐' });
+    const edit = open(ASSET_FORM_NAMES.edit, { assetId: audio.id });
+    assert.deepEqual(edit.schema.fields.find((item) => item.key === 'category')?.options, ['配乐']);
   } finally {
     database.close();
   }
@@ -411,6 +482,22 @@ test('从实体新建：按设定预填，画面风格预填为作品所在项�
       bindings.listBindings(episode).map((binding) => [binding.entityId, binding.assetId, binding.purpose, binding.isPrimary]),
       [[entity, asset.id, 'visual', true]]
     );
+  } finally {
+    database.close();
+  }
+});
+
+test('从实体新建：可选择所属分类，创建的资产归入该分类并绑定', async () => {
+  const { database, assets, categories, created, open } = createFixture();
+  try {
+    const { episode, entity } = seedEntity(database, created[0].id);
+    const hero = categories.createCategory('character', { name: '主角' });
+    const form = open(ASSET_FORM_NAMES.create, { episodeId: episode, entityId: entity });
+    assert.deepEqual(form.schema.fields.find((field) => field.key === 'category')?.options, ['主角']);
+    assert.equal(form.initialValues.category, undefined);
+
+    await submit(form, { ...form.initialValues, category: '主角' });
+    assert.equal(assets.listAssets('character')[0].categoryId, hero.id);
   } finally {
     database.close();
   }

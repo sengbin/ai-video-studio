@@ -1,10 +1,10 @@
 // ------------------------------------------------------------------------
 // 名称：asset-list.js
-// 说明：资产列表页脚本：列出某种资产类型的全部资产（资产不属于项目），按名称关键字筛选，在页内弹出页面中新建、编辑资产，显示提示词与图片（音频）生成状态，发起提示词生成、图片（音频）生成并打开版本层，带使用情况提示地删除资产。
+// 说明：资产列表页脚本：列出某种资产类型的全部资产（资产不属于项目），按名称关键字和分类（全部、未分类、各分类）筛选，表格带分类列，工具栏的“分类管理”弹出分类管理页，在页内弹出页面中新建、编辑资产，显示提示词与图片（音频）生成状态，发起提示词生成、图片（音频）生成并打开版本层，带使用情况提示地删除资产。
 // 作者：Lion
 // 邮箱：chengbin@3578.cn
 // 日期：2026-10-02
-// 备注：请求与事件名称与 src/app/pages/asset-list-handlers.ts、src/app/forms/asset-form.ts 一致；依赖 form/form-runtime.js（aiForm）、shared/page-format.js（pageFormat）、asset-list/asset-generate.js（aiAssetGenerate）与 asset-list/asset-versions.js（aiAssetVersions）。
+// 备注：请求与事件名称与 src/app/pages/asset-list-handlers.ts、src/app/forms/asset-form.ts 一致；依赖 form/form-runtime.js（aiForm）、shared/page-format.js（pageFormat）、asset-list/asset-generate.js（aiAssetGenerate）、asset-list/asset-versions.js（aiAssetVersions）与 asset-list/asset-categories.js（aiAssetCategories）。
 // ------------------------------------------------------------------------
 
 'use strict';
@@ -24,6 +24,9 @@
   const FORM_EDIT = 'asset.edit';
   const FORM_PROMPT = 'asset.prompt';
   const KIND_AUDIO = 'audio';
+  /** 分类筛选的两个固定取值：全部、未分类；其余取值为分类标识的文本。 */
+  const FILTER_ALL = 'all';
+  const FILTER_NONE = 'none';
 
   const GENERIC_ERROR_TEXT = '操作失败，请重试。';
   const REFRESH_DELAY_MS = 150;
@@ -37,13 +40,20 @@
   /** 页面绑定的资产类型，首次加载成功后由宿主告知。 */
   let kind = '';
   let assets = [];
+  /** 当前类型的分类（含资产数量），随资产一起加载。 */
+  let categories = [];
   let loadError = '';
   let isLoading = true;
   let isFormOpen = false;
   let keyword = '';
+  let categoryFilter = FILTER_ALL;
+  /** 分类下拉当前对应的选项内容，没变化时不重建下拉。 */
+  let categoryOptionsKey = '';
   let refreshTimer = 0;
   let contentElement = null;
   let messageElement = null;
+  let categorySlot = null;
+  let manageButton = null;
 
   /** 在操作结果区显示文字；空串表示清除。 */
   function showMessage(text, isError) {
@@ -74,12 +84,20 @@
       const data = await window.hostBridge.request(REQUEST_LOAD);
       kind = data.kind;
       assets = data.assets;
+      categories = data.categories;
     } catch (error) {
       loadError = (error && error.message) || '资产加载失败。';
     }
     isLoading = false;
+    // 当前筛选的分类已被删除时回到“全部”。
+    if (categoryFilter !== FILTER_ALL && categoryFilter !== FILTER_NONE && !categories.some((category) => String(category.id) === categoryFilter)) {
+      categoryFilter = FILTER_ALL;
+    }
+    renderCategoryFilter();
+    manageButton.setDisabled(!kind);
     renderContent();
-    // 版本层打开时跟着刷新（状态、缩略图、资产被删除）。
+    // 分类管理页、版本层打开时跟着刷新（分类增删改、状态、缩略图、资产被删除）。
+    window.aiAssetCategories.refresh(categories);
     void window.aiAssetVersions.refresh();
   }
 
@@ -288,11 +306,13 @@
     await runAction(REQUEST_GENERATE_PROMPT, { id: asset.id });
   }
 
-  /** 资产表格的列；“图片”列的标题随资产类型变化。 */
+  /** 资产表格的列；“图片”列的标题随资产类型变化，“分类”列按分类标识取名称，未分类显示占位文字。 */
   function buildColumns() {
+    const categoryNames = new Map(categories.map((category) => [category.id, category.name]));
     return [
       { title: '预览', width: 80, minWidth: 64, render: (asset) => renderPreview(asset) },
       { title: '名称', width: '20%', minWidth: 140, render: (asset) => aiUi.tableMainCell({ text: asset.name, description: describeAsset(asset) }) },
+      { title: '分类', width: 100, minWidth: 80, emptyText: '未分类', render: (asset) => categoryNames.get(asset.categoryId) },
       { title: '提示词', width: 110, minWidth: 90, render: renderPromptStatus },
       { title: kind === KIND_AUDIO ? '音频' : '图片', width: 130, minWidth: 100, render: renderGenerationStatus },
       { title: '当前采用', width: 100, minWidth: 80, render: renderAdopted },
@@ -313,6 +333,44 @@
       },
       { title: '操作', type: 'actions', render: renderActions }
     ];
+  }
+
+  /** 弹出“分类管理”页：列出当前类型的分类，可创建、编辑、删除。 */
+  function openCategoryManager() {
+    if (!kind) return;
+    window.aiAssetCategories.open({ kind, label: KIND_LABELS[kind], categories });
+  }
+
+  /** 分类下拉：全部、未分类、各分类，选项后面带资产数量；选项内容没变化时不重建。 */
+  function renderCategoryFilter() {
+    const noneCount = assets.filter((asset) => asset.categoryId === null).length;
+    const options = [
+      { value: FILTER_ALL, label: `全部（${assets.length}）` },
+      { value: FILTER_NONE, label: `未分类（${noneCount}）` },
+      ...categories.map((category) => ({ value: String(category.id), label: `${category.name}（${category.assetCount}）` }))
+    ];
+    const key = options.map((option) => `${option.value}:${option.label}`).join('|');
+    if (key === categoryOptionsKey) return;
+    categoryOptionsKey = key;
+    const select = aiUi.select({
+      options,
+      value: categoryFilter,
+      allowEmpty: false,
+      ariaLabel: '按分类筛选',
+      onChange: (value) => {
+        categoryFilter = value;
+        renderContent();
+      }
+    });
+    categorySlot.textContent = '';
+    categorySlot.append(select.element);
+  }
+
+  /** 资产是否符合当前的分类筛选。 */
+  function matchesCategory(asset) {
+    if (categoryFilter === FILTER_ALL) return true;
+    if (categoryFilter === FILTER_NONE) return asset.categoryId === null;
+    return String(asset.categoryId) === categoryFilter;
   }
 
   /** 空状态和错误状态。 */
@@ -336,11 +394,11 @@
       return;
     }
     const text = keyword.trim().toLowerCase();
-    const visible = assets.filter((asset) => asset.name.toLowerCase().includes(text));
+    const visible = assets.filter((asset) => matchesCategory(asset) && asset.name.toLowerCase().includes(text));
     contentElement.append(visible.length === 0 ? renderState('没有匹配的资产。') : aiUi.table({ columns: buildColumns(), rows: visible, ariaLabel: '资产' }).element);
   }
 
-  /** 渲染页面骨架：搜索框、操作结果、资产区。 */
+  /** 渲染页面骨架：搜索框、分类筛选与分类管理按钮、操作结果、资产区。 */
   function renderPage() {
     const search = aiUi.textInput({
       type: 'search',
@@ -351,7 +409,9 @@
         renderContent();
       }
     });
-    document.getElementById('page-toolbar').append(aiUi.h('div', { class: 'assets-search' }, search.element));
+    categorySlot = aiUi.h('div', { class: 'assets-filter' });
+    manageButton = aiUi.button({ text: '分类管理', disabled: true, onClick: openCategoryManager });
+    document.getElementById('page-toolbar').append(aiUi.h('div', { class: 'assets-search' }, search.element), categorySlot, manageButton.element);
 
     messageElement = aiUi.h('p', { class: 'assets-message', hidden: true, attrs: { role: 'status' } });
     contentElement = aiUi.h('div');

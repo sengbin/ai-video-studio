@@ -17,7 +17,7 @@
 | JSON | 文本，用 `json_valid()` 校验；只存无需查询和关联的内容 |
 | 二进制 | 只存图片和音频（资产图、资产音频、资产生成版本的文件、尾帧）；视频结果存文件，库中只存相对路径 |
 | 密钥 | 不入库，存 VS Code `SecretStorage` |
-| 空值 | 参数类字段为空表示“沿用上一级”，不表示 0 或空串 |
+| 空值 | 参数类字段为空表示“沿用上一级”，不表示 0 或空串；可选的外键为空（`NULL`）表示“没有关联”（如资产不分类、镜头未分组），不用 0 表示“无”，0 违反外键约束 |
 
 ## 2. 表总览
 
@@ -37,6 +37,7 @@
 | | `shot_entities` | 镜头与出场实体的关系 |
 | | `shot_sounds` | 镜头的声音条目：对白、旁白、音效、配乐 |
 | 资产 | `assets` | 全局资产，不属于项目，所有项目共用 |
+| | `asset_categories` | 资产分类：属于某个资产类型，同类型内名称唯一（迁移 013） |
 | | `asset_files` | 资产图片 |
 | | `asset_versions` | 资产的生成版本：每次提交给图像、音频模型产生一个，同时记录任务状态（迁移 009） |
 | | `asset_version_files` | 版本的生成结果文件：图片或音频（迁移 009） |
@@ -50,7 +51,7 @@
 | | `result_frames` | 结果视频的尾帧图片 |
 | | `episode_audio_tracks` | 集的独立音轨（预留，本阶段不开发） |
 
-共 26 张表，其中 `episode_audio_tracks` 为预留，实际创建 25 张（迁移 009 已创建 `asset_versions`、`asset_version_files`）。
+共 27 张表，其中 `episode_audio_tracks` 为预留，实际创建 26 张（迁移 009 已创建 `asset_versions`、`asset_version_files`，迁移 013 创建 `asset_categories`）。
 
 ## 3. 关系图
 
@@ -66,6 +67,7 @@ erDiagram
   stage_runs ||--o| storyboard_scripts : 产出
   stage_runs }o--o| stage_runs : 上游记录
   assets ||--o{ asset_versions : 生成版本
+  asset_categories |o--o{ assets : 分类
   asset_versions ||--o{ asset_version_files : 版本文件
   episodes ||--o{ storyboard_scripts : 分镜脚本
   storyboard_scripts ||--o{ shots : 镜头
@@ -348,6 +350,7 @@ erDiagram
 | `kind` | 文本 | 是 | | `character`、`scene`、`prop`、`effect`、`audio` |
 | `name` | 文本 | 是 | | 资产名称 |
 | `source_entity_id` | 整数 | 否 | | 由哪个脚本实体创建，外键 `script_entities.id`，删除时置空 |
+| `category_id` | 整数 | 否 | | 所属分类，外键 `asset_categories.id`，分类被删除时置空；空表示不分类（迁移 013 新增，已有资产全部不分类） |
 | `attributes_json` | 文本（JSON） | 是 | `{}` | 按类型区分的描述字段，见 4.5 |
 | `composition` | 文本 | 是 | 空串 | 视角与构图 |
 | `style` | 文本 | 否 | | 画面风格；为空表示不指定风格 |
@@ -365,9 +368,23 @@ erDiagram
 | `created_at` | 文本 | 是 | | |
 | `updated_at` | 文本 | 是 | | |
 
-约束：`(kind, name)` 全局唯一。
+约束：`(kind, name)` 全局唯一。所属分类必须与资产同类型（业务校验：表单只提供同类型的分类，提交时按（类型，名称）解析）；分类不影响 `content_revision` 与提示词状态，改分类不会让提示词变为“需更新”。
 
 音频类型的资产不使用 `composition`、`style`、`background`、`reference_aspect_ratio`，这些字段保持空；它的描述字段见 4.5。提示词字段在音频资产里用作“音频生成提示词”。
+
+#### `asset_categories` 资产分类
+
+分类属于某个资产类型（角色分类只用于角色，场景分类只用于场景），资产可以归入一个分类，也可以不分类。
+
+| 字段 | 类型 | 必填 | 默认 | 说明 |
+|---|---|---|---|---|
+| `id` | 整数 | 是 | 自增 | |
+| `kind` | 文本 | 是 | | `character`、`scene`、`prop`、`effect`、`audio`，创建后不能修改 |
+| `name` | 文本 | 是 | | 分类名称，最多 30 字 |
+| `created_at` | 文本 | 是 | | |
+| `updated_at` | 文本 | 是 | | |
+
+约束：`(kind, name)` 唯一；列表按创建顺序（`id`）排列。删除分类时，归入该分类的资产自动变为不分类（`assets.category_id` 置空），资产本身保留。
 
 #### `asset_files` 资产图片
 
@@ -621,7 +638,7 @@ erDiagram
 
 ### 4.8 独立音轨（预留）
 
-用于“声音与视频分开生成、再合成”的方式。**本阶段只设计结构，不开发功能，也不建表**；开发时新增迁移 `013-audio-tracks`（011 已用于镜头组参数，012 已用于生成参数的生成时长）。
+用于“声音与视频分开生成、再合成”的方式。**本阶段只设计结构，不开发功能，也不建表**；开发时新增迁移 `014-audio-tracks`（011 已用于镜头组参数，012 已用于生成参数的生成时长，013 已用于资产分类）。
 
 #### `episode_audio_tracks` 集的独立音轨
 
@@ -727,6 +744,8 @@ erDiagram
 | `script_entities` | `(work_id, kind, name)` 唯一 | 实体去重与匹配 |
 | `shots` | `(storyboard_script_id, seq)` 唯一 | 镜头顺序 |
 | `assets` | `(kind, name)` 唯一 | 资产列表与去重 |
+| `assets` | `(category_id)` | 按分类统计资产数量与筛选 |
+| `asset_categories` | `(kind, name)` 唯一 | 同类型内分类去重 |
 | `asset_files` | `(asset_id, role, sort_order)` | 读取缩略图和参考图 |
 | `asset_versions` | `(asset_id, version)` 唯一 | 版本列表与版本号 |
 | `asset_versions` | `(status)` | 队列扫描、启动恢复 |
@@ -753,6 +772,7 @@ erDiagram
 | 作品 | 级联删除素材、生成记录、集、实体、参数和以下全部内容 |
 | 集 | 级联删除分镜脚本、镜头、绑定、参数、生成任务和结果 |
 | 资产 | 级联删除图片、生成版本及版本文件和绑定；界面须先提示被哪些集使用以及版本数量；单独删除版本时，当前采用的版本不能删除（先采用其他版本），进行中的版本需先取消 |
+| 资产分类 | 不删除资产，归入该分类的资产变为不分类（`category_id` 置空）；界面须先提示受影响的资产数量 |
 | 脚本实体 | 级联删除绑定和镜头引用；一般用停用（`is_active = 0`）代替删除 |
 | 模型 | 被引用时数据库拒绝删除，只能停用 |
 | 生成结果 | 删除视频文件与记录；若该结果的尾帧被后续任务引用，后续任务的 `first_frame_id` 置空，快照保持不变 |
@@ -806,7 +826,8 @@ erDiagram
 | 10 | `010-global-assets` | 重建 `assets`：去掉 `project_id`，唯一约束改为 `(kind, name)`；重名资产保留最早的一个，其余在名称后加（项目名）；原来沿用项目风格的图像资产把项目风格写入 `style`；资产文件、绑定、生成版本全部保留（迁移执行器支持 `rebuildsReferencedTables`：执行期间关闭外键，结束后检查完整性） | 已实现 |
 | 11 | `011-group-profiles` | 重建 `generation_profiles`：范围改为作品、集、镜头组，新增 `group_id` | 已实现 |
 | 12 | `012-profile-duration` | `generation_profiles` 新增 `duration_seconds`（本组生成时长）；种子、声音内容列早已预留，无需改表 | 已实现 |
-| 13 | `013-audio-tracks` | `episode_audio_tracks`（预留，开发独立音轨时再新增） | 后续 |
+| 13 | `013-asset-categories` | 新增 `asset_categories`；`assets` 增加可空的 `category_id`（外键，删除分类时置空），已有资产全部不分类 | 已实现 |
+| 14 | `014-audio-tracks` | `episode_audio_tracks`（预留，开发独立音轨时再新增） | 后续 |
 
 拆分说明：镜头引用资产文件，因此资产在分镜之前建立；前五个迁移创建了 22 张表，迁移 8 再增加镜头组表，各功能的仓库随功能实现逐步补全。
 
